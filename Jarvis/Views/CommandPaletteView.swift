@@ -8,42 +8,70 @@ struct CommandPaletteView: View {
     @EnvironmentObject private var settingsVM: SettingsViewModel
     @State private var selectedModel: String = ""
     @State private var loggingDisabled: Bool = false
+    @State private var animateAmbientBackground: Bool = false
 
     var body: some View {
-        VStack(spacing: 12) {
-            header
-            if !commandVM.ollamaReachable {
-                HStack {
-                    Text("Ollama server not reachable. Start it via `ollama serve` or the Ollama app.")
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.08, green: 0.09, blue: 0.14),
+                    Color(red: 0.05, green: 0.06, blue: 0.09)
+                ],
+                startPoint: animateAmbientBackground ? .topLeading : .bottomTrailing,
+                endPoint: animateAmbientBackground ? .bottomTrailing : .topLeading
+            )
+            .overlay(
+                RadialGradient(
+                    colors: [Color.cyan.opacity(0.18), .clear],
+                    center: animateAmbientBackground ? .topLeading : .bottomTrailing,
+                    startRadius: 20,
+                    endRadius: 520
+                )
+            )
+            .animation(.easeInOut(duration: 14).repeatForever(autoreverses: true), value: animateAmbientBackground)
+
+            VStack(spacing: 12) {
+                header
+                if !commandVM.ollamaReachable {
+                    offlineBanner
+                }
+                if let status = commandVM.statusMessage {
+                    Text(status)
                         .font(.footnote)
-                        .foregroundStyle(.red)
-                    Spacer()
-                    Button("Retry", action: commandVM.loadModels)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
                 }
-                .padding(8)
-                .background(Color.red.opacity(0.1))
-                .cornerRadius(8)
-            }
-            if let status = commandVM.statusMessage {
-                Text(status)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            if commandVM.toolRequiresConfirmation, let pendingTool = commandVM.pendingTool {
-                pendingToolBanner(invocation: pendingTool)
-            }
-            Picker("Tab", selection: $commandVM.selectedTab) {
-                ForEach(CommandPaletteViewModel.PaletteTab.allCases, id: \.self) { tab in
-                    Text(tab.rawValue).tag(tab)
+                if commandVM.toolRequiresConfirmation, let pendingTool = commandVM.pendingTool {
+                    pendingToolBanner(invocation: pendingTool)
                 }
+                tabRail
+                ZStack {
+                    tabContent
+                        .id(commandVM.selectedTab)
+                        .transition(
+                            .asymmetric(
+                                insertion: .opacity.combined(with: .scale(scale: 0.985)),
+                                removal: .opacity
+                            )
+                        )
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .animation(.spring(response: 0.30, dampingFraction: 0.88), value: commandVM.selectedTab)
             }
-            .pickerStyle(.segmented)
-            tabContent
+            .padding(16)
         }
-        .padding(16)
-        .frame(minWidth: 700, minHeight: 520)
+        .frame(minWidth: 760, minHeight: 560)
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Color.white.opacity(0.16), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .background(.ultraThinMaterial)
         .onAppear {
+            if !animateAmbientBackground {
+                animateAmbientBackground = true
+            }
             syncFromSettings()
             commandVM.loadModels()
             diagnosticsVM.refresh()
@@ -70,21 +98,108 @@ struct CommandPaletteView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Label(commandVM.privacyStatus.description, systemImage: commandVM.privacyStatus == .offline ? "shield.checkerboard" : "wifi")
-                .foregroundStyle(commandVM.privacyStatus == .offline ? .green : .orange)
-            Picker("Model", selection: $selectedModel) {
-                ForEach(modelOptions, id: \.self) { model in
-                    Text(model).tag(model)
+            AssistantOrbView()
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Jarvis")
+                    .font(.system(size: 20, weight: .semibold))
+                Text("Offline assistant")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            AssistantStatusChip(
+                title: commandVM.privacyStatus.description,
+                icon: commandVM.privacyStatus == .offline ? "lock.shield" : "wifi",
+                tint: commandVM.privacyStatus == .offline ? .green : .orange
+            )
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Model")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Picker("Model", selection: $selectedModel) {
+                    ForEach(modelOptions, id: \.self) { model in
+                        Text(model).tag(model)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: 170)
+                .disabled(modelOptions.isEmpty)
+            }
+
+            Toggle("", isOn: $loggingDisabled)
+                .labelsHidden()
+                .toggleStyle(.switch)
+            Text("No logs")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Button(action: commandVM.clearHistory) {
+                Label("Clear", systemImage: "trash")
+            }
+            .buttonStyle(AssistantPillButtonStyle(tint: .red.opacity(0.24)))
+        }
+        .padding(12)
+        .assistantCard()
+    }
+
+    private var offlineBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "bolt.horizontal.circle")
+                .foregroundStyle(.yellow)
+            Text("Ollama is not reachable. Start it with `ollama serve`.")
+                .font(.footnote)
+            Spacer()
+            Button("Retry", action: commandVM.loadModels)
+                .buttonStyle(AssistantPillButtonStyle(tint: .blue.opacity(0.26)))
+        }
+        .padding(10)
+        .assistantCard(fill: Color.red.opacity(0.1), border: Color.red.opacity(0.25))
+    }
+
+    private var tabRail: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(CommandPaletteViewModel.PaletteTab.allCases, id: \.self) { tab in
+                    Button {
+                        commandVM.selectTab(tab)
+                    } label: {
+                        Label(tab.rawValue, systemImage: icon(for: tab))
+                            .font(.system(size: 13, weight: .medium))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(commandVM.selectedTab == tab ? Color.cyan.opacity(0.2) : Color.white.opacity(0.05))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(commandVM.selectedTab == tab ? Color.cyan.opacity(0.7) : Color.white.opacity(0.10), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .scaleEffect(commandVM.selectedTab == tab ? 1.0 : 0.985)
+                    .animation(.easeOut(duration: 0.15), value: commandVM.selectedTab)
                 }
             }
-            .frame(width: 180)
-            .disabled(modelOptions.isEmpty)
-            Toggle("Disable logging", isOn: $loggingDisabled)
-                .toggleStyle(.switch)
-            Spacer()
-            Button(action: commandVM.clearHistory) {
-                Label("Clear History", systemImage: "trash")
-            }
+            .padding(2)
+        }
+        .padding(8)
+        .assistantCard()
+    }
+
+    private func icon(for tab: CommandPaletteViewModel.PaletteTab) -> String {
+        switch tab {
+        case .chat: return "message"
+        case .notifications: return "bell"
+        case .documents: return "doc.text"
+        case .email: return "envelope"
+        case .knowledge: return "books.vertical"
+        case .macros: return "bolt"
+        case .diagnostics: return "stethoscope"
         }
     }
 
@@ -131,61 +246,96 @@ struct CommandPaletteView: View {
     }
 
     private func pendingToolBanner(invocation: ToolInvocation) -> some View {
-        HStack {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.shield")
+                .foregroundStyle(.yellow)
             Text("Allow tool \(invocation.name.rawValue)?")
             Spacer()
             Button("Approve", action: commandVM.approvePendingTool)
+                .buttonStyle(AssistantPillButtonStyle(tint: .green.opacity(0.25)))
             Button("Reject", role: .cancel, action: commandVM.rejectPendingTool)
+                .buttonStyle(AssistantPillButtonStyle(tint: .red.opacity(0.25)))
         }
-        .padding(8)
-        .background(Color.yellow.opacity(0.2))
-        .cornerRadius(8)
+        .padding(10)
+        .assistantCard(fill: Color.yellow.opacity(0.10), border: Color.yellow.opacity(0.24))
     }
 }
 
 private struct ChatTabView: View {
     @EnvironmentObject private var commandVM: CommandPaletteViewModel
+    @FocusState private var inputFocused: Bool
 
     var body: some View {
         HStack(spacing: 12) {
-            VStack(spacing: 8) {
+            VStack(spacing: 10) {
                 conversationScroll
                 inputArea
             }
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Quick actions").font(.caption).textCase(.uppercase)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack {
-                        ForEach(commandVM.quickActions) { action in
-                            Button(action: { commandVM.performQuickAction(action) }) {
-                                Label(action.title, systemImage: action.icon)
-                                    .padding(8)
-                                    .background(Color.accentColor.opacity(0.1))
-                                    .cornerRadius(12)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-                if let clipboard = commandVM.clipboardBanner {
-                    ClipboardBannerView(text: clipboard, clearAction: commandVM.clearClipboardBanner)
-                }
-                Text("History").font(.caption)
-                List(commandVM.history) { convo in
-                    Button {
-                        commandVM.selectConversation(convo)
-                    } label: {
-                        VStack(alignment: .leading) {
-                            Text(convo.title).font(.body)
-                            Text(convo.updatedAt.formatted()).font(.caption2).foregroundStyle(.secondary)
-                        }
-                    }
-                    .buttonStyle(.borderless)
-                }
-                .frame(minWidth: 180, maxHeight: 200)
+            .frame(maxWidth: .infinity)
+
+            VStack(alignment: .leading, spacing: 10) {
+                quickActionPanel
+                historyPanel
             }
-            .frame(width: 250)
+            .frame(width: 280)
         }
+    }
+
+    private var quickActionPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Quick Actions")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 122), spacing: 8)], spacing: 8) {
+                ForEach(commandVM.quickActions) { action in
+                    Button(action: { commandVM.performQuickAction(action) }) {
+                        Label(action.title, systemImage: action.icon)
+                            .font(.system(size: 12, weight: .medium))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                    }
+                    .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.18)))
+                }
+            }
+            if let clipboard = commandVM.clipboardBanner {
+                ClipboardBannerView(text: clipboard, clearAction: commandVM.clearClipboardBanner)
+            }
+        }
+        .padding(10)
+        .assistantCard()
+    }
+
+    private var historyPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("History")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(commandVM.history) { convo in
+                        Button {
+                            commandVM.selectConversation(convo)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(convo.title)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .lineLimit(2)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Text(convo.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(8)
+                            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .assistantCard()
     }
 
     private var conversationScroll: some View {
@@ -200,27 +350,61 @@ private struct ChatTabView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
                 .onChange(of: commandVM.conversation.messages.count) { _, _ in
                     if let last = commandVM.conversation.messages.last?.id {
-                        withAnimation { proxy.scrollTo(last) }
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo(last, anchor: .bottom)
+                        }
+                    }
+                }
+                .onChange(of: commandVM.streamingBuffer) { _, _ in
+                    if let last = commandVM.conversation.messages.last?.id {
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            proxy.scrollTo(last, anchor: .bottom)
+                        }
                     }
                 }
             }
+            .overlay(alignment: .bottomLeading) {
+                if commandVM.isStreaming {
+                    TypingPulseChipView(label: "Jarvis is generating...")
+                        .padding(8)
+                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                }
+            }
         }
-        .background(.thinMaterial)
-        .cornerRadius(12)
+        .assistantCard()
     }
 
     private var inputArea: some View {
-        HStack {
-            TextField("Ask Jarvis…", text: $commandVM.inputText, axis: .vertical)
+        HStack(spacing: 10) {
+            TextField("Ask Jarvis...", text: $commandVM.inputText, axis: .vertical)
                 .lineLimit(1...3)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
+                .focused($inputFocused)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(inputFocused ? Color.cyan.opacity(0.55) : Color.white.opacity(0.12), lineWidth: 1)
+                )
+                .shadow(color: inputFocused ? Color.cyan.opacity(0.25) : .clear, radius: 10)
+                .animation(.easeInOut(duration: 0.18), value: inputFocused)
                 .onSubmit { commandVM.sendCurrentPrompt() }
+
             Button(action: commandVM.sendCurrentPrompt) {
                 Image(systemName: "paperplane.fill")
+                    .padding(10)
             }
+            .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.25)))
             .keyboardShortcut(.return, modifiers: .command)
+        }
+        .padding(10)
+        .assistantCard()
+        .onAppear {
+            inputFocused = true
         }
     }
 }
@@ -235,11 +419,20 @@ private struct ConversationRow: View {
                 .foregroundStyle(.secondary)
             Text(message.text)
                 .font(.body)
-                .padding(8)
-                .background(message.role == .user ? Color.blue.opacity(0.1) : Color.gray.opacity(0.1))
-                .cornerRadius(10)
+                .textSelection(.enabled)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    message.role == .user ? Color.cyan.opacity(0.16) : Color.white.opacity(0.06),
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(message.role == .user ? Color.cyan.opacity(0.35) : Color.white.opacity(0.12), lineWidth: 1)
+                )
         }
         .id(message.id)
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
     }
 
     private var label: String {
@@ -259,59 +452,92 @@ private struct DocumentWorkspaceView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Button("Back to Chat") { commandVM.selectTab(.chat) }
-                    Spacer()
                     Text("Documents")
                         .font(.headline)
-                }
-                HStack {
-                    Button("Import document", action: commandVM.selectDocumentUsingPanel)
+                    Spacer()
+                    Button("Import", action: commandVM.selectDocumentUsingPanel)
+                        .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.24)))
                     if commandVM.importedDocument != nil {
                         Button("Clear", action: commandVM.clearDocument)
+                            .buttonStyle(AssistantPillButtonStyle(tint: Color.white.opacity(0.10)))
                     }
-                    Spacer()
                 }
+
                 if let document = commandVM.importedDocument {
-                    Text(document.title).font(.headline)
-                    ScrollView {
-                        Text(document.content)
-                            .font(.body.monospaced())
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(document.title)
+                            .font(.subheadline.weight(.semibold))
+                        ScrollView {
+                            Text(document.content)
+                                .font(.body.monospaced())
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(4)
+                        }
+                        .frame(height: 220)
                     }
-                    .frame(height: 200)
-                    HStack {
-                        ForEach(DocumentAction.allCases) { action in
-                            Button(action.rawValue) { commandVM.summarizeDocument(action: action) }
+                    .padding(10)
+                    .assistantCard()
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(DocumentAction.allCases) { action in
+                                Button(action.rawValue) { commandVM.summarizeDocument(action: action) }
+                                    .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.18)))
+                            }
                         }
                     }
-                }
-                if commandVM.isDocumentActionRunning {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                        Text("Jarvis is processing the document…")
-                            .font(.caption)
+
+                    if commandVM.isDocumentActionRunning {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("Processing document...")
+                                .font(.caption)
+                        }
+                        .padding(10)
+                        .assistantCard()
                     }
-                }
-                if !commandVM.documentActionOutput.isEmpty {
-                    Text("Extracted thread output")
-                        .font(.caption)
-                    Text(commandVM.documentActionOutput)
-                        .font(.body)
-                        .padding(8)
-                        .background(Color.gray.opacity(0.08))
-                        .cornerRadius(8)
-                    HStack {
-                        Button("Copy output", action: commandVM.copyDocumentOutput)
-                        Spacer()
+
+                    if !commandVM.documentActionOutput.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Output")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(commandVM.documentActionOutput)
+                                .textSelection(.enabled)
+                                .padding(10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            HStack {
+                                Button("Copy output", action: commandVM.copyDocumentOutput)
+                                    .buttonStyle(AssistantPillButtonStyle(tint: Color.white.opacity(0.10)))
+                                Spacer()
+                            }
+                        }
+                        .padding(10)
+                        .assistantCard()
                     }
+                } else {
+                    Text("Import a text, markdown, PDF, or DOCX document to start.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(10)
+                        .assistantCard()
                 }
-                Divider()
+
+                Divider().opacity(0.25)
+
                 Button("Extract table", action: commandVM.runTableExtraction)
+                    .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.20)))
+
                 if let table = commandVM.tableResult {
                     TableExtractionView(result: table)
+                        .padding(10)
+                        .assistantCard()
                 }
             }
         }
+        .assistantCard()
     }
 }
 
@@ -319,43 +545,183 @@ private struct EmailWorkspaceView: View {
     @EnvironmentObject private var emailVM: EmailDraftViewModel
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
                 Text("Email Drafting")
                     .font(.headline)
-                HStack {
-                    Button("Capture active window", action: emailVM.captureActiveWindow)
-                    Button("Capture full screen", action: emailVM.captureFullScreen)
-                    Button("Draft reply", action: { emailVM.draftReply() })
-                        .disabled(emailVM.extractedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    Spacer()
-                }
-                EmailDraftView()
-                    .environmentObject(emailVM)
+                Spacer()
+                Button("Capture window", action: emailVM.captureActiveWindow)
+                    .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.22)))
+                Button("Capture screen", action: emailVM.captureFullScreen)
+                    .buttonStyle(AssistantPillButtonStyle(tint: Color.white.opacity(0.12)))
+                Button("Draft") { emailVM.draftReply() }
+                    .buttonStyle(AssistantPillButtonStyle(tint: Color.green.opacity(0.22)))
+                    .disabled(emailVM.extractedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+
+            EmailDraftView()
+                .environmentObject(emailVM)
+                .assistantCard()
         }
+        .padding(10)
+        .assistantCard()
     }
 }
 
 private struct TableExtractionView: View {
     let result: TableExtractionResult
+    @State private var selectedFormat: TableExtractionResult.OutputFormat = .markdown
 
     var body: some View {
-        VStack(alignment: .leading) {
-            Text("Markdown")
-            Text(render(format: .markdown))
-                .font(.system(.body, design: .monospaced))
-            Text("CSV")
-            Text(render(format: .csv))
-                .font(.system(.body, design: .monospaced))
-            Text("JSON")
-            Text(render(format: .json))
-                .font(.system(.body, design: .monospaced))
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Format", selection: $selectedFormat) {
+                Text("Markdown").tag(TableExtractionResult.OutputFormat.markdown)
+                Text("CSV").tag(TableExtractionResult.OutputFormat.csv)
+                Text("JSON").tag(TableExtractionResult.OutputFormat.json)
+            }
+            .pickerStyle(.segmented)
+
+            ScrollView {
+                Text(render(format: selectedFormat))
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+            }
+            .frame(minHeight: 120)
+            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
+            )
         }
     }
 
     private func render(format: TableExtractionResult.OutputFormat) -> String {
         let extractor = TableExtractor()
         return (try? extractor.render(result, format: format)) ?? ""
+    }
+}
+
+private struct AssistantOrbView: View {
+    @State private var glow: Bool = false
+    @State private var spin: Bool = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Color.cyan.opacity(0.45), lineWidth: 1)
+                .frame(width: 22, height: 22)
+                .rotationEffect(.degrees(spin ? 360 : 0))
+            Circle()
+                .fill(Color.cyan.opacity(0.35))
+                .frame(width: glow ? 28 : 22, height: glow ? 28 : 22)
+                .blur(radius: 4)
+            Circle()
+                .fill(
+                    LinearGradient(colors: [Color.cyan, Color.blue.opacity(0.65)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                )
+                .frame(width: 14, height: 14)
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
+                glow = true
+            }
+            withAnimation(.linear(duration: 6).repeatForever(autoreverses: false)) {
+                spin = true
+            }
+        }
+    }
+}
+
+private struct TypingPulseChipView: View {
+    let label: String
+    @State private var animate: Bool = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 4) {
+                ForEach(0..<3, id: \.self) { index in
+                    Circle()
+                        .fill(Color.cyan.opacity(0.85))
+                        .frame(width: 5, height: 5)
+                        .scaleEffect(animate ? (index == 1 ? 1.2 : 0.9) : (index == 1 ? 0.9 : 1.15))
+                        .animation(
+                            .easeInOut(duration: 0.55)
+                            .repeatForever(autoreverses: true)
+                            .delay(Double(index) * 0.08),
+                            value: animate
+                        )
+                }
+            }
+            Text(label)
+                .font(.caption2)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color.white.opacity(0.08), in: Capsule())
+        .onAppear {
+            animate = true
+        }
+    }
+}
+
+private struct AssistantStatusChip: View {
+    let title: String
+    let icon: String
+    let tint: Color
+
+    var body: some View {
+        Label(title, systemImage: icon)
+            .font(.caption)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(tint.opacity(0.18), in: Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(tint.opacity(0.45), lineWidth: 1)
+            )
+    }
+}
+
+private struct AssistantPillButtonStyle: ButtonStyle {
+    let tint: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .medium))
+            .padding(.horizontal, 11)
+            .padding(.vertical, 7)
+            .background(tint, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.white.opacity(configuration.isPressed ? 0.28 : 0.14), lineWidth: 1)
+            )
+            .opacity(configuration.isPressed ? 0.82 : 1)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+private struct AssistantCardModifier: ViewModifier {
+    let fill: Color
+    let border: Color
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(fill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(border, lineWidth: 1)
+            )
+    }
+}
+
+private extension View {
+    func assistantCard(fill: Color = Color.white.opacity(0.045), border: Color = Color.white.opacity(0.11)) -> some View {
+        modifier(AssistantCardModifier(fill: fill, border: border))
     }
 }

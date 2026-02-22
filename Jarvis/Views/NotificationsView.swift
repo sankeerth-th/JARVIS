@@ -11,6 +11,7 @@ struct NotificationsView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Toggle("Focus mode", isOn: $focusModeEnabled)
+                    .toggleStyle(.switch)
                 Spacer()
                 Menu("Quiet hours") {
                     Button("None") {
@@ -20,37 +21,62 @@ struct NotificationsView: View {
                         viewModel.quietHours = QuietHours(start: DateComponents(hour: 22), end: DateComponents(hour: 7))
                     }
                 }
+                .menuStyle(.borderlessButton)
+
                 Button("Copy summary") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(viewModel.summary(), forType: .string)
                 }
                 .buttonStyle(.bordered)
             }
+
             Text(viewModel.summary())
                 .font(.body)
-                .padding(8)
-                .background(Color.gray.opacity(0.1))
-                .cornerRadius(8)
+                .textSelection(.enabled)
+                .padding(10)
+                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                )
+
             keywordRuleEditor
+
             List {
                 Section(header: Text("Urgent")) {
                     ForEach(viewModel.notifications.filter { $0.priority == .urgent }) { item in
                         NotificationRow(item: item)
+                            .listRowBackground(Color.clear)
                     }
                 }
                 Section(header: Text("Needs reply")) {
                     ForEach(viewModel.notifications.filter { $0.priority == .needsReply }) { item in
                         NotificationRow(item: item)
+                            .listRowBackground(Color.clear)
                     }
                 }
                 Section(header: Text("FYI")) {
                     ForEach(viewModel.notifications.filter { $0.priority == .fyi }) { item in
                         NotificationRow(item: item)
+                            .listRowBackground(Color.clear)
+                    }
+                }
+                Section(header: Text("Low priority")) {
+                    ForEach(viewModel.notifications.filter { $0.priority == .low }) { item in
+                        NotificationRow(item: item)
+                            .listRowBackground(Color.clear)
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.clear)
         }
-        .padding(8)
+        .padding(10)
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.white.opacity(0.11), lineWidth: 1)
+        )
         .onAppear {
             focusModeEnabled = viewModel.focusModeEnabled
         }
@@ -66,8 +92,10 @@ struct NotificationsView: View {
     }
 
     private var keywordRuleEditor: some View {
-        VStack(alignment: .leading) {
-            Text("Keyword rules").font(.caption)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Keyword rules")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             HStack {
                 TextField("Keyword", text: $keyword)
                 Picker("Priority", selection: $selectedPriority) {
@@ -75,12 +103,14 @@ struct NotificationsView: View {
                         Text(priority.rawValue.capitalized).tag(priority)
                     }
                 }
+                .frame(width: 140)
                 Button("Add") {
                     guard !keyword.isEmpty else { return }
                     let ruleKey = keyword
                     viewModel.keywordRules[ruleKey] = selectedPriority
                     keyword = ""
                 }
+                .buttonStyle(.borderedProminent)
             }
             if !viewModel.keywordRules.isEmpty {
                 ForEach(viewModel.keywordRules.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
@@ -95,9 +125,16 @@ struct NotificationsView: View {
                         }
                         .buttonStyle(.borderless)
                     }
+                    .padding(.vertical, 2)
                 }
             }
         }
+        .padding(10)
+        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
     }
 }
 
@@ -105,15 +142,16 @@ private struct NotificationRow: View {
     let item: NotificationItem
 
     var body: some View {
-        VStack(alignment: .leading) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(item.title).bold()
+                Text(item.title)
+                    .font(.body.weight(.semibold))
                 Spacer()
                 Text(item.priority.rawValue.capitalized)
-                    .font(.caption)
-                    .padding(4)
-                    .background(Color.orange.opacity(0.2))
-                    .cornerRadius(6)
+                    .font(.caption2)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(Color.orange.opacity(0.2), in: Capsule())
             }
             Text(item.body)
                 .font(.body)
@@ -123,5 +161,7 @@ private struct NotificationRow: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .padding(8)
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }

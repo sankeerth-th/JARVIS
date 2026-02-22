@@ -8,11 +8,14 @@ struct MacroListView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Workflow macros allow chaining Jarvis skills offline.")
+            Text("Workflow macros chain Jarvis skills locally.")
                 .font(.body)
+
             HStack {
                 TextField("Macro name", text: $macroName)
+                    .textFieldStyle(.roundedBorder)
                 TextField("Prompt", text: $macroPrompt)
+                    .textFieldStyle(.roundedBorder)
                 Button("Save") {
                     let step = MacroStep(kind: .runPrompt, payload: ["prompt": macroPrompt])
                     settingsVM.createMacro(name: macroName, steps: [step])
@@ -20,7 +23,9 @@ struct MacroListView: View {
                     macroPrompt = ""
                 }
                 .disabled(macroName.isEmpty || macroPrompt.isEmpty)
+                .buttonStyle(.borderedProminent)
             }
+
             HStack {
                 Button("Add OCR cleanup macro") {
                     let steps = [
@@ -29,35 +34,62 @@ struct MacroListView: View {
                     ]
                     settingsVM.createMacro(name: "Window OCR Cleanup", steps: steps)
                 }
-                .buttonStyle(.borderedProminent)
-                Text("Captures active window -> OCR -> clean rewrite.")
+                .buttonStyle(.bordered)
+                Text("Capture active window -> OCR -> clean rewrite")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
             List(settingsVM.macros) { macro in
                 HStack {
-                    VStack(alignment: .leading) {
-                        Text(macro.name).bold()
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(macro.name)
+                            .font(.body.weight(.semibold))
                         Text("Steps: \(macro.steps.map(\.kind.rawValue).joined(separator: " -> "))")
                             .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button("Run") { commandVM.runMacro(macro) }
+                        .buttonStyle(.borderedProminent)
                     Button(role: .destructive, action: { settingsVM.deleteMacro(macro) }) {
                         Image(systemName: "trash")
                     }
+                    .buttonStyle(.borderless)
                 }
+                .listRowBackground(Color.clear)
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.clear)
+
             if !commandVM.macroLogs.isEmpty {
-                Text("Last run")
-                ScrollView {
-                    ForEach(commandVM.macroLogs) { log in
-                        Text("• \(log.message)").frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Last run")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 6) {
+                            ForEach(commandVM.macroLogs) { log in
+                                Text("- \(log.message)")
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
                     }
+                    .frame(height: 120)
                 }
-                .frame(height: 120)
+                .padding(10)
+                .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
             }
         }
-        .padding(8)
+        .padding(10)
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.white.opacity(0.11), lineWidth: 1)
+        )
     }
 }

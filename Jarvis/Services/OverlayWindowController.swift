@@ -5,6 +5,7 @@ final class OverlayWindowController: NSWindowController, NSWindowDelegate {
     private static let frameDefaultsKey = "com.jarvis.overlay.frame"
     private let hostingController: NSHostingController<AnyView>
     private var escapeEventMonitor: Any?
+    private var isHiding = false
     var onClose: (() -> Void)?
 
     init<Content: View>(rootView: Content) {
@@ -48,19 +49,33 @@ final class OverlayWindowController: NSWindowController, NSWindowDelegate {
             }
         }
         installEscapeMonitorIfNeeded()
+        window.alphaValue = 0
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.14
+            window.animator().alphaValue = 1
+        }
     }
 
     func hide() {
-        guard let window else { return }
+        guard let window, !isHiding else { return }
         let wasVisible = window.isVisible
         UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: Self.frameDefaultsKey)
-        window.orderOut(nil)
         removeEscapeMonitor()
-        if wasVisible {
-            onClose?()
-        }
+        isHiding = true
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.11
+            window.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            guard let self else { return }
+            window.orderOut(nil)
+            window.alphaValue = 1
+            self.isHiding = false
+            if wasVisible {
+                self.onClose?()
+            }
+        })
     }
 
     private func screenForCursor() -> NSScreen? {
