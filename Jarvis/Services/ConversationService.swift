@@ -33,8 +33,7 @@ final class ConversationService {
         database.deleteHistory()
     }
 
-    func streamResponse(for prompt: String, conversation: Conversation, context: ConversationContext, settings: AppSettings) -> AsyncThrowingStream<String, Error> {
-        let conversationText = renderConversation(conversation) + "\nUser: \(prompt)\nAssistant:"
+    func streamResponse(conversation: Conversation, context: ConversationContext, settings: AppSettings) -> AsyncThrowingStream<String, Error> {
         var contextChunks: [String] = []
         if let doc = context.selectedDocument {
             contextChunks.append("Document Title: \(doc.title)\n\(doc.content.prefix(1800))")
@@ -55,16 +54,26 @@ final class ConversationService {
         if let action = context.requestedAction {
             contextChunks.append("Requested quick action: \(action.title)")
         }
-        let contextualPrompt = (contextChunks.isEmpty ? "" : "Context:\n" + contextChunks.joined(separator: "\n\n"))
         let systemPrompt = buildSystemPrompt(settings: settings)
-        let request = GenerateRequest(
+        var messages: [OllamaChatMessage] = [
+            OllamaChatMessage(role: "system", content: systemPrompt)
+        ]
+        if !contextChunks.isEmpty {
+            messages.append(
+                OllamaChatMessage(
+                    role: "user",
+                    content: "Context:\n" + contextChunks.joined(separator: "\n\n")
+                )
+            )
+        }
+        messages.append(contentsOf: conversation.messages.compactMap { mapToOllamaChatMessage($0) })
+        let request = ChatRequest(
             model: settings.selectedModel,
-            prompt: contextualPrompt + "\n" + conversationText,
-            system: systemPrompt,
+            messages: messages,
             stream: true,
-            options: ["temperature": 0.2, "num_predict": 320]
+            options: ["temperature": 0.2, "num_predict": 420]
         )
-        return ollama.streamGenerate(request: request)
+        return ollama.streamChat(request: request)
     }
 
     func performDocumentAction(document: Document, action: DocumentAction, settings: AppSettings) async throws -> String {
@@ -161,6 +170,21 @@ final class ConversationService {
             }
             return "\(speaker): \(message.text)"
         }.joined(separator: "\n")
+    }
+
+    private func mapToOllamaChatMessage(_ message: ChatMessage) -> OllamaChatMessage? {
+        let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        switch message.role {
+        case .user:
+            return OllamaChatMessage(role: "user", content: text)
+        case .assistant:
+            return OllamaChatMessage(role: "assistant", content: text)
+        case .system:
+            return OllamaChatMessage(role: "system", content: text)
+        case .tool:
+            return OllamaChatMessage(role: "user", content: "Tool output:\n\(text)")
+        }
     }
 
     private func buildSystemPrompt(settings: AppSettings) -> String {

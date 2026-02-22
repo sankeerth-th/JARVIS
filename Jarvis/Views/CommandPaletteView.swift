@@ -200,18 +200,10 @@ struct CommandPaletteView: View {
                             .stroke(Color.white.opacity(0.12), lineWidth: 1)
                     )
                     .onSubmit {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            isCompactMode = false
-                            commandVM.selectTab(.chat)
-                        }
-                        commandVM.sendCurrentPrompt()
+                        performCompactSend()
                     }
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        isCompactMode = false
-                        commandVM.selectTab(.chat)
-                    }
-                    commandVM.sendCurrentPrompt()
+                    performCompactSend()
                 } label: {
                     Image(systemName: "paperplane.fill")
                         .padding(10)
@@ -222,6 +214,17 @@ struct CommandPaletteView: View {
         }
         .padding(12)
         .assistantCard(fill: Color.white.opacity(0.035), border: Color.white.opacity(0.1))
+    }
+
+    private func performCompactSend() {
+        let text = commandVM.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        commandVM.inputText = ""
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isCompactMode = false
+            commandVM.selectTab(.chat)
+        }
+        commandVM.send(prompt: text)
     }
 
     private var offlineBanner: some View {

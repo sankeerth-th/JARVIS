@@ -156,16 +156,22 @@ final class CommandPaletteViewModel: ObservableObject {
         streamingBuffer = ""
         isStreaming = true
         let context = buildContext()
+        selectedQuickAction = nil
         streamTask?.cancel()
         streamTask = Task {
             do {
-                let stream = conversationService.streamResponse(for: prompt, conversation: convo, context: context, settings: settingsStore.current)
+                let stream = conversationService.streamResponse(conversation: convo, context: context, settings: settingsStore.current)
                 for try await chunk in stream {
                     consume(chunk: chunk)
                 }
                 finishStreaming()
             } catch {
                 statusMessage = "Ollama error: \(error.localizedDescription)"
+                let errorMessage = ChatMessage(role: .assistant, text: "I could not reach the selected Ollama model. Check Diagnostics and retry.")
+                conversation.messages.append(errorMessage)
+                conversation.updatedAt = Date()
+                conversationService.persist(conversation)
+                history = conversationService.loadRecentConversations()
                 isStreaming = false
             }
         }

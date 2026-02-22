@@ -36,6 +36,25 @@ struct GenerateRequest: Encodable {
     }
 }
 
+struct OllamaChatMessage: Codable {
+    let role: String
+    let content: String
+}
+
+struct ChatRequest: Encodable {
+    var model: String
+    var messages: [OllamaChatMessage]
+    var stream: Bool
+    var options: [String: Double]?
+
+    init(model: String, messages: [OllamaChatMessage], stream: Bool = true, options: [String: Double]? = nil) {
+        self.model = model
+        self.messages = messages
+        self.stream = stream
+        self.options = options
+    }
+}
+
 final class OllamaClient {
     private let session: URLSession
     private let candidateBaseURLs: [URL]
@@ -73,6 +92,18 @@ final class OllamaClient {
         return responseText
     }
 
+    func chat(request: ChatRequest) async throws -> String {
+        let body = try JSONEncoder().encode(request)
+        let (data, response) = try await self.request(path: "api/chat", method: "POST", body: body)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw OllamaError.invalidResponse }
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let message = json["message"] as? [String: Any],
+              let content = message["content"] as? String else {
+            throw OllamaError.invalidResponse
+        }
+        return content
+    }
+
     func streamGenerate(request: GenerateRequest) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             Task.detached {
@@ -87,6 +118,36 @@ final class OllamaClient {
                         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
                         if let response = json["response"] as? String {
                             continuation.yield(response)
+                        }
+                        if let done = json["done"] as? Bool, done {
+                            continuation.finish()
+                            return
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+
+    func streamChat(request: ChatRequest) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            Task.detached {
+                do {
+                    let body = try JSONEncoder().encode(request)
+                    let (bytes, response) = try await self.streamRequest(path: "api/chat", body: body)
+                    guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                        throw OllamaError.invalidResponse
+                    }
+                    for try await line in bytes.lines {
+                        guard let data = line.data(using: .utf8) else { continue }
+                        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+                        if let message = json["message"] as? [String: Any],
+                           let content = message["content"] as? String,
+                           !content.isEmpty {
+                            continuation.yield(content)
                         }
                         if let done = json["done"] as? Bool, done {
                             continuation.finish()
