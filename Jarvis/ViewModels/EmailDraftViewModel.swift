@@ -28,37 +28,14 @@ final class EmailDraftViewModel: ObservableObject {
     }
 
     func captureActiveWindow() {
-        Task {
-            do {
-                isCapturing = true
-                let image = try screenshotService.captureActiveWindow()
-                let text = try ocrService.recognizeText(from: image)
-                await MainActor.run {
-                    extractedText = text
-                    citations = text.split(separator: "\n").prefix(5).map { String($0.prefix(120)) }
-                    statusMessage = "Extracted \(extractedText.count) characters"
-                }
-            } catch {
-                statusMessage = "Capture failed: \(error.localizedDescription)"
-            }
-            isCapturing = false
+        runCapture {
+            try self.screenshotService.captureActiveWindow()
         }
     }
 
     func captureFullScreen() {
-        Task {
-            do {
-                isCapturing = true
-                let image = try screenshotService.captureFullScreen()
-                let text = try ocrService.recognizeText(from: image)
-                await MainActor.run {
-                    extractedText = text
-                    citations = text.split(separator: "\n").prefix(5).map { String($0.prefix(120)) }
-                }
-            } catch {
-                statusMessage = "Capture failed: \(error.localizedDescription)"
-            }
-            isCapturing = false
+        runCapture {
+            try self.screenshotService.captureFullScreen()
         }
     }
 
@@ -116,7 +93,10 @@ final class EmailDraftViewModel: ObservableObject {
 
     func openMail() {
         let body = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !body.isEmpty else { return }
+        if body.isEmpty {
+            openMailApplication(message: "Mail opened.")
+            return
+        }
 
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("jarvis-mail-\(UUID().uuidString).txt")
         do {
@@ -147,6 +127,40 @@ final class EmailDraftViewModel: ObservableObject {
 
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(body, forType: .string)
+        openMailApplication(message: "Mail opened. Draft copied to clipboard.", failure: "Could not open Mail app. Draft copied to clipboard.")
+        try? FileManager.default.removeItem(at: tempURL)
+    }
+
+    private func runCapture(_ capture: @escaping () throws -> NSImage) {
+        Task {
+            isCapturing = true
+            defer { isCapturing = false }
+            let shouldTemporarilyHide = NSApp.isActive
+            do {
+                if shouldTemporarilyHide {
+                    NSApp.hide(nil)
+                    try await Task.sleep(nanoseconds: 350_000_000)
+                }
+                let image = try capture()
+                let text = try ocrService.recognizeText(from: image)
+                if shouldTemporarilyHide {
+                    NSApp.unhide(nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                extractedText = text
+                citations = text.split(separator: "\n").prefix(5).map { String($0.prefix(120)) }
+                statusMessage = "Extracted \(extractedText.count) characters"
+            } catch {
+                if shouldTemporarilyHide {
+                    NSApp.unhide(nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                statusMessage = "Capture failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func openMailApplication(message: String, failure: String = "Could not open Mail app.") {
         let possibleMailApps = [
             URL(fileURLWithPath: "/System/Applications/Mail.app"),
             URL(fileURLWithPath: "/Applications/Mail.app")
@@ -159,19 +173,17 @@ final class EmailDraftViewModel: ObservableObject {
                     if let error {
                         self?.statusMessage = "Mail open failed: \(error.localizedDescription)"
                     } else {
-                        self?.statusMessage = "Mail opened. Draft copied to clipboard."
+                        self?.statusMessage = message
                     }
                 }
             }
-            try? FileManager.default.removeItem(at: tempURL)
             return
         }
         if let legacyMailURL = URL(string: "message://"),
            NSWorkspace.shared.open(legacyMailURL) {
-            statusMessage = "Mail opened. Draft copied to clipboard."
+            statusMessage = message
         } else {
-            statusMessage = "Could not open Mail app. Draft copied to clipboard."
+            statusMessage = failure
         }
-        try? FileManager.default.removeItem(at: tempURL)
     }
 }

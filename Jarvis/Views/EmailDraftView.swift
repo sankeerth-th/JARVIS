@@ -21,7 +21,6 @@ struct EmailDraftView: View {
                 Button("Copy") { viewModel.copyDraft() }
                     .disabled(viewModel.draft.isEmpty)
                 Button("Open Mail") { viewModel.openMail() }
-                    .disabled(viewModel.draft.isEmpty)
                 Spacer()
                 Picker("Tone", selection: $viewModel.selectedTone) {
                     ForEach(ToneStyle.allCases, id: \.self) { tone in

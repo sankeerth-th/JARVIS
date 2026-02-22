@@ -15,52 +15,81 @@ final class ScreenshotService {
             case .captureFailed:
                 return "Screen capture failed."
             case .screenPermissionMissing:
-                return "Screen Recording permission is missing. Grant it in Settings and relaunch Jarvis."
+                return "Screen Recording permission is missing or not yet applied. Grant it in Settings, then fully quit and reopen Jarvis."
             }
         }
     }
 
+    private var hasPromptedForScreenCapture = false
+
     func captureActiveWindow() throws -> NSImage {
-        guard ensureScreenCapturePermission() else {
-            throw ScreenshotError.screenPermissionMissing
-        }
+        promptForScreenCaptureIfNeeded()
+        let currentPID = ProcessInfo.processInfo.processIdentifier
+        let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         guard let infoList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]],
-              let target = infoList.first(where: { ($0[kCGWindowLayer as String] as? Int) == 0 }),
+              let target = infoList.first(where: { info in
+                  guard (info[kCGWindowLayer as String] as? Int) == 0,
+                        (info[kCGWindowOwnerPID as String] as? pid_t) != currentPID,
+                        (info[kCGWindowAlpha as String] as? Double ?? 1.0) > 0.01 else {
+                      return false
+                  }
+                  if let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t,
+                     let frontmostPID,
+                     ownerPID == frontmostPID {
+                      return true
+                  }
+                  guard let bounds = info[kCGWindowBounds as String] as? [String: Any],
+                        let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else {
+                      return false
+                  }
+                  return rect.width > 120 && rect.height > 80
+              }),
               let windowID = target[kCGWindowNumber as String] as? CGWindowID else {
+            if !hasScreenCapturePermission() {
+                throw ScreenshotError.screenPermissionMissing
+            }
             throw ScreenshotError.windowNotFound
         }
         guard let cgImage = CGWindowListCreateImage(.null, .optionIncludingWindow, windowID, [.boundsIgnoreFraming, .shouldBeOpaque]) else {
+            if !hasScreenCapturePermission() {
+                throw ScreenshotError.screenPermissionMissing
+            }
             throw ScreenshotError.captureFailed
         }
         return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
     }
 
     func captureFullScreen() throws -> NSImage {
-        guard ensureScreenCapturePermission() else {
-            throw ScreenshotError.screenPermissionMissing
-        }
+        promptForScreenCaptureIfNeeded()
         guard let image = CGDisplayCreateImage(CGMainDisplayID()) else {
+            if !hasScreenCapturePermission() {
+                throw ScreenshotError.screenPermissionMissing
+            }
             throw ScreenshotError.captureFailed
         }
         return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
     }
 
     func capture(selection rect: CGRect) throws -> NSImage {
-        guard ensureScreenCapturePermission() else {
-            throw ScreenshotError.screenPermissionMissing
-        }
+        promptForScreenCaptureIfNeeded()
         guard let cgImage = CGWindowListCreateImage(rect, [.optionOnScreenOnly], kCGNullWindowID, [.bestResolution]) else {
+            if !hasScreenCapturePermission() {
+                throw ScreenshotError.screenPermissionMissing
+            }
             throw ScreenshotError.captureFailed
         }
         return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
     }
 
-    private func ensureScreenCapturePermission() -> Bool {
-        if CGPreflightScreenCaptureAccess() {
-            return true
-        }
+    private func hasScreenCapturePermission() -> Bool {
+        CGPreflightScreenCaptureAccess()
+    }
+
+    private func promptForScreenCaptureIfNeeded() {
+        guard !hasScreenCapturePermission() else { return }
+        guard !hasPromptedForScreenCapture else { return }
+        hasPromptedForScreenCapture = true
         _ = CGRequestScreenCaptureAccess()
-        return false
     }
 }
 
