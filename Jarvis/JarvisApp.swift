@@ -9,7 +9,8 @@ struct JarvisApp: App {
     var body: some Scene {
         Settings {
             SettingsView()
-                .environmentObject(appDelegate.environment)
+                .environmentObject(appDelegate.environment.settingsViewModel)
+                .environmentObject(appDelegate.environment.notificationViewModel)
         }
     }
 }

@@ -15,6 +15,7 @@ final class SettingsViewModel: ObservableObject {
     private let conversationService: ConversationService
     private let ollama: OllamaClient
     private var cancellables: Set<AnyCancellable> = []
+    private var didBind = false
 
     init(settingsStore: SettingsStore,
          permissions: PermissionsManager,
@@ -36,6 +37,8 @@ final class SettingsViewModel: ObservableObject {
     }
 
     func observeSettings() {
+        guard !didBind else { return }
+        didBind = true
         settingsStore.$settings
             .receive(on: DispatchQueue.main)
             .sink { [weak self] newSettings in
