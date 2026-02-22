@@ -6,6 +6,8 @@ struct CommandPaletteView: View {
     @EnvironmentObject private var emailVM: EmailDraftViewModel
     @EnvironmentObject private var diagnosticsVM: DiagnosticsViewModel
     @EnvironmentObject private var settingsVM: SettingsViewModel
+    @State private var selectedModel: String = ""
+    @State private var loggingDisabled: Bool = false
 
     var body: some View {
         VStack(spacing: 12) {
@@ -42,8 +44,27 @@ struct CommandPaletteView: View {
         .frame(minWidth: 700, minHeight: 520)
         .background(.ultraThinMaterial)
         .onAppear {
+            syncFromSettings()
+            commandVM.loadModels()
             diagnosticsVM.refresh()
-            settingsVM.observeSettings()
+        }
+        .onChange(of: settingsVM.settings.selectedModel) { _, model in
+            if selectedModel != model {
+                selectedModel = model
+            }
+        }
+        .onChange(of: settingsVM.settings.disableLogging) { _, disabled in
+            if loggingDisabled != disabled {
+                loggingDisabled = disabled
+            }
+        }
+        .onChange(of: selectedModel) { _, model in
+            guard !model.isEmpty, settingsVM.settings.selectedModel != model else { return }
+            settingsVM.setModel(model)
+        }
+        .onChange(of: loggingDisabled) { _, disabled in
+            guard settingsVM.settings.disableLogging != disabled else { return }
+            settingsVM.setLoggingDisabled(disabled)
         }
     }
 
@@ -51,19 +72,33 @@ struct CommandPaletteView: View {
         HStack(spacing: 12) {
             Label(commandVM.privacyStatus.description, systemImage: commandVM.privacyStatus == .offline ? "shield.checkerboard" : "wifi")
                 .foregroundStyle(commandVM.privacyStatus == .offline ? .green : .orange)
-            Picker("Model", selection: Binding(get: { settingsVM.settings.selectedModel }, set: settingsVM.setModel)) {
-                ForEach(commandVM.availableModels, id: \.self) { model in
+            Picker("Model", selection: $selectedModel) {
+                ForEach(modelOptions, id: \.self) { model in
                     Text(model).tag(model)
                 }
             }
             .frame(width: 180)
-            Toggle("Disable logging", isOn: Binding(get: { settingsVM.settings.disableLogging }, set: settingsVM.setLoggingDisabled))
+            .disabled(modelOptions.isEmpty)
+            Toggle("Disable logging", isOn: $loggingDisabled)
                 .toggleStyle(.switch)
             Spacer()
             Button(action: commandVM.clearHistory) {
                 Label("Clear History", systemImage: "trash")
             }
         }
+    }
+
+    private var modelOptions: [String] {
+        var options = commandVM.availableModels
+        if !selectedModel.isEmpty && !options.contains(selectedModel) {
+            options.insert(selectedModel, at: 0)
+        }
+        return options
+    }
+
+    private func syncFromSettings() {
+        selectedModel = settingsVM.settings.selectedModel
+        loggingDisabled = settingsVM.settings.disableLogging
     }
 
     @ViewBuilder
@@ -78,6 +113,8 @@ struct CommandPaletteView: View {
         case .documents:
             DocumentWorkspaceView()
                 .environmentObject(commandVM)
+        case .email:
+            EmailWorkspaceView()
                 .environmentObject(emailVM)
         case .knowledge:
             KnowledgeBaseView()
@@ -163,7 +200,7 @@ private struct ChatTabView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .onChange(of: commandVM.conversation.messages.count) { _ in
+                .onChange(of: commandVM.conversation.messages.count) { _, _ in
                     if let last = commandVM.conversation.messages.last?.id {
                         withAnimation { proxy.scrollTo(last) }
                     }
@@ -217,41 +254,84 @@ private struct ConversationRow: View {
 
 private struct DocumentWorkspaceView: View {
     @EnvironmentObject private var commandVM: CommandPaletteViewModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Button("Back to Chat") { commandVM.selectTab(.chat) }
+                    Spacer()
+                    Text("Documents")
+                        .font(.headline)
+                }
+                HStack {
+                    Button("Import document", action: commandVM.selectDocumentUsingPanel)
+                    if commandVM.importedDocument != nil {
+                        Button("Clear", action: commandVM.clearDocument)
+                    }
+                    Spacer()
+                }
+                if let document = commandVM.importedDocument {
+                    Text(document.title).font(.headline)
+                    ScrollView {
+                        Text(document.content)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(height: 200)
+                    HStack {
+                        ForEach(DocumentAction.allCases) { action in
+                            Button(action.rawValue) { commandVM.summarizeDocument(action: action) }
+                        }
+                    }
+                }
+                if commandVM.isDocumentActionRunning {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("Jarvis is processing the document…")
+                            .font(.caption)
+                    }
+                }
+                if !commandVM.documentActionOutput.isEmpty {
+                    Text("Extracted thread output")
+                        .font(.caption)
+                    Text(commandVM.documentActionOutput)
+                        .font(.body)
+                        .padding(8)
+                        .background(Color.gray.opacity(0.08))
+                        .cornerRadius(8)
+                    HStack {
+                        Button("Copy output", action: commandVM.copyDocumentOutput)
+                        Spacer()
+                    }
+                }
+                Divider()
+                Button("Extract table", action: commandVM.runTableExtraction)
+                if let table = commandVM.tableResult {
+                    TableExtractionView(result: table)
+                }
+            }
+        }
+    }
+}
+
+private struct EmailWorkspaceView: View {
     @EnvironmentObject private var emailVM: EmailDraftViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Button("Import document", action: commandVM.selectDocumentUsingPanel)
-                if commandVM.importedDocument != nil {
-                    Button("Clear", action: commandVM.clearDocument)
-                }
-                Spacer()
-                Button("Capture window", action: emailVM.captureActiveWindow)
-                Button("Capture screen", action: emailVM.captureFullScreen)
-                Button("Draft email", action: { emailVM.draftReply() })
-            }
-            if let document = commandVM.importedDocument {
-                Text(document.title).font(.headline)
-                ScrollView {
-                    Text(document.content)
-                        .font(.body.monospaced())
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(height: 200)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Email Drafting")
+                    .font(.headline)
                 HStack {
-                    ForEach(DocumentAction.allCases) { action in
-                        Button(action.rawValue) { commandVM.summarizeDocument(action: action) }
-                    }
+                    Button("Capture active window", action: emailVM.captureActiveWindow)
+                    Button("Capture full screen", action: emailVM.captureFullScreen)
+                    Button("Draft reply", action: { emailVM.draftReply() })
+                        .disabled(emailVM.extractedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Spacer()
                 }
-            }
-            Divider()
-            EmailDraftView()
-                .environmentObject(emailVM)
-            Divider()
-            Button("Extract table", action: commandVM.runTableExtraction)
-            if let table = commandVM.tableResult {
-                TableExtractionView(result: table)
+                EmailDraftView()
+                    .environmentObject(emailVM)
             }
         }
     }

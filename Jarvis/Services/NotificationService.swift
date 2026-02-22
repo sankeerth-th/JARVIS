@@ -25,6 +25,15 @@ final class NotificationService: NSObject, ObservableObject {
         center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
+    func sendTestNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = "Jarvis Permission Check"
+        content.body = "Notifications are enabled for Jarvis."
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        center.add(request)
+    }
+
     func setPriorityApps(_ bundleIdentifiers: [String]) {
         priorityApps = Set(bundleIdentifiers)
     }

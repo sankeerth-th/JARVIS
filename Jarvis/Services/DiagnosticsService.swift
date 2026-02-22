@@ -29,15 +29,24 @@ final class DiagnosticsService: ObservableObject {
         results.append(DiagnosticStatus(name: "Accessibility", detail: accessibility ? "Granted" : "Missing", isHealthy: accessibility))
         let screenGranted = CGPreflightScreenCaptureAccess()
         results.append(DiagnosticStatus(name: "Screen Recording", detail: screenGranted ? "Granted" : "Missing", isHealthy: screenGranted))
-        let notificationGranted = await notificationPermission()
-        results.append(DiagnosticStatus(name: "Notifications", detail: notificationGranted ? "Granted" : "Missing", isHealthy: notificationGranted))
+        let notificationStatus = await notificationPermissionStatus()
+        results.append(DiagnosticStatus(name: "Notifications", detail: notificationStatus.detail, isHealthy: notificationStatus.isHealthy))
         return results
     }
 
-    private func notificationPermission() async -> Bool {
+    private func notificationPermissionStatus() async -> (isHealthy: Bool, detail: String) {
         await withCheckedContinuation { continuation in
             UNUserNotificationCenter.current().getNotificationSettings { settings in
-                continuation.resume(returning: settings.authorizationStatus == .authorized)
+                switch settings.authorizationStatus {
+                case .authorized, .provisional, .ephemeral:
+                    continuation.resume(returning: (true, "Granted"))
+                case .denied:
+                    continuation.resume(returning: (false, "Denied"))
+                case .notDetermined:
+                    continuation.resume(returning: (false, "Not requested"))
+                @unknown default:
+                    continuation.resume(returning: (false, "Unknown"))
+                }
             }
         }
     }

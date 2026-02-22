@@ -14,13 +14,22 @@ struct KnowledgeBaseView: View {
                 Button("Search", action: commandVM.searchKnowledgeBase)
                 Button("Add folder", action: pickFolder)
             }
+            Text("PDF and image files are OCR-indexed locally for search.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             if let status = settingsVM.indexingStatus {
                 Text(status).font(.caption).foregroundStyle(.secondary)
             }
             List(commandVM.knowledgeResults) { doc in
-                VStack(alignment: .leading) {
-                    Text(doc.title).bold()
-                    Text(doc.path).font(.caption2)
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text(doc.title).bold()
+                        Text(doc.path).font(.caption2)
+                    }
+                    Spacer()
+                    Button("Open") {
+                        NSWorkspace.shared.openFile(doc.path)
+                    }
                 }
             }
         }

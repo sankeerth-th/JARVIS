@@ -1,0 +1,23 @@
+{
+  "/Users/sanks04/Desktop/JARVIS/Jarvis/Services/ConversationService.swift" : {
+    "const-values" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/ConversationService.swiftconstvalues",
+    "dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/ConversationService.d",
+    "diagnostics" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/ConversationService.dia",
+    "object" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/ConversationService.o",
+    "swift-dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/ConversationService.swiftdeps"
+  },
+  "/Users/sanks04/Desktop/JARVIS/Jarvis/Services/OllamaClient.swift" : {
+    "const-values" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/OllamaClient.swiftconstvalues",
+    "dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/OllamaClient.d",
+    "diagnostics" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/OllamaClient.dia",
+    "object" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/OllamaClient.o",
+    "swift-dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/OllamaClient.swiftdeps"
+  },
+  "/Users/sanks04/Desktop/JARVIS/Jarvis/Services/ToolExecutionService.swift" : {
+    "const-values" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/ToolExecutionService.swiftconstvalues",
+    "dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/ToolExecutionService.d",
+    "diagnostics" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/ToolExecutionService.dia",
+    "object" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/ToolExecutionService.o",
+    "swift-dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/ToolExecutionService.swiftdeps"
+  }
+}

@@ -7,7 +7,7 @@ enum OllamaError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .unreachable: return "Ollama server is not running on localhost:11434"
+        case .unreachable: return "Ollama server is not reachable on 127.0.0.1:11434 (or localhost:11434)"
         case .invalidResponse: return "Received invalid response from Ollama"
         case .apiError(let message): return message
         }
@@ -16,7 +16,7 @@ enum OllamaError: LocalizedError {
 
 struct OllamaModel: Codable {
     let name: String
-    let modified_at: Date?
+    let modified_at: String?
     let size: Int?
 }
 
@@ -38,16 +38,15 @@ struct GenerateRequest: Encodable {
 
 final class OllamaClient {
     private let session: URLSession
-    private let baseURL: URL
+    private let candidateBaseURLs: [URL]
 
     init(baseURL: URL = URL(string: "http://localhost:11434")!, session: URLSession = .shared) {
-        self.baseURL = baseURL
         self.session = session
+        self.candidateBaseURLs = Self.buildCandidateBaseURLs(from: baseURL)
     }
 
     func listModels() async throws -> [OllamaModel] {
-        let url = baseURL.appendingPathComponent("/api/tags")
-        let (data, response) = try await session.data(from: url)
+        let (data, response) = try await request(path: "api/tags")
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw OllamaError.unreachable }
         struct TagResponse: Codable { let models: [OllamaModel] }
         let decoded = try JSONDecoder().decode(TagResponse.self, from: data)
@@ -55,21 +54,18 @@ final class OllamaClient {
     }
 
     func pullModel(named name: String) async throws {
-        var request = URLRequest(url: baseURL.appendingPathComponent("/api/pull"))
-        request.httpMethod = "POST"
         let body = ["name": name]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        let (_, response) = try await session.data(for: request)
+        var requestBody = try JSONSerialization.data(withJSONObject: body)
+        if requestBody.isEmpty {
+            requestBody = Data("{}".utf8)
+        }
+        let (_, response) = try await request(path: "api/pull", method: "POST", body: requestBody)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw OllamaError.invalidResponse }
     }
 
     func generate(request: GenerateRequest) async throws -> String {
-        var req = URLRequest(url: baseURL.appendingPathComponent("/api/generate"))
-        req.httpMethod = "POST"
-        req.httpBody = try JSONEncoder().encode(request)
-        req.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        let (data, response) = try await session.data(for: req)
+        let body = try JSONEncoder().encode(request)
+        let (data, response) = try await self.request(path: "api/generate", method: "POST", body: body)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw OllamaError.invalidResponse }
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any], let responseText = json["response"] as? String else {
             throw OllamaError.invalidResponse
@@ -81,11 +77,8 @@ final class OllamaClient {
         AsyncThrowingStream { continuation in
             Task.detached {
                 do {
-                    var req = URLRequest(url: baseURL.appendingPathComponent("/api/generate"))
-                    req.httpMethod = "POST"
-                    req.httpBody = try JSONEncoder().encode(request)
-                    req.addValue("application/json", forHTTPHeaderField: "Content-Type")
-                    let (bytes, response) = try await self.session.bytes(for: req)
+                    let body = try JSONEncoder().encode(request)
+                    let (bytes, response) = try await self.streamRequest(path: "api/generate", body: body)
                     guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                         throw OllamaError.invalidResponse
                     }
@@ -109,12 +102,12 @@ final class OllamaClient {
     }
 
     func embeddings(for text: String, model: String) async throws -> [Double] {
-        var request = URLRequest(url: baseURL.appendingPathComponent("/api/embeddings"))
-        request.httpMethod = "POST"
-        let body = ["model": model, "prompt": text]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        let (data, response) = try await session.data(for: request)
+        let body: [String: Any] = ["model": model, "prompt": text]
+        var requestBody = try JSONSerialization.data(withJSONObject: body)
+        if requestBody.isEmpty {
+            requestBody = Data("{}".utf8)
+        }
+        let (data, response) = try await request(path: "api/embeddings", method: "POST", body: requestBody)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw OllamaError.invalidResponse }
         struct EmbeddingResponse: Codable { let embedding: [Double] }
         let decoded = try JSONDecoder().decode(EmbeddingResponse.self, from: data)
@@ -128,5 +121,68 @@ final class OllamaClient {
         } catch {
             return false
         }
+    }
+
+    private func request(path: String, method: String = "GET", body: Data? = nil) async throws -> (Data, URLResponse) {
+        try await withFallback { baseURL in
+            var urlRequest = URLRequest(url: baseURL.appendingPathComponent(path))
+            urlRequest.httpMethod = method
+            urlRequest.httpBody = body
+            if body != nil {
+                urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            }
+            return try await session.data(for: urlRequest)
+        }
+    }
+
+    private func streamRequest(path: String, body: Data) async throws -> (URLSession.AsyncBytes, URLResponse) {
+        try await withFallback { baseURL in
+            var urlRequest = URLRequest(url: baseURL.appendingPathComponent(path))
+            urlRequest.httpMethod = "POST"
+            urlRequest.httpBody = body
+            urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            return try await session.bytes(for: urlRequest)
+        }
+    }
+
+    private func withFallback<T>(_ work: (URL) async throws -> T) async throws -> T {
+        var lastError: Error = OllamaError.unreachable
+        for (index, baseURL) in candidateBaseURLs.enumerated() {
+            do {
+                return try await work(baseURL)
+            } catch {
+                lastError = error
+                let shouldTryNext = index < candidateBaseURLs.count - 1 && isConnectionError(error)
+                if !shouldTryNext { break }
+            }
+        }
+        if isConnectionError(lastError) {
+            throw OllamaError.unreachable
+        }
+        throw lastError
+    }
+
+    private func isConnectionError(_ error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .timedOut, .networkConnectionLost, .notConnectedToInternet:
+                return true
+            default:
+                return false
+            }
+        }
+        return false
+    }
+
+    private static func buildCandidateBaseURLs(from preferred: URL) -> [URL] {
+        guard let host = preferred.host?.lowercased(), host == "localhost" else {
+            return [preferred]
+        }
+        var components = URLComponents(url: preferred, resolvingAgainstBaseURL: false)
+        components?.host = "127.0.0.1"
+        if let ipv4Loopback = components?.url {
+            return [ipv4Loopback, preferred]
+        }
+        return [preferred]
     }
 }

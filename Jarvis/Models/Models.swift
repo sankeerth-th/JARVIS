@@ -57,6 +57,7 @@ enum DocumentType: String, Codable {
     case markdown
     case pdf
     case docx
+    case image
     case unknown
 }
 
@@ -193,7 +194,7 @@ enum ToneStyle: String, Codable, CaseIterable {
     }
 }
 
-struct AppSettings: Codable {
+struct AppSettings: Codable, Equatable {
     var selectedModel: String
     var systemPrompt: String
     var tone: ToneStyle
@@ -263,7 +264,7 @@ struct QuickAction: Identifiable, Codable, Equatable {
     ]
 }
 
-struct ToolInvocation: Codable {
+struct ToolInvocation: Codable, Equatable {
     enum ToolName: String, Codable {
         case calculate
         case ocrCurrentWindow
@@ -276,7 +277,7 @@ struct ToolInvocation: Codable {
     var arguments: [String: String]
 }
 
-struct ToolResult: Codable {
+struct ToolResult: Codable, Equatable {
     var content: String
     var metadata: [String: String]
 }

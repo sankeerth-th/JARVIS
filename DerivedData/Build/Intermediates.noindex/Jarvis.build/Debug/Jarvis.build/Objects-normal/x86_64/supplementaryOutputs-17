@@ -1,0 +1,23 @@
+{
+  "/Users/sanks04/Desktop/JARVIS/Jarvis/ViewModels/DiagnosticsViewModel.swift" : {
+    "const-values" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/DiagnosticsViewModel.swiftconstvalues",
+    "dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/DiagnosticsViewModel.d",
+    "diagnostics" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/DiagnosticsViewModel.dia",
+    "object" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/DiagnosticsViewModel.o",
+    "swift-dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/DiagnosticsViewModel.swiftdeps"
+  },
+  "/Users/sanks04/Desktop/JARVIS/Jarvis/ViewModels/SettingsViewModel.swift" : {
+    "const-values" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/SettingsViewModel.swiftconstvalues",
+    "dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/SettingsViewModel.d",
+    "diagnostics" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/SettingsViewModel.dia",
+    "object" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/SettingsViewModel.o",
+    "swift-dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/SettingsViewModel.swiftdeps"
+  },
+  "/Users/sanks04/Desktop/JARVIS/Jarvis/Views/CommandPaletteView.swift" : {
+    "const-values" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/CommandPaletteView.swiftconstvalues",
+    "dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/CommandPaletteView.d",
+    "diagnostics" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/CommandPaletteView.dia",
+    "object" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/CommandPaletteView.o",
+    "swift-dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/CommandPaletteView.swiftdeps"
+  }
+}

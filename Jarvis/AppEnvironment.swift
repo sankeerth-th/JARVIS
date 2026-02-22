@@ -1,5 +1,6 @@
 import Foundation
 
+@MainActor
 final class AppEnvironment: ObservableObject {
     let settingsStore = SettingsStore()
     let documentService = DocumentImportService()
@@ -9,7 +10,7 @@ final class AppEnvironment: ObservableObject {
     let database = JarvisDatabase()
     let ollamaClient = OllamaClient()
     let notificationService = NotificationService()
-    let permissionsManager = PermissionsManager()
+    let permissionsManager = PermissionsManager.shared
     let clipboardWatcher = ClipboardWatcher()
     let hotKeyCenter = HotKeyCenter()
 
@@ -25,6 +26,8 @@ final class AppEnvironment: ObservableObject {
     lazy var workflowEngine = WorkflowEngine(notificationService: notificationService,
                                             localIndexService: localIndexService,
                                             documentService: documentService,
+                                            screenshotService: screenshotService,
+                                            ocrService: ocrService,
                                             ollama: ollamaClient)
     lazy var diagnosticsService = DiagnosticsService(ollama: ollamaClient)
 

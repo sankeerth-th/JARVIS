@@ -9,6 +9,7 @@ final class EmailDraftViewModel: ObservableObject {
     @Published var isCapturing: Bool = false
     @Published var isGenerating: Bool = false
     @Published var statusMessage: String? = nil
+    @Published var selectedTone: ToneStyle = .professional
 
     private let screenshotService: ScreenshotService
     private let ocrService: OCRService
@@ -23,6 +24,7 @@ final class EmailDraftViewModel: ObservableObject {
         self.ocrService = ocrService
         self.ollama = ollama
         self.settingsStore = settingsStore
+        self.selectedTone = settingsStore.tone()
     }
 
     func captureActiveWindow() {
@@ -68,12 +70,14 @@ final class EmailDraftViewModel: ObservableObject {
         Task {
             do {
                 isGenerating = true
-                let toneValue = tone ?? settingsStore.tone()
+                let toneValue = tone ?? selectedTone
                 let prompt = "Draft an email reply in a \(toneValue.promptValue) tone based on the following email thread. Cite the lines you used.\nThread:\n\(extractedText)"
                 let request = GenerateRequest(model: settingsStore.selectedModel(), prompt: prompt, system: settingsStore.systemPrompt(), stream: false)
                 let response = try await ollama.generate(request: request)
                 await MainActor.run {
                     draft = response.trimmingCharacters(in: .whitespacesAndNewlines)
+                    selectedTone = toneValue
+                    settingsStore.setTone(toneValue)
                     statusMessage = "Draft updated"
                 }
             } catch {
@@ -93,6 +97,9 @@ final class EmailDraftViewModel: ObservableObject {
                 let response = try await ollama.generate(request: request)
                 await MainActor.run {
                     draft = response.trimmingCharacters(in: .whitespacesAndNewlines)
+                    selectedTone = tone
+                    settingsStore.setTone(tone)
+                    statusMessage = "Tone updated: \(tone.rawValue.capitalized)"
                 }
             } catch {
                 statusMessage = "Tone tweak failed: \(error.localizedDescription)"
@@ -108,9 +115,63 @@ final class EmailDraftViewModel: ObservableObject {
     }
 
     func openMail() {
-        let encodedBody = draft.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        if let url = URL(string: "mailto:?body=\(encodedBody)") {
-            NSWorkspace.shared.open(url)
+        let body = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return }
+
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("jarvis-mail-\(UUID().uuidString).txt")
+        do {
+            try body.write(to: tempURL, atomically: true, encoding: .utf8)
+        } catch {
+            statusMessage = "Failed to prepare draft: \(error.localizedDescription)"
+            return
         }
+        let escapedPath = tempURL.path
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let script = """
+        tell application "Mail"
+            activate
+            set messageText to read POSIX file "\(escapedPath)"
+            set newMessage to make new outgoing message with properties {visible:true, subject:"", content:messageText}
+        end tell
+        """
+        if let appleScript = NSAppleScript(source: script) {
+            var error: NSDictionary?
+            appleScript.executeAndReturnError(&error)
+            if error == nil {
+                statusMessage = "Opened draft in Mail"
+                try? FileManager.default.removeItem(at: tempURL)
+                return
+            }
+        }
+
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(body, forType: .string)
+        let possibleMailApps = [
+            URL(fileURLWithPath: "/System/Applications/Mail.app"),
+            URL(fileURLWithPath: "/Applications/Mail.app")
+        ]
+        if let mailAppURL = possibleMailApps.first(where: { FileManager.default.fileExists(atPath: $0.path) }),
+           #available(macOS 13.0, *) {
+            let config = NSWorkspace.OpenConfiguration()
+            NSWorkspace.shared.openApplication(at: mailAppURL, configuration: config) { [weak self] _, error in
+                Task { @MainActor in
+                    if let error {
+                        self?.statusMessage = "Mail open failed: \(error.localizedDescription)"
+                    } else {
+                        self?.statusMessage = "Mail opened. Draft copied to clipboard."
+                    }
+                }
+            }
+            try? FileManager.default.removeItem(at: tempURL)
+            return
+        }
+        if let legacyMailURL = URL(string: "message://"),
+           NSWorkspace.shared.open(legacyMailURL) {
+            statusMessage = "Mail opened. Draft copied to clipboard."
+        } else {
+            statusMessage = "Could not open Mail app. Draft copied to clipboard."
+        }
+        try? FileManager.default.removeItem(at: tempURL)
     }
 }

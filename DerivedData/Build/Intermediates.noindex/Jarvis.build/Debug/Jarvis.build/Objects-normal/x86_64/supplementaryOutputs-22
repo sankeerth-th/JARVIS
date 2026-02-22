@@ -1,0 +1,23 @@
+{
+  "/Users/sanks04/Desktop/JARVIS/Jarvis/Views/DiagnosticsView.swift" : {
+    "const-values" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/DiagnosticsView.swiftconstvalues",
+    "dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/DiagnosticsView.d",
+    "diagnostics" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/DiagnosticsView.dia",
+    "object" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/DiagnosticsView.o",
+    "swift-dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/DiagnosticsView.swiftdeps"
+  },
+  "/Users/sanks04/Desktop/JARVIS/Jarvis/Views/KnowledgeBaseView.swift" : {
+    "const-values" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/KnowledgeBaseView.swiftconstvalues",
+    "dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/KnowledgeBaseView.d",
+    "diagnostics" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/KnowledgeBaseView.dia",
+    "object" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/KnowledgeBaseView.o",
+    "swift-dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/KnowledgeBaseView.swiftdeps"
+  },
+  "/Users/sanks04/Desktop/JARVIS/Jarvis/Views/MacroListView.swift" : {
+    "const-values" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/MacroListView.swiftconstvalues",
+    "dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/MacroListView.d",
+    "diagnostics" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/MacroListView.dia",
+    "object" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/MacroListView.o",
+    "swift-dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/x86_64/MacroListView.swiftdeps"
+  }
+}

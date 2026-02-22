@@ -1,0 +1,23 @@
+{
+  "/Users/sanks04/Desktop/JARVIS/Jarvis/SQLiteHelpers.swift" : {
+    "const-values" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/SQLiteHelpers.swiftconstvalues",
+    "dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/SQLiteHelpers.d",
+    "diagnostics" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/SQLiteHelpers.dia",
+    "object" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/SQLiteHelpers.o",
+    "swift-dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/SQLiteHelpers.swiftdeps"
+  },
+  "/Users/sanks04/Desktop/JARVIS/Jarvis/Services/JarvisDatabase.swift" : {
+    "const-values" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/JarvisDatabase.swiftconstvalues",
+    "dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/JarvisDatabase.d",
+    "diagnostics" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/JarvisDatabase.dia",
+    "object" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/JarvisDatabase.o",
+    "swift-dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/JarvisDatabase.swiftdeps"
+  },
+  "/Users/sanks04/Desktop/JARVIS/Jarvis/Services/SettingsStore.swift" : {
+    "const-values" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/SettingsStore.swiftconstvalues",
+    "dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/SettingsStore.d",
+    "diagnostics" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/SettingsStore.dia",
+    "object" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/SettingsStore.o",
+    "swift-dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/SettingsStore.swiftdeps"
+  }
+}

@@ -15,6 +15,7 @@ struct JarvisApp: App {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let environment = AppEnvironment()
     private var statusItem: NSStatusItem?
@@ -23,7 +24,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        NSApp.activate(ignoringOtherApps: true)
         configureStatusItem()
         setupOverlay()
         PermissionsManager.shared.prepare()
@@ -33,14 +33,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] isVisible in
                 guard let self else { return }
                 if isVisible {
+                    NSApp.setActivationPolicy(.regular)
                     self.overlayController?.show()
                 } else {
                     self.overlayController?.hide()
+                    NSApp.setActivationPolicy(.accessory)
                 }
             }
             .store(in: &cancellables)
     }
 
+    @MainActor
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         environment.commandPaletteViewModel.showOverlay()
         return true
@@ -54,7 +57,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = makeMenu()
         self.statusItem = statusItem
         environment.hotKeyCenter.registerCommandJ { [weak self] in
-            self?.toggleOverlay()
+            Task { @MainActor in
+                self?.toggleOverlay()
+            }
         }
     }
 
@@ -66,14 +71,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .environmentObject(environment.diagnosticsViewModel)
             .environmentObject(environment.settingsViewModel)
         overlayController = OverlayWindowController(rootView: rootView)
+        overlayController?.onClose = { [weak self] in
+            guard let self else { return }
+            if self.environment.commandPaletteViewModel.shouldShowOverlay {
+                self.environment.commandPaletteViewModel.hideOverlay()
+            }
+        }
     }
 
+    @MainActor
     @objc private func toggleOverlay() {
-        if overlayController?.isVisible == true {
-            overlayController?.hide()
+        if environment.commandPaletteViewModel.shouldShowOverlay {
             environment.commandPaletteViewModel.hideOverlay()
         } else {
-            overlayController?.show()
             environment.commandPaletteViewModel.showOverlay()
         }
     }
@@ -87,9 +97,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return menu
     }
 
+    @MainActor
     @objc private func openDiagnostics() {
         environment.commandPaletteViewModel.selectTab(.diagnostics)
-        overlayController?.show()
+        environment.commandPaletteViewModel.showOverlay()
     }
 
     @objc private func quit() {

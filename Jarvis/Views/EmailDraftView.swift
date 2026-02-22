@@ -23,11 +23,16 @@ struct EmailDraftView: View {
                 Button("Open Mail") { viewModel.openMail() }
                     .disabled(viewModel.draft.isEmpty)
                 Spacer()
-                Menu("Improve tone") {
+                Picker("Tone", selection: $viewModel.selectedTone) {
                     ForEach(ToneStyle.allCases, id: \.self) { tone in
-                        Button(tone.rawValue.capitalized) { viewModel.improveTone(tone) }
+                        Text(tone.rawValue.capitalized).tag(tone)
                     }
                 }
+                .frame(width: 170)
+                Button("Improve tone") {
+                    viewModel.improveTone(viewModel.selectedTone)
+                }
+                .disabled(viewModel.draft.isEmpty || viewModel.isGenerating)
             }
             Text("Draft")
             TextEditor(text: $viewModel.draft)

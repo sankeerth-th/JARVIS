@@ -1,0 +1,23 @@
+{
+  "/Users/sanks04/Desktop/JARVIS/Jarvis/Services/DiagnosticsService.swift" : {
+    "const-values" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/DiagnosticsService.swiftconstvalues",
+    "dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/DiagnosticsService.d",
+    "diagnostics" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/DiagnosticsService.dia",
+    "object" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/DiagnosticsService.o",
+    "swift-dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/DiagnosticsService.swiftdeps"
+  },
+  "/Users/sanks04/Desktop/JARVIS/Jarvis/Services/MacroService.swift" : {
+    "const-values" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/MacroService.swiftconstvalues",
+    "dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/MacroService.d",
+    "diagnostics" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/MacroService.dia",
+    "object" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/MacroService.o",
+    "swift-dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/MacroService.swiftdeps"
+  },
+  "/Users/sanks04/Desktop/JARVIS/Jarvis/Services/WorkflowEngine.swift" : {
+    "const-values" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/WorkflowEngine.swiftconstvalues",
+    "dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/WorkflowEngine.d",
+    "diagnostics" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/WorkflowEngine.dia",
+    "object" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/WorkflowEngine.o",
+    "swift-dependencies" : "/Users/sanks04/Desktop/JARVIS/DerivedData/Build/Intermediates.noindex/Jarvis.build/Debug/Jarvis.build/Objects-normal/arm64/WorkflowEngine.swiftdeps"
+  }
+}

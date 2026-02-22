@@ -34,6 +34,7 @@ final class SettingsViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] macros in self?.macros = macros }
             .store(in: &cancellables)
+        observeSettings()
     }
 
     func observeSettings() {
@@ -42,7 +43,9 @@ final class SettingsViewModel: ObservableObject {
         settingsStore.$settings
             .receive(on: DispatchQueue.main)
             .sink { [weak self] newSettings in
-                self?.settings = newSettings
+                guard let self else { return }
+                guard self.settings != newSettings else { return }
+                self.settings = newSettings
             }
             .store(in: &cancellables)
     }
@@ -71,8 +74,12 @@ final class SettingsViewModel: ObservableObject {
         Task {
             do {
                 let models = try await ollama.listModels()
+                let names = models.map { $0.name }
                 await MainActor.run {
-                    availableModels = models.map { $0.name }
+                    availableModels = names
+                    if !names.contains(settingsStore.selectedModel()), let first = names.first {
+                        settingsStore.setModel(first)
+                    }
                 }
             } catch {
                 indexingStatus = "Model refresh failed: \(error.localizedDescription)"
@@ -83,13 +90,16 @@ final class SettingsViewModel: ObservableObject {
     func requestAccessibility() { permissions.requestAccessibility() }
     func requestScreenRecording() { permissions.requestScreenRecording() }
     func requestNotifications() { permissions.requestNotifications() }
+    func openAccessibilitySettings() { permissions.openAccessibilitySettings() }
+    func openScreenRecordingSettings() { permissions.openScreenRecordingSettings() }
+    func openNotificationSettings() { permissions.openNotificationSettings() }
 
     func indexFolder(url: URL) {
         Task {
             indexingStatus = "Indexing..."
             do {
-                try await localIndexService.indexFolder(url)
-                indexingStatus = "Indexed \(url.lastPathComponent)"
+                let count = try await localIndexService.indexFolder(url)
+                indexingStatus = "Indexed \(count) files from \(url.lastPathComponent)"
             } catch {
                 indexingStatus = "Index failed: \(error.localizedDescription)"
             }

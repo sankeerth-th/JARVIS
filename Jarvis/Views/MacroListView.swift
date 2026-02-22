@@ -21,11 +21,24 @@ struct MacroListView: View {
                 }
                 .disabled(macroName.isEmpty || macroPrompt.isEmpty)
             }
+            HStack {
+                Button("Add OCR cleanup macro") {
+                    let steps = [
+                        MacroStep(kind: .runTool, payload: ["tool": "ocrCurrentWindow"]),
+                        MacroStep(kind: .runPrompt, payload: ["prompt": "Rewrite the extracted OCR text cleanly and keep important details only:\n{{last_output}}"])
+                    ]
+                    settingsVM.createMacro(name: "Window OCR Cleanup", steps: steps)
+                }
+                .buttonStyle(.borderedProminent)
+                Text("Captures active window -> OCR -> clean rewrite.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             List(settingsVM.macros) { macro in
                 HStack {
                     VStack(alignment: .leading) {
                         Text(macro.name).bold()
-                        Text("Steps: \(macro.steps.count)")
+                        Text("Steps: \(macro.steps.map(\.kind.rawValue).joined(separator: " -> "))")
                             .font(.caption)
                     }
                     Spacer()

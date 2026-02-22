@@ -5,14 +5,17 @@ struct NotificationsView: View {
     @EnvironmentObject private var viewModel: NotificationViewModel
     @State private var keyword: String = ""
     @State private var selectedPriority: NotificationItem.Priority = .urgent
+    @State private var focusModeEnabled: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Toggle("Focus mode", isOn: $viewModel.focusModeEnabled)
+                Toggle("Focus mode", isOn: $focusModeEnabled)
                 Spacer()
                 Menu("Quiet hours") {
-                    Button("None") { viewModel.quietHours = nil }
+                    Button("None") {
+                        viewModel.quietHours = nil
+                    }
                     Button("10p-7a") {
                         viewModel.quietHours = QuietHours(start: DateComponents(hour: 22), end: DateComponents(hour: 7))
                     }
@@ -48,6 +51,18 @@ struct NotificationsView: View {
             }
         }
         .padding(8)
+        .onAppear {
+            focusModeEnabled = viewModel.focusModeEnabled
+        }
+        .onChange(of: focusModeEnabled) { _, enabled in
+            guard viewModel.focusModeEnabled != enabled else { return }
+            viewModel.focusModeEnabled = enabled
+        }
+        .onChange(of: viewModel.focusModeEnabled) { _, enabled in
+            if focusModeEnabled != enabled {
+                focusModeEnabled = enabled
+            }
+        }
     }
 
     private var keywordRuleEditor: some View {
@@ -62,7 +77,8 @@ struct NotificationsView: View {
                 }
                 Button("Add") {
                     guard !keyword.isEmpty else { return }
-                    viewModel.keywordRules[keyword] = selectedPriority
+                    let ruleKey = keyword
+                    viewModel.keywordRules[ruleKey] = selectedPriority
                     keyword = ""
                 }
             }
@@ -72,7 +88,9 @@ struct NotificationsView: View {
                         Text(key)
                         Spacer()
                         Text(value.rawValue.capitalized).font(.caption)
-                        Button(role: .destructive, action: { viewModel.keywordRules.removeValue(forKey: key) }) {
+                        Button(role: .destructive, action: {
+                            viewModel.keywordRules.removeValue(forKey: key)
+                        }) {
                             Image(systemName: "xmark")
                         }
                         .buttonStyle(.borderless)

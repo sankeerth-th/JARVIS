@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 
 @MainActor
 final class CommandPaletteViewModel: ObservableObject {
@@ -7,6 +8,7 @@ final class CommandPaletteViewModel: ObservableObject {
         case chat = "Chat"
         case notifications = "Notifications"
         case documents = "Documents"
+        case email = "Email"
         case knowledge = "Knowledge"
         case macros = "Macros"
         case diagnostics = "Diagnostics"
@@ -33,6 +35,8 @@ final class CommandPaletteViewModel: ObservableObject {
     @Published var macroLogs: [MacroExecutionLog] = []
     @Published var privacyStatus: PrivacyStatus
     @Published var ollamaReachable: Bool = false
+    @Published var documentActionOutput: String = ""
+    @Published var isDocumentActionRunning: Bool = false
 
     private let settingsStore: SettingsStore
     private let conversationService: ConversationService
@@ -50,6 +54,9 @@ final class CommandPaletteViewModel: ObservableObject {
     private var streamTask: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
     private var selectedQuickAction: QuickAction?
+    private var clipboardWatcherEnabled = false
+    private var rawStreamingBuffer: String = ""
+    private var handledToolInvocationKeys: Set<String> = []
 
     init(settingsStore: SettingsStore,
          conversationService: ConversationService,
@@ -81,6 +88,7 @@ final class CommandPaletteViewModel: ObservableObject {
         self.conversation = history.first ?? Conversation(title: "New Chat", model: settingsStore.selectedModel())
         self.quickActions = settingsStore.quickActions()
         self.privacyStatus = settingsStore.current.privacyStatus
+        self.clipboardWatcherEnabled = settingsStore.clipboardWatcherEnabled()
 
         bind()
         loadModels()
@@ -94,9 +102,14 @@ final class CommandPaletteViewModel: ObservableObject {
         settingsStore.$settings
             .receive(on: DispatchQueue.main)
             .sink { [weak self] settings in
-                self?.quickActions = settings.quickActions
-                self?.privacyStatus = settings.privacyStatus
-                self?.handleClipboardWatcherToggle(enabled: settings.clipboardWatcherEnabled)
+                guard let self else { return }
+                if self.quickActions != settings.quickActions {
+                    self.quickActions = settings.quickActions
+                }
+                if self.privacyStatus != settings.privacyStatus {
+                    self.privacyStatus = settings.privacyStatus
+                }
+                self.handleClipboardWatcherToggle(enabled: settings.clipboardWatcherEnabled)
             }
             .store(in: &cancellables)
         clipboardWatcher.onTextChange = { [weak self] text in
@@ -104,7 +117,11 @@ final class CommandPaletteViewModel: ObservableObject {
                 self?.clipboardBanner = String(text.prefix(500))
             }
         }
-        handleClipboardWatcherToggle(enabled: settingsStore.clipboardWatcherEnabled())
+        if clipboardWatcherEnabled {
+            clipboardWatcher.start()
+        } else {
+            clipboardWatcher.stop()
+        }
         Task {
             let reachable = await ollama.isReachable()
             await MainActor.run {
@@ -134,6 +151,8 @@ final class CommandPaletteViewModel: ObservableObject {
         convo.updatedAt = Date()
         conversation = convo
         conversationService.persist(convo)
+        rawStreamingBuffer = ""
+        handledToolInvocationKeys = []
         streamingBuffer = ""
         isStreaming = true
         let context = buildContext()
@@ -142,26 +161,24 @@ final class CommandPaletteViewModel: ObservableObject {
             do {
                 let stream = conversationService.streamResponse(for: prompt, conversation: convo, context: context, settings: settingsStore.current)
                 for try await chunk in stream {
-                    await MainActor.run {
-                        self.consume(chunk: chunk)
-                    }
+                    consume(chunk: chunk)
                 }
-                await MainActor.run {
-                    self.finishStreaming()
-                }
+                finishStreaming()
             } catch {
-                await MainActor.run {
-                    self.statusMessage = "Ollama error: \(error.localizedDescription)"
-                    self.isStreaming = false
-                }
+                statusMessage = "Ollama error: \(error.localizedDescription)"
+                isStreaming = false
             }
         }
     }
 
     private func consume(chunk: String) {
-        let (cleaned, invocations) = parser.extractInvocations(from: chunk)
-        streamingBuffer.append(cleaned)
+        rawStreamingBuffer.append(chunk)
+        let (cleaned, invocations) = parser.extractInvocations(from: rawStreamingBuffer)
+        streamingBuffer = cleaned
         for invocation in invocations {
+            let invocationKey = toolInvocationKey(invocation)
+            guard handledToolInvocationKeys.contains(invocationKey) == false else { continue }
+            handledToolInvocationKeys.insert(invocationKey)
             if toolService.requiresConfirmation(for: invocation.name) {
                 pendingTool = invocation
                 toolRequiresConfirmation = true
@@ -179,6 +196,8 @@ final class CommandPaletteViewModel: ObservableObject {
         conversation.updatedAt = Date()
         conversationService.persist(conversation)
         history = conversationService.loadRecentConversations()
+        rawStreamingBuffer = ""
+        handledToolInvocationKeys = []
         streamingBuffer = ""
         isStreaming = false
     }
@@ -208,6 +227,8 @@ final class CommandPaletteViewModel: ObservableObject {
         do {
             let doc = try documentService.importDocument(at: url)
             importedDocument = doc
+            documentActionOutput = ""
+            statusMessage = "Imported \(doc.title)"
         } catch {
             statusMessage = "Import failed: \(error.localizedDescription)"
         }
@@ -220,15 +241,36 @@ final class CommandPaletteViewModel: ObservableObject {
 
     func clearDocument() {
         importedDocument = nil
+        documentActionOutput = ""
+    }
+
+    func copyDocumentOutput() {
+        let output = documentActionOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !output.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(output, forType: .string)
+        statusMessage = "Document output copied"
     }
 
     func summarizeDocument(action: DocumentAction) {
-        guard importedDocument != nil else {
+        guard let importedDocument else {
             statusMessage = "Import a document first"
             return
         }
+        statusMessage = "Running \(action.rawValue)…"
         selectedQuickAction = QuickAction(title: action.rawValue, kind: .summarizeClipboard, icon: "doc.text")
-        send(prompt: "Please \(action.rawValue.lowercased()) for the attached document context.")
+        isDocumentActionRunning = true
+        Task {
+            do {
+                let output = try await conversationService.performDocumentAction(document: importedDocument, action: action, settings: settingsStore.current)
+                self.documentActionOutput = output
+                self.statusMessage = "\(action.rawValue) complete."
+                self.isDocumentActionRunning = false
+            } catch {
+                self.statusMessage = "\(action.rawValue) failed: \(error.localizedDescription)"
+                self.isDocumentActionRunning = false
+            }
+        }
     }
 
     func runTableExtraction() {
@@ -236,7 +278,31 @@ final class CommandPaletteViewModel: ObservableObject {
             statusMessage = "Copy or import a table first"
             return
         }
-        tableResult = tableExtractor.extract(from: text)
+        let localResult = tableExtractor.extract(from: text)
+        tableResult = localResult
+        guard shouldUseModelTableFallback(localResult) else {
+            statusMessage = "Table extracted locally."
+            return
+        }
+        statusMessage = "Refining table with model…"
+        Task {
+            do {
+                if let improved = try await conversationService.inferTable(text: text, settings: settingsStore.current) {
+                    await MainActor.run {
+                        self.tableResult = improved
+                        self.statusMessage = "Table extraction improved."
+                    }
+                } else {
+                    await MainActor.run {
+                        self.statusMessage = "Used local table extraction."
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.statusMessage = "Used local table extraction (\(error.localizedDescription))."
+                }
+            }
+        }
     }
 
     func searchKnowledgeBase() {
@@ -245,6 +311,11 @@ final class CommandPaletteViewModel: ObservableObject {
                 let results = try await localIndexService.search(query: knowledgeQuery, limit: 5)
                 await MainActor.run {
                     self.knowledgeResults = results
+                    if results.isEmpty {
+                        self.statusMessage = "No local matches. Add a folder in Knowledge and re-index."
+                    } else {
+                        self.statusMessage = "Found \(results.count) local match(es)."
+                    }
                 }
             } catch {
                 await MainActor.run {
@@ -308,7 +379,7 @@ final class CommandPaletteViewModel: ObservableObject {
                 send(prompt: "Turn this into a checklist:\n\(clipboard)")
             }
         case .draftEmail:
-            selectedTab = .documents
+            selectedTab = .email
         case .extractTable:
             runTableExtraction()
         case .meetingSummary:
@@ -344,9 +415,14 @@ final class CommandPaletteViewModel: ObservableObject {
         Task {
             do {
                 let models = try await ollama.listModels()
+                let names = models.map { $0.name }
                 await MainActor.run {
-                    self.availableModels = models.map { $0.name }
+                    self.availableModels = names
                     self.ollamaReachable = true
+                    if !names.contains(self.settingsStore.selectedModel()), let first = names.first {
+                        self.settingsStore.setModel(first)
+                        self.statusMessage = "Model switched to \(first) (previous selection was unavailable)."
+                    }
                 }
             } catch {
                 await MainActor.run {
@@ -362,6 +438,8 @@ final class CommandPaletteViewModel: ObservableObject {
     }
 
     private func handleClipboardWatcherToggle(enabled: Bool) {
+        guard enabled != clipboardWatcherEnabled else { return }
+        clipboardWatcherEnabled = enabled
         if enabled {
             clipboardWatcher.start()
         } else {
@@ -372,5 +450,27 @@ final class CommandPaletteViewModel: ObservableObject {
 
     var availableMacros: [Macro] {
         macroService.macros
+    }
+
+    var latestAssistantMessage: String? {
+        conversation.messages.last(where: { $0.role == .assistant })?.text
+    }
+
+    private func toolInvocationKey(_ invocation: ToolInvocation) -> String {
+        let args = invocation.arguments.keys.sorted().map { "\($0)=\(invocation.arguments[$0] ?? "")" }.joined(separator: "&")
+        return "\(invocation.name.rawValue)|\(args)"
+    }
+
+    private func shouldUseModelTableFallback(_ result: TableExtractionResult) -> Bool {
+        if result.rows.count < 2 {
+            return true
+        }
+        if result.headers.count == 1, result.rows.count >= 3 {
+            return true
+        }
+        let filledCells = result.rows.reduce(0) { partial, row in
+            partial + row.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
+        }
+        return filledCells <= result.rows.count
     }
 }

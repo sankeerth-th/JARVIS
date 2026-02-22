@@ -3,12 +3,27 @@ import AppKit
 import Vision
 
 final class ScreenshotService {
-    enum ScreenshotError: Error {
+    enum ScreenshotError: LocalizedError {
         case windowNotFound
         case captureFailed
+        case screenPermissionMissing
+
+        var errorDescription: String? {
+            switch self {
+            case .windowNotFound:
+                return "No active window was found to capture."
+            case .captureFailed:
+                return "Screen capture failed."
+            case .screenPermissionMissing:
+                return "Screen Recording permission is missing. Grant it in Settings and relaunch Jarvis."
+            }
+        }
     }
 
     func captureActiveWindow() throws -> NSImage {
+        guard ensureScreenCapturePermission() else {
+            throw ScreenshotError.screenPermissionMissing
+        }
         guard let infoList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]],
               let target = infoList.first(where: { ($0[kCGWindowLayer as String] as? Int) == 0 }),
               let windowID = target[kCGWindowNumber as String] as? CGWindowID else {
@@ -21,6 +36,9 @@ final class ScreenshotService {
     }
 
     func captureFullScreen() throws -> NSImage {
+        guard ensureScreenCapturePermission() else {
+            throw ScreenshotError.screenPermissionMissing
+        }
         guard let image = CGDisplayCreateImage(CGMainDisplayID()) else {
             throw ScreenshotError.captureFailed
         }
@@ -28,10 +46,21 @@ final class ScreenshotService {
     }
 
     func capture(selection rect: CGRect) throws -> NSImage {
+        guard ensureScreenCapturePermission() else {
+            throw ScreenshotError.screenPermissionMissing
+        }
         guard let cgImage = CGWindowListCreateImage(rect, [.optionOnScreenOnly], kCGNullWindowID, [.bestResolution]) else {
             throw ScreenshotError.captureFailed
         }
         return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+    }
+
+    private func ensureScreenCapturePermission() -> Bool {
+        if CGPreflightScreenCaptureAccess() {
+            return true
+        }
+        _ = CGRequestScreenCaptureAccess()
+        return false
     }
 }
 

@@ -19,7 +19,10 @@ final class NotificationViewModel: ObservableObject {
     private func bind() {
         service.$prioritizedNotifications
             .receive(on: DispatchQueue.main)
-            .assign(to: &$notifications)
+            .sink { [weak self] items in
+                self?.notifications = items
+            }
+            .store(in: &cancellables)
         $priorityApps
             .sink { [weak self] apps in self?.service.setPriorityApps(apps) }
             .store(in: &cancellables)
@@ -46,5 +49,9 @@ final class NotificationViewModel: ObservableObject {
             }
             return copy
         }
+    }
+
+    func sendTestNotification() {
+        service.sendTestNotification()
     }
 }
