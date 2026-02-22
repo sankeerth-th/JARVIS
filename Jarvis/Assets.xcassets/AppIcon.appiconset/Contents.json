@@ -1,0 +1,32 @@
+{
+  "images" : [
+    {
+      "idiom" : "mac",
+      "size" : "128x128",
+      "scale" : "1x",
+      "filename" : "JarvisIcon.png"
+    },
+    {
+      "idiom" : "mac",
+      "size" : "256x256",
+      "scale" : "2x",
+      "filename" : "JarvisIcon.png"
+    },
+    {
+      "idiom" : "mac",
+      "size" : "512x512",
+      "scale" : "1x",
+      "filename" : "JarvisIcon.png"
+    },
+    {
+      "idiom" : "mac",
+      "size" : "512x512",
+      "scale" : "2x",
+      "filename" : "JarvisIcon.png"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
