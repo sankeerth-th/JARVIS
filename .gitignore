@@ -1,1 +1,19 @@
+# macOS
 .DS_Store
+
+# Xcode
+DerivedData/
+build/
+*.xcworkspace
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# SwiftPM
+.build/
+
+# Module cache
+ModuleCache.noindex/
+
+# Logs
+*.log
