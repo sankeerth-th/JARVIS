@@ -10,6 +10,10 @@
 		0BA37924A1574DDDA5786ACC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2F91576D8D9348829D2CFDA9 /* Assets.xcassets */; };
 		0C09101A92224B05A9393A7D /* SettingsStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D1CD63C0614279AED9F291 /* SettingsStoreTests.swift */; };
 		1A42C71E2C784F11B05C49B6 /* ConversationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84D2E82174F34D2481A47DB9 /* ConversationService.swift */; };
+		A10000000000000000000011 /* JarvisMailExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* JarvisMailExtension.swift */; };
+		A10000000000000000000012 /* JarvisComposeSessionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* JarvisComposeSessionHandler.swift */; };
+		A10000000000000000000013 /* JarvisMailViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000003 /* JarvisMailViewController.swift */; };
+		A10000000000000000000014 /* JarvisMailExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A10000000000000000000005 /* JarvisMailExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		23903BB4A5D94EB6AC3245D5 /* LocalIndexService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA6E8A2548F4E04BDB77CB8 /* LocalIndexService.swift */; };
 		31D4A3FBFBDD4304BD29C352 /* KnowledgeBaseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8836F2D0020B43F188AB38DF /* KnowledgeBaseView.swift */; };
 		33998A027E084E37B2CF1F1F /* CaptureServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61D00CDB1E084085BBE4C16C /* CaptureServices.swift */; };
@@ -48,6 +52,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		A10000000000000000000041 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 736C7A77357744E5A73DBF1E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000000000000000000030;
+			remoteInfo = JarvisMailExtension;
+		};
 		DE923E119AF543B0993F1886 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 736C7A77357744E5A73DBF1E /* Project object */;
@@ -102,10 +113,36 @@
 		F49A760AA84D420EAB1E9208 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
 		F8171823B1B74600BAF98059 /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
 		FA133D6BEE4B400EBF4B9A48 /* DiagnosticsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsService.swift; sourceTree = "<group>"; };
+		A10000000000000000000001 /* JarvisMailExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisMailExtension.swift; sourceTree = "<group>"; };
+		A10000000000000000000002 /* JarvisComposeSessionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisComposeSessionHandler.swift; sourceTree = "<group>"; };
+		A10000000000000000000003 /* JarvisMailViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisMailViewController.swift; sourceTree = "<group>"; };
+		A10000000000000000000004 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A10000000000000000000005 /* JarvisMailExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; path = JarvisMailExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A10000000000000000000024 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A10000000000000000000014 /* JarvisMailExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		566620FFACB9449B8F8C30B9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000022 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -189,10 +226,22 @@
 			isa = PBXGroup;
 			children = (
 				1AFC005A019E4E76B9222C94 /* Jarvis */,
+				A10000000000000000000006 /* JarvisMailExtension */,
 				48FE19BA35844076850B2DD8 /* JarvisTests */,
 				E821E7F69F6D472B96A8AA1D /* Products */,
 				61764E1200D148809694058F /* README.md */,
 			);
+			sourceTree = "<group>";
+		};
+		A10000000000000000000006 /* JarvisMailExtension */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000001 /* JarvisMailExtension.swift */,
+				A10000000000000000000002 /* JarvisComposeSessionHandler.swift */,
+				A10000000000000000000003 /* JarvisMailViewController.swift */,
+				A10000000000000000000004 /* Info.plist */,
+			);
+			path = JarvisMailExtension;
 			sourceTree = "<group>";
 		};
 		C2B04E078B41477CB5672C2C /* Services */ = {
@@ -223,6 +272,7 @@
 			isa = PBXGroup;
 			children = (
 				673A20B5F5C2490B892552DB /* Jarvis.app */,
+				A10000000000000000000005 /* JarvisMailExtension.appex */,
 				6A11E13A4C614A3DA70E9813 /* JarvisTests.xctest */,
 			);
 			name = Products;
@@ -237,16 +287,35 @@
 			buildPhases = (
 				A9944BA087D74325985BCB33 /* Sources */,
 				E96BB2BB699F492D89BED20C /* Resources */,
+				A10000000000000000000024 /* Embed App Extensions */,
 				90486B89FD614CFEBB10D030 /* Frameworks */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				A10000000000000000000042 /* PBXTargetDependency */,
 			);
 			name = Jarvis;
 			productName = Jarvis;
 			productReference = 673A20B5F5C2490B892552DB /* Jarvis.app */;
 			productType = "com.apple.product-type.application";
+		};
+		A10000000000000000000030 /* JarvisMailExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000031 /* Build configuration list for PBXNativeTarget "JarvisMailExtension" */;
+			buildPhases = (
+				A10000000000000000000021 /* Sources */,
+				A10000000000000000000023 /* Resources */,
+				A10000000000000000000022 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = JarvisMailExtension;
+			productName = JarvisMailExtension;
+			productReference = A10000000000000000000005 /* JarvisMailExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 		E0C5082233AF4CCEBA41EE09 /* JarvisTests */ = {
 			isa = PBXNativeTarget;
@@ -289,6 +358,7 @@
 			projectRoot = "";
 			targets = (
 				0EBEA01C5C5145B8A4AFC209 /* Jarvis */,
+				A10000000000000000000030 /* JarvisMailExtension */,
 				E0C5082233AF4CCEBA41EE09 /* JarvisTests */,
 			);
 		};
@@ -307,6 +377,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				0BA37924A1574DDDA5786ACC /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000023 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -364,9 +441,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A10000000000000000000021 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000011 /* JarvisMailExtension.swift in Sources */,
+				A10000000000000000000012 /* JarvisComposeSessionHandler.swift in Sources */,
+				A10000000000000000000013 /* JarvisMailViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		A10000000000000000000042 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000000000000000000030 /* JarvisMailExtension */;
+			targetProxy = A10000000000000000000041 /* PBXContainerItemProxy */;
+		};
 		6550360F24EC48B195376058 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 0EBEA01C5C5145B8A4AFC209 /* Jarvis */;
@@ -384,6 +476,7 @@
 				CLANG_ENABLE_OBJC_WEAK = YES;
 				CODE_SIGN_ENTITLEMENTS = Jarvis/Jarvis.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
@@ -409,6 +502,7 @@
 				CLANG_ENABLE_OBJC_WEAK = YES;
 				CODE_SIGN_ENTITLEMENTS = Jarvis/Jarvis.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
@@ -424,6 +518,56 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 			};
 			name = Debug;
+		};
+		A10000000000000000000032 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGN_ENTITLEMENTS = JarvisMailExtension/JarvisMailExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				DEAD_CODE_STRIPPING = YES;
+				INFOPLIST_FILE = JarvisMailExtension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.offline.Jarvis.MailExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRIP_INSTALLED_PRODUCT = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A10000000000000000000033 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGN_ENTITLEMENTS = JarvisMailExtension/JarvisMailExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				DEAD_CODE_STRIPPING = YES;
+				INFOPLIST_FILE = JarvisMailExtension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.offline.Jarvis.MailExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRIP_INSTALLED_PRODUCT = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
 		};
 		98E77E93720442C19BD7F4CE /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -546,6 +690,15 @@
 			buildConfigurations = (
 				98E77E93720442C19BD7F4CE /* Debug */,
 				C28F89A1D6534082B68CA2BE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A10000000000000000000031 /* Build configuration list for PBXNativeTarget "JarvisMailExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000032 /* Debug */,
+				A10000000000000000000033 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

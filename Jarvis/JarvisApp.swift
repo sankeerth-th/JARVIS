@@ -49,6 +49,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    @MainActor
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let url = urls.first else { return }
+        handleIncomingURL(url)
+    }
+
     private func configureStatusItem() {
         let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = NSImage(systemSymbolName: "bolt.circle", accessibilityDescription: "Jarvis")
@@ -105,5 +111,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    @MainActor
+    private func handleIncomingURL(_ url: URL) {
+        guard url.scheme?.lowercased() == "jarvis" else { return }
+        let host = url.host?.lowercased()
+        let target = ((host?.isEmpty == false) ? host : nil) ?? url.path.replacingOccurrences(of: "/", with: "").lowercased()
+        guard target == "mail-compose" else { return }
+
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let queryMap = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        let splitEmails: (String?) -> [String] = { raw in
+            guard let raw else { return [] }
+            return raw.split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        }
+
+        environment.emailDraftViewModel.loadMailContext(
+            subject: queryMap["subject"],
+            to: splitEmails(queryMap["to"]),
+            cc: splitEmails(queryMap["cc"]),
+            bcc: splitEmails(queryMap["bcc"]),
+            thread: queryMap["thread"]
+        )
+        environment.commandPaletteViewModel.selectTab(.email)
+        environment.commandPaletteViewModel.showOverlay()
+        if queryMap["autoDraft"] == "1" {
+            environment.emailDraftViewModel.draftReply()
+        }
     }
 }

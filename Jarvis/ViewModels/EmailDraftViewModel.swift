@@ -131,6 +131,30 @@ final class EmailDraftViewModel: ObservableObject {
         try? FileManager.default.removeItem(at: tempURL)
     }
 
+    func loadMailContext(subject: String?, to: [String], cc: [String], bcc: [String], thread: String?) {
+        var lines: [String] = []
+        if let subject, !subject.isEmpty {
+            lines.append("Subject: \(subject)")
+        }
+        if !to.isEmpty {
+            lines.append("To: \(to.joined(separator: ", "))")
+        }
+        if !cc.isEmpty {
+            lines.append("Cc: \(cc.joined(separator: ", "))")
+        }
+        if !bcc.isEmpty {
+            lines.append("Bcc: \(bcc.joined(separator: ", "))")
+        }
+        if let thread, !thread.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            lines.append("Thread:\n\(thread)")
+        }
+        let merged = lines.joined(separator: "\n")
+        guard !merged.isEmpty else { return }
+        extractedText = merged
+        citations = merged.split(separator: "\n").prefix(5).map { String($0.prefix(120)) }
+        statusMessage = "Loaded context from Mail extension"
+    }
+
     private func runCapture(_ capture: @escaping () throws -> NSImage) {
         Task {
             isCapturing = true
