@@ -55,11 +55,13 @@ struct CommandPaletteView: View {
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
+            .padding(.top, 22)
             .animation(.easeInOut(duration: 0.20), value: isCompactMode)
             .animation(.easeInOut(duration: 0.18), value: commandVM.selectedTab)
         }
-        .frame(minWidth: isCompactMode ? 560 : 760, minHeight: isCompactMode ? 210 : 560)
+        .frame(minWidth: isCompactMode ? 640 : 940, minHeight: isCompactMode ? 240 : 620)
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(Color.white.opacity(0.16), lineWidth: 1)
@@ -97,27 +99,46 @@ struct CommandPaletteView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            AssistantOrbView()
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Jarvis")
-                    .font(.system(size: 20, weight: .semibold))
-                Text("Offline assistant")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        VStack(spacing: 10) {
+            HStack(spacing: 12) {
+                AssistantOrbView()
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Jarvis")
+                        .font(.system(size: 20, weight: .semibold))
+                    Text("Offline assistant")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                AssistantStatusChip(
+                    title: commandVM.privacyStatus.description,
+                    icon: commandVM.privacyStatus == .offline ? "lock.shield" : "wifi",
+                    tint: commandVM.privacyStatus == .offline ? .green : .orange
+                )
+
+                Button(action: commandVM.clearHistory) {
+                    Label("Clear", systemImage: "trash")
+                }
+                .buttonStyle(AssistantPillButtonStyle(tint: .red.opacity(0.24)))
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isCompactMode.toggle()
+                        if isCompactMode {
+                            commandVM.selectTab(.chat)
+                        }
+                    }
+                } label: {
+                    Label(isCompactMode ? "Expand" : "Compact", systemImage: isCompactMode ? "arrow.up.left.and.arrow.down.right" : "arrow.down.right.and.arrow.up.left")
+                }
+                .buttonStyle(AssistantPillButtonStyle(tint: Color.white.opacity(0.10)))
             }
 
-            Spacer()
-
-            AssistantStatusChip(
-                title: commandVM.privacyStatus.description,
-                icon: commandVM.privacyStatus == .offline ? "lock.shield" : "wifi",
-                tint: commandVM.privacyStatus == .offline ? .green : .orange
-            )
-
-            VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
                 Text("Model")
-                    .font(.caption2)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                 Picker("Model", selection: $selectedModel) {
                     ForEach(modelOptions, id: \.self) { model in
@@ -126,33 +147,18 @@ struct CommandPaletteView: View {
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
-                .frame(width: 170)
+                .frame(width: 210)
                 .disabled(modelOptions.isEmpty)
-            }
 
-            Toggle("", isOn: $loggingDisabled)
-                .labelsHidden()
-                .toggleStyle(.switch)
-            Text("No logs")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                Spacer()
 
-            Button(action: commandVM.clearHistory) {
-                Label("Clear", systemImage: "trash")
+                Toggle("", isOn: $loggingDisabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                Text("No logs")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(AssistantPillButtonStyle(tint: .red.opacity(0.24)))
-
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isCompactMode.toggle()
-                    if isCompactMode {
-                        commandVM.selectTab(.chat)
-                    }
-                }
-            } label: {
-                Label(isCompactMode ? "Expand" : "Compact", systemImage: isCompactMode ? "arrow.up.left.and.arrow.down.right" : "arrow.down.right.and.arrow.up.left")
-            }
-            .buttonStyle(AssistantPillButtonStyle(tint: Color.white.opacity(0.10)))
         }
         .padding(12)
         .assistantCard()
@@ -356,7 +362,7 @@ private struct ChatTabView: View {
                 quickActionPanel
                 historyPanel
             }
-            .frame(width: 280)
+            .frame(width: 332)
         }
     }
 
@@ -365,14 +371,22 @@ private struct ChatTabView: View {
             Text("Quick Actions")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 122), spacing: 8)], spacing: 8) {
+            let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
+            LazyVGrid(columns: columns, spacing: 8) {
                 ForEach(commandVM.quickActions) { action in
                     Button(action: { commandVM.performQuickAction(action) }) {
-                        Label(action.title, systemImage: action.icon)
-                            .font(.system(size: 12, weight: .medium))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: action.icon)
+                                .frame(width: 14)
+                            Text(action.title)
+                                .font(.system(size: 12, weight: .medium))
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                            Spacer(minLength: 0)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
                     }
                     .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.18)))
                 }
@@ -425,7 +439,11 @@ private struct ChatTabView: View {
                         ConversationRow(message: message)
                     }
                     if commandVM.isStreaming {
-                        ConversationRow(message: ChatMessage(role: .assistant, text: commandVM.streamingBuffer, isStreaming: true))
+                        ConversationRow(message: ChatMessage(
+                            role: .assistant,
+                            text: commandVM.streamingBuffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Jarvis is generating..." : commandVM.streamingBuffer,
+                            isStreaming: true
+                        ))
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -441,13 +459,6 @@ private struct ChatTabView: View {
                     if let last = commandVM.conversation.messages.last?.id {
                         proxy.scrollTo(last, anchor: .bottom)
                     }
-                }
-            }
-            .overlay(alignment: .bottomLeading) {
-                if commandVM.isStreaming {
-                    TypingPulseChipView(label: "Jarvis is generating...")
-                        .padding(8)
-                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 }
             }
         }
@@ -698,38 +709,6 @@ private struct AssistantOrbView: View {
             withAnimation(.easeInOut(duration: 2.3).repeatForever(autoreverses: true)) {
                 glow = true
             }
-        }
-    }
-}
-
-private struct TypingPulseChipView: View {
-    let label: String
-    @State private var animate: Bool = false
-
-    var body: some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 4) {
-                ForEach(0..<3, id: \.self) { index in
-                    Circle()
-                        .fill(Color.cyan.opacity(0.85))
-                        .frame(width: 5, height: 5)
-                        .scaleEffect(animate ? (index == 1 ? 1.2 : 0.9) : (index == 1 ? 0.9 : 1.15))
-                        .animation(
-                            .easeInOut(duration: 0.55)
-                            .repeatForever(autoreverses: true)
-                            .delay(Double(index) * 0.08),
-                            value: animate
-                        )
-                }
-            }
-            Text(label)
-                .font(.caption2)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(Color.white.opacity(0.08), in: Capsule())
-        .onAppear {
-            animate = true
         }
     }
 }

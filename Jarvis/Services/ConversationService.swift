@@ -190,7 +190,15 @@ final class ConversationService {
     private func buildSystemPrompt(settings: AppSettings) -> String {
         let base = settings.systemPrompt
         let toolGuide = "Use the offline tools via the syntax <<tool{\"name\":\"toolName\",\"arguments\":{...}}>>. Available tools: calculate(expression), ocrCurrentWindow(reason), listNotifications(apps,limit), searchLocalDocs(query,topK), summarize(text,style). Request confirmation before OCR or file actions and wait for the tool result before continuing. Maintain \(settings.tone.promptValue) tone. Never claim to read files or screens unless given tool output."
-        return base + "\n" + toolGuide
+        let strictBehavior = """
+        Strict response rules:
+        - Do not return generic assistant greetings.
+        - Do not ask "What can I do for you?".
+        - Answer the latest user question directly in the first line.
+        - If information is missing, ask one focused clarification question.
+        - Keep responses concise and actionable.
+        """
+        return [base, toolGuide, strictBehavior].joined(separator: "\n")
     }
 
     private func sanitizeModelOutput(_ text: String) -> String {

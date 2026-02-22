@@ -197,7 +197,8 @@ final class CommandPaletteViewModel: ObservableObject {
     }
 
     private func finishStreaming() {
-        let assistantMessage = ChatMessage(role: .assistant, text: streamingBuffer)
+        let finalReply = sanitizeAssistantReply(streamingBuffer)
+        let assistantMessage = ChatMessage(role: .assistant, text: finalReply)
         conversation.messages.append(assistantMessage)
         conversation.updatedAt = Date()
         conversationService.persist(conversation)
@@ -206,6 +207,31 @@ final class CommandPaletteViewModel: ObservableObject {
         handledToolInvocationKeys = []
         streamingBuffer = ""
         isStreaming = false
+    }
+
+    private func sanitizeAssistantReply(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return "I could not generate a useful answer. Please retry."
+        }
+        let blockedPhrases = [
+            "what can i do for you",
+            "i'm here and ready when you are",
+            "hello! 😊 i'm here and ready when you are"
+        ]
+        let normalizedLines = trimmed
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { line in
+                let lower = line.lowercased()
+                return !blockedPhrases.contains(where: lower.contains)
+            }
+            .filter { !$0.isEmpty }
+        let cleaned = normalizedLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.isEmpty {
+            return "I could not generate a useful answer. Please retry."
+        }
+        return cleaned
     }
 
     private func buildContext() -> ConversationContext {

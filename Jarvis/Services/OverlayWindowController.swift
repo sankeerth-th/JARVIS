@@ -103,7 +103,7 @@ final class OverlayWindowController: NSWindowController, NSWindowDelegate {
 
     private func centeredFrame(on screen: NSScreen) -> NSRect {
         let visible = screen.visibleFrame
-        let size = NSSize(width: min(820, visible.width * 0.65), height: min(620, visible.height * 0.7))
+        let size = NSSize(width: min(1120, visible.width * 0.82), height: min(760, visible.height * 0.82))
         let origin = NSPoint(
             x: visible.midX - size.width / 2,
             y: visible.midY - size.height / 2
