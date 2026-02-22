@@ -1,86 +1,159 @@
-# Jarvis (Local-First Siri Alternative)
+# Jarvis (Offline macOS Assistant)
 
-Jarvis is a SwiftUI + AppKit macOS 14+ menu bar app that turns your Mac into a fully offline personal assistant powered by the local Ollama runtime. It focuses on privacy (no cloud calls), actionable summaries, and faster workflows triggered from a global `⌘J` overlay.
+Jarvis is a local-first macOS menu bar assistant built with SwiftUI + AppKit.  
+It runs fully offline with Ollama on your Mac and opens with global `Cmd+J`.
 
-## Highlights
-- **Offline by design:** Every interaction stays on-device. Jarvis talks to Ollama over `http://localhost:11434` and never uploads text or screenshots.
-- **Menu bar + overlay palette:** Runs as a background accessory app with a Carbon-backed global hotkey. Press `⌘J` anywhere to open the command palette, search history, trigger skills, or run workflows.
-- **Rich skills:**
-  - Notes/docs summarization for TXT/MD/PDF/DOCX (PDFKit + NSAttributedString reader).
-  - Priority inbox that ingests forwarded notifications, applies quiet hours + keyword rules, and proposes drafts.
-  - Email drafting from OCR’d screenshots (Vision framework + Screen Recording permissions).
-  - Table extractor with Markdown/CSV/JSON export plus a deterministic smart calculator.
-  - Clipboard watcher (optional) that surfaces quick actions like grammar fixes, checklist conversion, and meeting recaps.
-  - Local knowledge base with SQLite embeddings (Ollama’s `/api/embeddings`) or keyword fallback plus semantic search UI.
-  - Workflow macros (“skills”) that chain summaries, doc lookups, and prompts for automations such as daily wrap-ups.
-- **Tool calling safety:** The assistant only performs sensitive actions (OCR, file reads, notification lookups) after explicit approval in the overlay.
-- **Diagnostics + privacy controls:** Clear history, disable logging, see permission status, and get “start Ollama” guidance if the daemon isn’t reachable.
+## What You Need
 
-## Quick Start
-1. **Install dependencies**
+- macOS 14+
+- Xcode 16+ (Apple Silicon recommended)
+- [Ollama](https://ollama.com/) installed locally
+- A pulled local model (example: `gemma3:12b`)
+
+## Install From GitHub (Clean Setup)
+
+1. Clone:
    ```bash
-   brew install swiftlint # optional
-   curl -fsSL https://ollama.com/install.sh | sh
-   ollama pull mistral
+   git clone <YOUR_GITHUB_REPO_URL> JARVIS
+   cd JARVIS
    ```
-2. **Open the project**
+2. Verify project is readable:
+   ```bash
+   xcodebuild -list -project Jarvis.xcodeproj
+   ```
+3. Install/start Ollama and pull a model:
+   ```bash
+   ollama pull gemma3:12b
+   ollama serve
+   ```
+4. In another terminal, confirm Ollama is reachable:
+   ```bash
+   curl http://127.0.0.1:11434/api/tags
+   ```
+5. Open project in Xcode:
    ```bash
    open Jarvis.xcodeproj
    ```
-3. **Select the `Jarvis` scheme** → run on macOS 14+ (Apple Silicon recommended).
-4. **First launch onboarding**
-   - Grant *Accessibility* (global hotkey / notification scraping helper).
-   - Grant *Screen Recording* for screenshot-to-email drafting.
-   - Approve *Notifications* so Jarvis can show prioritised digests.
-5. **Start Ollama** if it isn’t running already:
+
+## Xcode Setup (Important)
+
+1. Select scheme: **Jarvis** (not `JarvisMailExtension`).
+2. Select run destination: **My Mac**.
+3. `Signing & Capabilities`:
+   - For target `Jarvis`: choose your Apple Development team.
+   - For target `JarvisMailExtension`: use same team.
+4. Build once: `Cmd+B`.
+5. Run app: `Cmd+R`.
+
+If Xcode asks "Choose an app to run this extension with", you are running the extension scheme by mistake.  
+Switch scheme back to `Jarvis`.
+
+## First Launch Permissions
+
+Grant only what Jarvis needs:
+
+- Accessibility (global hotkey and optional automation)
+- Screen Recording (window/area capture for OCR)
+- Notifications (priority inbox features)
+- File access is user-selected via Open Panel/bookmarks
+
+Then restart Jarvis once after granting permissions.
+
+## Basic Run Checklist
+
+1. Jarvis icon appears in menu bar.
+2. Press `Cmd+J` from any app -> overlay opens.
+3. Diagnostics tab shows:
+   - Ollama: Connected
+   - Model: selected and available
+4. Import a document in Documents tab and run `Summarize`.
+
+## Mail Extension (Optional)
+
+The main app works without this.
+
+To enable extension in Apple Mail:
+
+1. Build and run Jarvis once.
+2. Open Mail -> Settings -> Extensions.
+3. Enable `JarvisMailExtension` if listed.
+
+If it does not appear:
+
+- Ensure both targets are signed with the same non-adhoc Apple Development team.
+- Quit and reopen Mail.
+- Rebuild Jarvis.
+
+## Troubleshooting
+
+### `Cmd+J` does not work
+
+- Confirm scheme is `Jarvis`.
+- Confirm Jarvis is running (menu bar icon visible).
+- Re-check Accessibility permission.
+- Quit and relaunch Jarvis.
+
+### Ollama "connection refused"
+
+Use:
+```bash
+curl http://127.0.0.1:11434/api/tags
+```
+
+- If it fails, start Ollama:
+  ```bash
+  ollama serve
+  ```
+- If `address already in use`, Ollama is already running; do not start a second instance.
+
+### Screen capture keeps asking permission
+
+1. System Settings -> Privacy & Security -> Screen & System Audio Recording.
+2. Toggle Jarvis off/on.
+3. Quit Jarvis fully and relaunch.
+
+### "Open Mail" opens browser
+
+Set Apple Mail as default mail app:
+Mail -> Settings -> General -> Default email reader.
+
+### Build warning: `not stripping binary because it is signed`
+
+This is a warning only. Build can still succeed.
+
+## Build/Test From Terminal
+
+Build:
+```bash
+xcodebuild -project Jarvis.xcodeproj -scheme Jarvis -configuration Debug -destination 'generic/platform=macOS' build
+```
+
+Run tests:
+```bash
+xcodebuild test -project Jarvis.xcodeproj -scheme Jarvis -destination 'platform=macOS'
+```
+
+## Project Layout
+
+```text
+Jarvis.xcodeproj/        Xcode project
+Jarvis/                  App source (UI, view models, services)
+JarvisMailExtension/     Optional Apple Mail extension target
+JarvisTests/             Unit tests
+README.md                Setup + usage docs
+```
+
+## Publishing New Features Regularly
+
+Recommended flow for each update:
+
+1. Create feature branch:
    ```bash
-   ollama serve
+   git checkout -b codex/<feature-name>
    ```
-   The overlay shows a red banner and “Retry” button until the API responds.
+2. Implement + test (`Cmd+B`, `Cmd+U`).
+3. Update `README.md` for user-facing changes.
+4. Commit with clear message.
+5. Push and open PR to `main`.
 
-## Building Blocks
-- **Architecture:** MVVM + service layer. Core services live under `Jarvis/Services` (Ollama client, document import, OCR, screenshot capture, notification rules, knowledge index, workflows, calculator, permissions, etc.). View models orchestrate context assembly per tab, while SwiftUI views render the command palette, diagnostics, settings, and skill panes. Persistence uses a handcrafted SQLite wrapper (`JarvisDatabase`) with WAL mode for conversations, macros, and indexed documents.
-- **Overlay & hotkey:** `HotKeyCenter` registers CMD+J via Carbon so it works globally. `OverlayWindowController` keeps the translucent SwiftUI palette centered on the user’s current display and remembers window geometry.
-- **Tool protocol:** `ConversationService` injects a system prompt instructing Ollama to emit `<<tool{"name":"…"}>>` payloads. `CommandPaletteViewModel` parses the stream, asks for confirmation when needed, and delegates to `ToolExecutionService` for calculator/notification/doc search/OCR helpers.
-- **Document pipeline:** `DocumentImportService` handles text, Markdown, PDF (PDFKit), and DOCX (NSAttributedString). Results feed into quick actions (summaries, grammar fixes, table extraction) and the local knowledge base.
-- **Knowledge base:** `LocalIndexService` indexes user-selected folders. When embeddings are unavailable, it falls back to keyword vectors so search still works offline.
-- **Notifications:** `NotificationService` listens for forwarded notifications (via `DistributedNotificationCenter` signal “com.jarvis.forwardedNotification”) and enriches them with keyword + quiet-hour rules. `NotificationsView` lets you tweak focus mode, add keyword → priority mappings, and copy summaries.
-- **Workflows & macros:** Stored in SQLite and editable in the Macros tab. Each step can run prompts, summarize notifications, or pull context from the indexed knowledge base, making it easy to create “Daily wrap-up” or “Code review” recipes.
-- **Calculator & tables:** Smart calculator uses deterministic parsing plus `NSExpression`, with unit tests. Table extraction infers delimiters, returns Markdown/CSV/JSON, and is driveable from OCR text/clipboard.
-
-## Permissions & Privacy
-Jarvis is careful about data flow:
-- **No screenshots stored** — OCR runs in-memory and drafts keep only extracted text.
-- **History controls** — “Clear History” removes conversations, and “Disable logging” stops persistence altogether.
-- **Selective clipboard watcher** — opt-in via Settings. Toggle off to immediately stop polling.
-- **Tool approvals** — Screen capture, notification listing, and doc searches require a manual “Approve” button press inside the overlay.
-
-## Extending Jarvis Skills
-- **Add quick actions:** Edit `AppSettings.quickActions` defaults or expose new buttons in `CommandPaletteView`.
-- **New documents:** Implement another importer inside `DocumentImportService` and wire actions through `CommandPaletteViewModel.importDocuments`.
-- **New tools:** Extend `ToolInvocation.ToolName`, update the system prompt, and teach `ToolExecutionService` how to run the action (plus whether confirmation is needed).
-- **Workflow macros:** Each `MacroStep` can call prompts or internal services. Add new step kinds (e.g., calendar/Reminders) by enriching `WorkflowEngine`.
-
-## Testing & QA
-1. **Unit tests** (calculator, table parser, settings persistence): `⌘U` or `xcodebuild test -scheme Jarvis -destination 'platform=macOS'`.
-2. **Manual test plan**
-   - Launch app → ensure menu bar icon replaces Dock.
-   - Press `⌘J` on multiple displays; overlay follows cursor display.
-   - Toggle privacy banner by stopping/starting `ollama serve`.
-   - Import sample PDFs/DOCX and run each document action (summary/bullets/grammar/table).
-   - Simulate notification ingestion via `DistributedNotificationCenter` or share extension, confirm priority buckets + keyword overrides.
-   - Run “Draft email reply” on a captured Messages/Mail window and adjust tone buttons.
-   - Add folders to the knowledge base, verify search results appear with semantic matches.
-   - Enable clipboard watcher, copy text, trigger quick actions, then disable watcher.
-   - Create/run/delete macros, verifying the execution log updates.
-   - Visit Diagnostics tab to ensure permissions + latency values update.
-
-## Folder Map
-```
-Jarvis.xcodeproj/           Xcode project
-Jarvis/                     App sources (SwiftUI + services + resources)
-JarvisTests/                Unit tests + Info.plist
-README.md                   This file
-```
-
-Jarvis is intentionally self-contained: no CocoaPods/SPM dependencies are required beyond the system SDK and the local Ollama server. EOF
+Jarvis is designed to stay local-first as features grow: keep network optional and disabled by default.
