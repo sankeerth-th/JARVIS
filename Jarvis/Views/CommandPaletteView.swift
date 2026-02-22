@@ -8,7 +8,7 @@ struct CommandPaletteView: View {
     @EnvironmentObject private var settingsVM: SettingsViewModel
     @State private var selectedModel: String = ""
     @State private var loggingDisabled: Bool = false
-    @State private var animateAmbientBackground: Bool = false
+    @State private var isCompactMode: Bool = true
 
     var body: some View {
         ZStack {
@@ -17,18 +17,17 @@ struct CommandPaletteView: View {
                     Color(red: 0.08, green: 0.09, blue: 0.14),
                     Color(red: 0.05, green: 0.06, blue: 0.09)
                 ],
-                startPoint: animateAmbientBackground ? .topLeading : .bottomTrailing,
-                endPoint: animateAmbientBackground ? .bottomTrailing : .topLeading
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
             )
             .overlay(
                 RadialGradient(
-                    colors: [Color.cyan.opacity(0.18), .clear],
-                    center: animateAmbientBackground ? .topLeading : .bottomTrailing,
+                    colors: [Color.cyan.opacity(0.12), .clear],
+                    center: .topLeading,
                     startRadius: 20,
                     endRadius: 520
                 )
             )
-            .animation(.easeInOut(duration: 14).repeatForever(autoreverses: true), value: animateAmbientBackground)
 
             VStack(spacing: 12) {
                 header
@@ -45,23 +44,22 @@ struct CommandPaletteView: View {
                 if commandVM.toolRequiresConfirmation, let pendingTool = commandVM.pendingTool {
                     pendingToolBanner(invocation: pendingTool)
                 }
-                tabRail
-                ZStack {
+                if isCompactMode {
+                    compactIdleBody
+                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                } else {
+                    tabRail
                     tabContent
-                        .id(commandVM.selectedTab)
-                        .transition(
-                            .asymmetric(
-                                insertion: .opacity.combined(with: .scale(scale: 0.985)),
-                                removal: .opacity
-                            )
-                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(.top, 4)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .animation(.spring(response: 0.30, dampingFraction: 0.88), value: commandVM.selectedTab)
             }
             .padding(16)
+            .animation(.easeInOut(duration: 0.20), value: isCompactMode)
+            .animation(.easeInOut(duration: 0.18), value: commandVM.selectedTab)
         }
-        .frame(minWidth: 760, minHeight: 560)
+        .frame(minWidth: isCompactMode ? 560 : 760, minHeight: isCompactMode ? 210 : 560)
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(Color.white.opacity(0.16), lineWidth: 1)
@@ -69,12 +67,14 @@ struct CommandPaletteView: View {
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .background(.ultraThinMaterial)
         .onAppear {
-            if !animateAmbientBackground {
-                animateAmbientBackground = true
-            }
             syncFromSettings()
             commandVM.loadModels()
             diagnosticsVM.refresh()
+        }
+        .onChange(of: commandVM.selectedTab) { _, selected in
+            if selected != .chat, isCompactMode {
+                isCompactMode = false
+            }
         }
         .onChange(of: settingsVM.settings.selectedModel) { _, model in
             if selectedModel != model {
@@ -141,9 +141,87 @@ struct CommandPaletteView: View {
                 Label("Clear", systemImage: "trash")
             }
             .buttonStyle(AssistantPillButtonStyle(tint: .red.opacity(0.24)))
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isCompactMode.toggle()
+                    if isCompactMode {
+                        commandVM.selectTab(.chat)
+                    }
+                }
+            } label: {
+                Label(isCompactMode ? "Expand" : "Compact", systemImage: isCompactMode ? "arrow.up.left.and.arrow.down.right" : "arrow.down.right.and.arrow.up.left")
+            }
+            .buttonStyle(AssistantPillButtonStyle(tint: Color.white.opacity(0.10)))
         }
         .padding(12)
         .assistantCard()
+    }
+
+    private var compactIdleBody: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text("Quick ask")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Chat") {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isCompactMode = false
+                        commandVM.selectTab(.chat)
+                    }
+                }
+                .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.16)))
+                Button("Docs") {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isCompactMode = false
+                        commandVM.selectTab(.documents)
+                    }
+                }
+                .buttonStyle(AssistantPillButtonStyle(tint: Color.white.opacity(0.10)))
+                Button("Email") {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isCompactMode = false
+                        commandVM.selectTab(.email)
+                    }
+                }
+                .buttonStyle(AssistantPillButtonStyle(tint: Color.white.opacity(0.10)))
+            }
+
+            HStack(spacing: 10) {
+                TextField("Ask Jarvis...", text: $commandVM.inputText, axis: .vertical)
+                    .lineLimit(1...2)
+                    .textFieldStyle(.plain)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    )
+                    .onSubmit {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isCompactMode = false
+                            commandVM.selectTab(.chat)
+                        }
+                        commandVM.sendCurrentPrompt()
+                    }
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isCompactMode = false
+                        commandVM.selectTab(.chat)
+                    }
+                    commandVM.sendCurrentPrompt()
+                } label: {
+                    Image(systemName: "paperplane.fill")
+                        .padding(10)
+                }
+                .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.25)))
+                .keyboardShortcut(.return, modifiers: .command)
+            }
+        }
+        .padding(12)
+        .assistantCard(fill: Color.white.opacity(0.035), border: Color.white.opacity(0.1))
     }
 
     private var offlineBanner: some View {
@@ -173,16 +251,14 @@ struct CommandPaletteView: View {
                             .padding(.vertical, 7)
                             .background(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(commandVM.selectedTab == tab ? Color.cyan.opacity(0.2) : Color.white.opacity(0.05))
+                                    .fill(commandVM.selectedTab == tab ? Color.cyan.opacity(0.14) : Color.white.opacity(0.05))
                             )
                             .overlay(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(commandVM.selectedTab == tab ? Color.cyan.opacity(0.7) : Color.white.opacity(0.10), lineWidth: 1)
+                                    .stroke(commandVM.selectedTab == tab ? Color.cyan.opacity(0.45) : Color.white.opacity(0.10), lineWidth: 1)
                             )
                     }
                     .buttonStyle(.plain)
-                    .scaleEffect(commandVM.selectedTab == tab ? 1.0 : 0.985)
-                    .animation(.easeOut(duration: 0.15), value: commandVM.selectedTab)
                 }
             }
             .padding(2)
@@ -360,9 +436,7 @@ private struct ChatTabView: View {
                 }
                 .onChange(of: commandVM.streamingBuffer) { _, _ in
                     if let last = commandVM.conversation.messages.last?.id {
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            proxy.scrollTo(last, anchor: .bottom)
-                        }
+                        proxy.scrollTo(last, anchor: .bottom)
                     }
                 }
             }
@@ -432,7 +506,6 @@ private struct ConversationRow: View {
                 )
         }
         .id(message.id)
-        .transition(.opacity.combined(with: .move(edge: .bottom)))
     }
 
     private var label: String {
@@ -605,30 +678,22 @@ private struct TableExtractionView: View {
 
 private struct AssistantOrbView: View {
     @State private var glow: Bool = false
-    @State private var spin: Bool = false
 
     var body: some View {
         ZStack {
             Circle()
-                .stroke(Color.cyan.opacity(0.45), lineWidth: 1)
-                .frame(width: 22, height: 22)
-                .rotationEffect(.degrees(spin ? 360 : 0))
-            Circle()
-                .fill(Color.cyan.opacity(0.35))
-                .frame(width: glow ? 28 : 22, height: glow ? 28 : 22)
+                .fill(Color.cyan.opacity(0.28))
+                .frame(width: glow ? 24 : 20, height: glow ? 24 : 20)
                 .blur(radius: 4)
             Circle()
                 .fill(
-                    LinearGradient(colors: [Color.cyan, Color.blue.opacity(0.65)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    LinearGradient(colors: [Color.cyan.opacity(0.95), Color.blue.opacity(0.55)], startPoint: .topLeading, endPoint: .bottomTrailing)
                 )
-                .frame(width: 14, height: 14)
+                .frame(width: 12, height: 12)
         }
         .onAppear {
-            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
+            withAnimation(.easeInOut(duration: 2.3).repeatForever(autoreverses: true)) {
                 glow = true
-            }
-            withAnimation(.linear(duration: 6).repeatForever(autoreverses: false)) {
-                spin = true
             }
         }
     }
