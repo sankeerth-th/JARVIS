@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct CommandPaletteView: View {
     @EnvironmentObject private var commandVM: CommandPaletteViewModel
@@ -57,11 +58,12 @@ struct CommandPaletteView: View {
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
-            .padding(.top, 22)
+            .padding(.top, 28)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .animation(.easeInOut(duration: 0.20), value: isCompactMode)
             .animation(.easeInOut(duration: 0.18), value: commandVM.selectedTab)
         }
-        .frame(minWidth: isCompactMode ? 640 : 940, minHeight: isCompactMode ? 240 : 620)
+        .frame(minWidth: isCompactMode ? 640 : 980, minHeight: isCompactMode ? 260 : 700)
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(Color.white.opacity(0.16), lineWidth: 1)
@@ -72,6 +74,7 @@ struct CommandPaletteView: View {
             syncFromSettings()
             commandVM.loadModels()
             diagnosticsVM.refresh()
+            ensureWindowSize(forCompactMode: isCompactMode)
         }
         .onChange(of: commandVM.selectedTab) { _, selected in
             if selected != .chat, isCompactMode {
@@ -95,6 +98,9 @@ struct CommandPaletteView: View {
         .onChange(of: loggingDisabled) { _, disabled in
             guard settingsVM.settings.disableLogging != disabled else { return }
             settingsVM.setLoggingDisabled(disabled)
+        }
+        .onChange(of: isCompactMode) { _, compact in
+            ensureWindowSize(forCompactMode: compact)
         }
     }
 
@@ -305,6 +311,30 @@ struct CommandPaletteView: View {
         loggingDisabled = settingsVM.settings.disableLogging
     }
 
+    private func ensureWindowSize(forCompactMode compact: Bool) {
+        guard let window = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible }) else { return }
+        let minWidth: CGFloat = compact ? 700 : 1080
+        let minHeight: CGFloat = compact ? 320 : 760
+        let visible = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+        let targetWidth = visible.isEmpty ? minWidth : min(minWidth, max(640, visible.width - 48))
+        let targetHeight = visible.isEmpty ? minHeight : min(minHeight, max(360, visible.height - 48))
+        var frame = window.frame
+        var changed = false
+        if frame.width < targetWidth {
+            frame.origin.x -= (targetWidth - frame.width) / 2
+            frame.size.width = targetWidth
+            changed = true
+        }
+        if frame.height < targetHeight {
+            frame.origin.y -= (targetHeight - frame.height) / 2
+            frame.size.height = targetHeight
+            changed = true
+        }
+        if changed {
+            window.setFrame(frame, display: true, animate: true)
+        }
+    }
+
     @ViewBuilder
     private var tabContent: some View {
         switch commandVM.selectedTab {
@@ -366,21 +396,30 @@ struct CommandPaletteView: View {
 private struct ChatTabView: View {
     @EnvironmentObject private var commandVM: CommandPaletteViewModel
     @FocusState private var inputFocused: Bool
+    @State private var streamingMessageID = UUID()
+    private let bottomAnchorID = "chat-scroll-bottom"
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             VStack(spacing: 10) {
                 conversationScroll
                 inputArea
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(2)
             }
-            .frame(maxWidth: .infinity)
+            .layoutPriority(1)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            VStack(alignment: .leading, spacing: 10) {
-                quickActionPanel
-                historyPanel
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 10) {
+                    quickActionPanel
+                    historyPanel
+                }
             }
             .frame(width: 332)
+            .frame(maxHeight: .infinity)
         }
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     private var quickActionPanel: some View {
@@ -389,25 +428,28 @@ private struct ChatTabView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
-            LazyVGrid(columns: columns, spacing: 8) {
-                ForEach(commandVM.quickActions) { action in
-                    Button(action: { commandVM.performQuickAction(action) }) {
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: action.icon)
-                                .frame(width: 14)
-                            Text(action.title)
-                                .font(.system(size: 12, weight: .medium))
-                                .lineLimit(2)
-                                .multilineTextAlignment(.leading)
-                            Spacer(minLength: 0)
+            ScrollView(showsIndicators: false) {
+                LazyVGrid(columns: columns, spacing: 8) {
+                    ForEach(commandVM.quickActions) { action in
+                        Button(action: { commandVM.performQuickAction(action) }) {
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: action.icon)
+                                    .frame(width: 14)
+                                Text(action.title)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                                Spacer(minLength: 0)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
                         }
-                        .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
+                        .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.18)))
                     }
-                    .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.18)))
                 }
             }
+            .frame(maxHeight: 420)
             if let clipboard = commandVM.clipboardBanner {
                 ClipboardBannerView(text: clipboard, clearAction: commandVM.clearClipboardBanner)
             }
@@ -421,29 +463,28 @@ private struct ChatTabView: View {
             Text("History")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            ScrollView {
-                LazyVStack(spacing: 8) {
-                    ForEach(commandVM.history) { convo in
-                        Button {
-                            commandVM.selectConversation(convo)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(convo.title)
-                                    .font(.system(size: 13, weight: .medium))
-                                    .lineLimit(2)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                Text(convo.updatedAt.formatted(date: .abbreviated, time: .shortened))
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(8)
-                            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            LazyVStack(spacing: 8) {
+                ForEach(commandVM.history.prefix(12)) { convo in
+                    Button {
+                        commandVM.selectConversation(convo)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(convo.title)
+                                .font(.system(size: 13, weight: .medium))
+                                .lineLimit(2)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Text(convo.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
-                        .buttonStyle(.plain)
+                        .padding(8)
+                        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
+                    .buttonStyle(.plain)
                 }
             }
         }
+        .frame(maxHeight: 260, alignment: .top)
         .padding(10)
         .assistantCard()
     }
@@ -457,28 +498,39 @@ private struct ChatTabView: View {
                     }
                     if commandVM.isStreaming {
                         ConversationRow(message: ChatMessage(
+                            id: streamingMessageID,
                             role: .assistant,
                             text: commandVM.streamingBuffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Jarvis is generating..." : commandVM.streamingBuffer,
                             isStreaming: true
                         ))
                     }
+                    Color.clear
+                        .frame(height: 1)
+                        .id(bottomAnchorID)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(10)
+                .onAppear {
+                    proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                }
                 .onChange(of: commandVM.conversation.messages.count) { _, _ in
-                    if let last = commandVM.conversation.messages.last?.id {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            proxy.scrollTo(last, anchor: .bottom)
-                        }
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        proxy.scrollTo(bottomAnchorID, anchor: .bottom)
                     }
                 }
-                .onChange(of: commandVM.streamingBuffer) { _, _ in
-                    if let last = commandVM.conversation.messages.last?.id {
-                        proxy.scrollTo(last, anchor: .bottom)
+                .onChange(of: commandVM.streamingBuffer.count) { _, _ in
+                    guard commandVM.isStreaming else { return }
+                    proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                }
+                .onChange(of: commandVM.isStreaming) { _, streaming in
+                    if streaming {
+                        streamingMessageID = UUID()
                     }
+                    proxy.scrollTo(bottomAnchorID, anchor: .bottom)
                 }
             }
         }
+        .frame(maxHeight: .infinity)
         .assistantCard()
     }
 

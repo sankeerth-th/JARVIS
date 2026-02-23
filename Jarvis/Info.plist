@@ -12,6 +12,10 @@
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -48,7 +52,7 @@
 	<key>NSContactsUsageDescription</key>
 	<string>Jarvis can reference your contacts locally when drafting replies.</string>
 	<key>LSUIElement</key>
-	<true/>
+	<false/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 </dict>

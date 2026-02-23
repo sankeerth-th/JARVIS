@@ -11,10 +11,10 @@ final class OverlayWindowController: NSWindowController, NSWindowDelegate {
     init<Content: View>(rootView: Content) {
         hostingController = NSHostingController(rootView: AnyView(rootView))
         let panel = NSPanel(contentViewController: hostingController)
-        panel.styleMask = [.titled, .resizable, .fullSizeContentView]
+        panel.styleMask = [.titled, .resizable]
         panel.isFloatingPanel = false
         panel.titleVisibility = .hidden
-        panel.titlebarAppearsTransparent = true
+        panel.titlebarAppearsTransparent = false
         panel.level = .normal
         panel.backgroundColor = NSColor.black.withAlphaComponent(0.25)
         panel.hasShadow = true

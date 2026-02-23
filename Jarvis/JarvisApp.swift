@@ -23,7 +23,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables: Set<AnyCancellable> = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        NSApp.setActivationPolicy(.regular)
+        if let dockIcon = NSImage(named: NSImage.Name("AppDockIcon")) {
+            NSApp.applicationIconImage = dockIcon
+        }
         configureStatusItem()
         setupOverlay()
         PermissionsManager.shared.prepare()
@@ -33,11 +36,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] isVisible in
                 guard let self else { return }
                 if isVisible {
-                    NSApp.setActivationPolicy(.regular)
                     self.overlayController?.show()
                 } else {
                     self.overlayController?.hide()
-                    NSApp.setActivationPolicy(.accessory)
                 }
             }
             .store(in: &cancellables)
@@ -57,7 +58,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func configureStatusItem() {
         let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "bolt.circle", accessibilityDescription: "Jarvis")
+        if let image = NSImage(named: NSImage.Name("MenuBarIcon")) {
+            image.isTemplate = false
+            image.size = NSSize(width: 18, height: 18)
+            statusItem.button?.image = image
+            statusItem.button?.title = ""
+        } else {
+            statusItem.button?.image = NSImage(systemSymbolName: "bolt.circle", accessibilityDescription: "Jarvis")
+            statusItem.button?.title = "J"
+        }
+        statusItem.button?.imagePosition = .imageOnly
         statusItem.button?.action = #selector(toggleOverlay)
         statusItem.button?.target = self
         statusItem.menu = makeMenu()

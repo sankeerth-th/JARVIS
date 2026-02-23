@@ -208,6 +208,11 @@ final class CommandPaletteViewModel: ObservableObject {
 
     private func consume(chunk: String) {
         rawStreamingBuffer.append(chunk)
+        guard rawStreamingBuffer.contains("tool{") else {
+            // Fast path for normal chat streaming; avoids reparsing the whole buffer per token.
+            streamingBuffer = rawStreamingBuffer
+            return
+        }
         let (cleaned, invocations) = parser.extractInvocations(from: rawStreamingBuffer)
         streamingBuffer = cleaned
         for invocation in invocations {
