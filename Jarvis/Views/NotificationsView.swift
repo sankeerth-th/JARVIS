@@ -13,6 +13,16 @@ struct NotificationsView: View {
             HStack {
                 Toggle("Focus mode", isOn: $focusModeEnabled)
                     .toggleStyle(.switch)
+                if viewModel.isDigestRunning {
+                    ActivityPulse(label: "Digesting")
+                }
+                if viewModel.focusModeEnabled {
+                    Text("\(viewModel.lowPriorityCount) queued")
+                        .font(.caption)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.blue.opacity(0.18), in: Capsule())
+                }
                 Spacer()
                 Button("Batch digest now") {
                     viewModel.batchDigestNow(model: settingsVM.settings.selectedModel)
@@ -66,7 +76,25 @@ struct NotificationsView: View {
                         .stroke(Color.white.opacity(0.10), lineWidth: 1)
                 )
 
-            if !viewModel.digestOutput.isEmpty {
+            if viewModel.isDigestRunning && viewModel.digestOutput.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Generating digest...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.white.opacity(0.08))
+                        .frame(height: 14)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.white.opacity(0.08))
+                        .frame(height: 14)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.white.opacity(0.08))
+                        .frame(width: 220, height: 14)
+                }
+                .padding(8)
+                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .redacted(reason: .placeholder)
+            } else if !viewModel.digestOutput.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Batch digest")
                         .font(.caption)
@@ -80,34 +108,47 @@ struct NotificationsView: View {
 
             keywordRuleEditor
 
-            List {
-                Section(header: Text("Urgent")) {
-                    ForEach(viewModel.notifications.filter { $0.priority == .urgent }) { item in
-                        NotificationRow(item: item)
-                            .listRowBackground(Color.clear)
+            if viewModel.notifications.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("No notifications available")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Enable notifications permission and wait for incoming alerts.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(8)
+                .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            } else {
+                List {
+                    Section(header: Text("Urgent")) {
+                        ForEach(viewModel.notifications.filter { $0.priority == .urgent }) { item in
+                            NotificationRow(item: item)
+                                .listRowBackground(Color.clear)
+                        }
+                    }
+                    Section(header: Text("Needs reply")) {
+                        ForEach(viewModel.notifications.filter { $0.priority == .needsReply }) { item in
+                            NotificationRow(item: item)
+                                .listRowBackground(Color.clear)
+                        }
+                    }
+                    Section(header: Text("FYI")) {
+                        ForEach(viewModel.notifications.filter { $0.priority == .fyi }) { item in
+                            NotificationRow(item: item)
+                                .listRowBackground(Color.clear)
+                        }
+                    }
+                    Section(header: Text("Low priority")) {
+                        ForEach(viewModel.notifications.filter { $0.priority == .low }) { item in
+                            NotificationRow(item: item)
+                                .listRowBackground(Color.clear)
+                        }
                     }
                 }
-                Section(header: Text("Needs reply")) {
-                    ForEach(viewModel.notifications.filter { $0.priority == .needsReply }) { item in
-                        NotificationRow(item: item)
-                            .listRowBackground(Color.clear)
-                    }
-                }
-                Section(header: Text("FYI")) {
-                    ForEach(viewModel.notifications.filter { $0.priority == .fyi }) { item in
-                        NotificationRow(item: item)
-                            .listRowBackground(Color.clear)
-                    }
-                }
-                Section(header: Text("Low priority")) {
-                    ForEach(viewModel.notifications.filter { $0.priority == .low }) { item in
-                        NotificationRow(item: item)
-                            .listRowBackground(Color.clear)
-                    }
-                }
+                .scrollContentBackground(.hidden)
+                .background(Color.clear)
             }
-            .scrollContentBackground(.hidden)
-            .background(Color.clear)
         }
         .padding(10)
         .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))

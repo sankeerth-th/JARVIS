@@ -4,6 +4,14 @@ import AppKit
 
 @MainActor
 final class CommandPaletteViewModel: ObservableObject {
+    struct TopSuggestion: Equatable {
+        let title: String
+        let subtitle: String
+        let confidence: Int
+        let actionKind: QuickAction.ActionKind
+        let reasons: [String]
+    }
+
     enum PaletteTab: String, CaseIterable {
         case chat = "Chat"
         case notifications = "Notifications"
@@ -59,6 +67,7 @@ final class CommandPaletteViewModel: ObservableObject {
     @Published var thinkAnswerDraft: String = ""
     @Published var thinkRecommendation: String = ""
     @Published var thinkSimulation: String = ""
+    @Published var topSuggestion: TopSuggestion? = nil
 
     private let settingsStore: SettingsStore
     private let conversationService: ConversationService
@@ -80,6 +89,8 @@ final class CommandPaletteViewModel: ObservableObject {
     private var rawStreamingBuffer: String = ""
     private var handledToolInvocationKeys: Set<String> = []
     private var thinkingQuestionCount = 0
+    private let commandHistoryStore = CommandHistoryStore()
+    private var promptRecallCursor: Int = -1
 
     init(settingsStore: SettingsStore,
          conversationService: ConversationService,
@@ -115,12 +126,16 @@ final class CommandPaletteViewModel: ObservableObject {
 
         bind()
         loadModels()
+        refreshTopSuggestion()
     }
 
     private func bind() {
         notificationViewModel.$notifications
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] items in self?.notificationsPreview = Array(items.prefix(5)) }
+            .sink { [weak self] items in
+                self?.notificationsPreview = Array(items.prefix(5))
+                self?.refreshTopSuggestion()
+            }
             .store(in: &cancellables)
         settingsStore.$settings
             .receive(on: DispatchQueue.main)
@@ -133,6 +148,7 @@ final class CommandPaletteViewModel: ObservableObject {
                     self.privacyStatus = settings.privacyStatus
                 }
                 self.handleClipboardWatcherToggle(enabled: self.shouldEnableClipboardWatcher(settings: settings))
+                self.refreshTopSuggestion()
             }
             .store(in: &cancellables)
         clipboardWatcher.onTextChange = { [weak self] text in
@@ -154,16 +170,24 @@ final class CommandPaletteViewModel: ObservableObject {
         privacyEvents = diagnosticsService.recentEvents(limit: 50, feature: "Privacy guardian")
     }
 
-    func showOverlay() { shouldShowOverlay = true }
+    func showOverlay() {
+        refreshTopSuggestion()
+        shouldShowOverlay = true
+    }
     func hideOverlay() { shouldShowOverlay = false }
 
     func selectTab(_ tab: PaletteTab) {
         selectedTab = tab
+        refreshTopSuggestion()
     }
 
     func sendCurrentPrompt() {
         let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else {
+            executeTopSuggestion()
+            return
+        }
+        promptRecallCursor = -1
         if handlePaletteCommand(trimmed) {
             inputText = ""
             return
@@ -173,6 +197,7 @@ final class CommandPaletteViewModel: ObservableObject {
     }
 
     func send(prompt: String) {
+        commandHistoryStore.recordPrompt(prompt)
         var convo = conversation
         let userMessage = ChatMessage(role: .user, text: prompt)
         convo.messages.append(userMessage)
@@ -183,8 +208,9 @@ final class CommandPaletteViewModel: ObservableObject {
         handledToolInvocationKeys = []
         streamingBuffer = ""
         isStreaming = true
-        let context = buildContext()
+        let context = buildContext(for: prompt)
         selectedQuickAction = nil
+        refreshTopSuggestion()
         streamTask?.cancel()
         streamTask = Task {
             do {
@@ -268,24 +294,99 @@ final class CommandPaletteViewModel: ObservableObject {
         return cleaned
     }
 
-    private func buildContext() -> ConversationContext {
-        var snippets: [String] = []
-        if let importedDocument {
-            snippets.append("Document: \(importedDocument.title)\n\(importedDocument.content.prefix(1200))")
-        }
-        if !knowledgeResults.isEmpty {
-            let joined = knowledgeResults.map { "\($0.title): \($0.path)" }
-            snippets.append(contentsOf: joined)
-        }
-        let digest = notificationViewModel.summary(limit: 5)
+    private func buildContext(for prompt: String) -> ConversationContext {
+        let normalizedPrompt = prompt.lowercased()
+        let actionKind = selectedQuickAction?.kind
+
+        let includeDocument = shouldIncludeDocumentContext(prompt: normalizedPrompt, actionKind: actionKind)
+        let includeKnowledge = shouldIncludeKnowledgeContext(prompt: normalizedPrompt, actionKind: actionKind)
+        let includeClipboard = shouldIncludeClipboardContext(prompt: normalizedPrompt, actionKind: actionKind)
+        let includeNotifications = shouldIncludeNotificationContext(prompt: normalizedPrompt, actionKind: actionKind)
+        let includeMacro = shouldIncludeMacroContext(prompt: normalizedPrompt, actionKind: actionKind)
+
+        let knowledgeSnippets: [String] = includeKnowledge
+            ? knowledgeResults.map { "\($0.title): \($0.path)" }
+            : []
+        let digest = includeNotifications ? notificationViewModel.summary(limit: 5) : nil
+
         return ConversationContext(
-            selectedDocument: importedDocument,
+            selectedDocument: includeDocument ? importedDocument : nil,
             notificationDigest: digest,
-            clipboardPreview: clipboardBanner,
-            knowledgeBaseSnippets: snippets,
-            macroSummary: macroLogs.map { $0.message }.joined(separator: "\n"),
+            clipboardPreview: includeClipboard ? clipboardBanner : nil,
+            knowledgeBaseSnippets: knowledgeSnippets,
+            macroSummary: includeMacro ? macroLogs.map { $0.message }.joined(separator: "\n") : nil,
             requestedAction: selectedQuickAction
         )
+    }
+
+    private func shouldIncludeDocumentContext(prompt: String, actionKind: QuickAction.ActionKind?) -> Bool {
+        if selectedTab == .documents {
+            return true
+        }
+        if actionKind == .extractTable {
+            return true
+        }
+        return promptContainsAny(
+            prompt,
+            keywords: [
+                "document", "pdf", "resume", "this file", "this text",
+                "summarize this", "bullet points", "action items", "rewrite",
+                "fix grammar", "convert to table"
+            ]
+        )
+    }
+
+    private func shouldIncludeKnowledgeContext(prompt: String, actionKind: QuickAction.ActionKind?) -> Bool {
+        if selectedTab == .knowledge || selectedTab == .fileSearch {
+            return true
+        }
+        if actionKind == .searchKnowledgeBase || actionKind == .searchMyFiles {
+            return true
+        }
+        return promptContainsAny(
+            prompt,
+            keywords: ["search my files", "search docs", "find file", "knowledge base", "local docs", "indexed files"]
+        )
+    }
+
+    private func shouldIncludeClipboardContext(prompt: String, actionKind: QuickAction.ActionKind?) -> Bool {
+        let clipboardActions: Set<QuickAction.ActionKind> = [
+            .summarizeClipboard, .fixClipboardGrammar, .makeChecklist, .meetingSummary, .codeHelper, .extractTable
+        ]
+        if let actionKind, clipboardActions.contains(actionKind) {
+            return true
+        }
+        return promptContainsAny(
+            prompt,
+            keywords: ["clipboard", "copied text", "paste", "selection", "selected text"]
+        )
+    }
+
+    private func shouldIncludeNotificationContext(prompt: String, actionKind: QuickAction.ActionKind?) -> Bool {
+        if selectedTab == .notifications {
+            return true
+        }
+        let notificationActions: Set<QuickAction.ActionKind> = [
+            .toggleFocusMode, .showNotificationDigest, .addCurrentAppToPriority
+        ]
+        if let actionKind, notificationActions.contains(actionKind) {
+            return true
+        }
+        return promptContainsAny(
+            prompt,
+            keywords: ["notification", "focus mode", "digest", "inbox", "urgent", "priority app"]
+        )
+    }
+
+    private func shouldIncludeMacroContext(prompt: String, actionKind: QuickAction.ActionKind?) -> Bool {
+        if selectedTab == .macros || actionKind == .workflowMacro {
+            return true
+        }
+        return promptContainsAny(prompt, keywords: ["macro", "workflow", "daily wrap-up"])
+    }
+
+    private func promptContainsAny(_ prompt: String, keywords: [String]) -> Bool {
+        keywords.contains { prompt.contains($0) }
     }
 
     func importDocuments(urls: [URL]) {
@@ -567,6 +668,7 @@ final class CommandPaletteViewModel: ObservableObject {
         notificationViewModel.toggleFocusMode()
         statusMessage = notificationViewModel.focusModeEnabled ? "Focus mode enabled." : "Focus mode disabled."
         diagnosticsService.logEvent(feature: "Focus mode", type: "toggle", summary: statusMessage ?? "")
+        refreshTopSuggestion()
         if notificationViewModel.focusModeEnabled {
             Task {
                 await notificationViewModel.refreshPermissionStatus()
@@ -581,6 +683,7 @@ final class CommandPaletteViewModel: ObservableObject {
 
     func showNotificationDigestCommand() {
         selectedTab = .notifications
+        refreshTopSuggestion()
         Task {
             await notificationViewModel.refreshPermissionStatus()
             if notificationViewModel.notificationsPermissionGranted {
@@ -602,6 +705,7 @@ final class CommandPaletteViewModel: ObservableObject {
         notificationViewModel.addPriorityApp(bundleID)
         statusMessage = "Added \(bundleID) to priority apps."
         diagnosticsService.logEvent(feature: "Focus mode", type: "priority-app", summary: "Added priority app", metadata: ["app": bundleID])
+        refreshTopSuggestion()
     }
 
     func buildPrivacyReport() {
@@ -818,6 +922,7 @@ final class CommandPaletteViewModel: ObservableObject {
     }
 
     func performQuickAction(_ action: QuickAction) {
+        commandHistoryStore.recordAction(action.kind)
         selectedQuickAction = action
         switch action.kind {
         case .summarizeClipboard:
@@ -864,12 +969,53 @@ final class CommandPaletteViewModel: ObservableObject {
         case .thinkWithMe:
             selectedTab = .thinking
         }
+        refreshTopSuggestion()
+    }
+
+    func executeTopSuggestion() {
+        guard let suggestion = topSuggestion else { return }
+        let action = quickAction(for: suggestion.actionKind)
+        statusMessage = "Suggestion: \(suggestion.title)"
+        performQuickAction(action)
+    }
+
+    func refreshSuggestionContext() {
+        refreshTopSuggestion()
+    }
+
+    func copyLatestAssistantMessage() {
+        guard let message = latestAssistantMessage, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(message, forType: .string)
+        statusMessage = "Latest response copied."
+    }
+
+    func repeatLastPrompt() {
+        guard let last = commandHistoryStore.recentPrompts(limit: 1).first else { return }
+        inputText = last
+        sendCurrentPrompt()
+    }
+
+    func recallPrompt(up: Bool) {
+        let prompts = commandHistoryStore.recentPrompts(limit: 25)
+        guard !prompts.isEmpty else { return }
+        if up {
+            promptRecallCursor = min(promptRecallCursor + 1, prompts.count - 1)
+        } else {
+            promptRecallCursor = max(promptRecallCursor - 1, -1)
+        }
+        if promptRecallCursor == -1 {
+            inputText = ""
+            return
+        }
+        inputText = prompts[promptRecallCursor]
     }
 
     func clearHistory() {
         conversation = Conversation(title: "New Chat", model: settingsStore.selectedModel())
         history = []
         conversationService.clearHistory()
+        refreshTopSuggestion()
     }
 
     func selectConversation(_ conversation: Conversation) {
@@ -878,6 +1024,7 @@ final class CommandPaletteViewModel: ObservableObject {
 
     func clearClipboardBanner() {
         clipboardBanner = nil
+        refreshTopSuggestion()
     }
 
     func loadModels() {
@@ -892,6 +1039,7 @@ final class CommandPaletteViewModel: ObservableObject {
                         self.settingsStore.setModel(first)
                         self.statusMessage = "Model switched to \(first) (previous selection was unavailable)."
                     }
+                    self.refreshTopSuggestion()
                 }
             } catch {
                 await MainActor.run {
@@ -949,6 +1097,7 @@ final class CommandPaletteViewModel: ObservableObject {
 
     private func handleClipboardUpdate(_ text: String) {
         clipboardBanner = String(text.prefix(500))
+        refreshTopSuggestion()
         let settings = settingsStore.current
         guard settings.privacyGuardianEnabled,
               settings.privacyClipboardMonitorEnabled,
@@ -1045,33 +1194,169 @@ final class CommandPaletteViewModel: ObservableObject {
             .filter { !$0.isEmpty }
     }
 
+    private func quickAction(for kind: QuickAction.ActionKind) -> QuickAction {
+        if let existing = quickActions.first(where: { $0.kind == kind }) {
+            return existing
+        }
+        return QuickAction.defaults.first(where: { $0.kind == kind }) ?? QuickAction(title: "Suggested action", kind: kind, icon: "bolt")
+    }
+
+    private func refreshTopSuggestion() {
+        var candidates: [(kind: QuickAction.ActionKind, score: Int, reasons: [String], subtitle: String)] = []
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        let bundleID = frontmost?.bundleIdentifier?.lowercased() ?? ""
+        let appName = frontmost?.localizedName ?? "current app"
+        let hasClipboardText = !(clipboardBanner?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        let historyWeights = commandHistoryStore.actionWeights()
+
+        func add(_ kind: QuickAction.ActionKind, score: Int, reason: String, subtitle: String) {
+            if let index = candidates.firstIndex(where: { $0.kind == kind }) {
+                var entry = candidates[index]
+                entry.score += score
+                if !entry.reasons.contains(reason) {
+                    entry.reasons.append(reason)
+                }
+                candidates[index] = entry
+            } else {
+                candidates.append((kind: kind, score: score, reasons: [reason], subtitle: subtitle))
+            }
+        }
+
+        if bundleID.contains("mail") {
+            add(.draftEmail, score: 48, reason: "You are in Mail", subtitle: "Draft a reply from current context")
+        }
+        if bundleID.contains("xcode") {
+            add(.codeHelper, score: 44, reason: "You are in Xcode", subtitle: "Explain/refactor/test code quickly")
+        }
+        if bundleID.contains("finder") {
+            add(.searchMyFiles, score: 40, reason: "You are in Finder", subtitle: "Search local files semantically")
+        }
+        if bundleID.contains("safari") || bundleID.contains("chrome") {
+            add(.summarizeClipboard, score: 28, reason: "Browser is active", subtitle: "Summarize selected/copied content")
+        }
+        if hasClipboardText {
+            add(.summarizeClipboard, score: 34, reason: "Clipboard has text", subtitle: "Summarize clipboard content")
+        }
+        if notificationViewModel.focusModeEnabled, notificationViewModel.lowPriorityCount > 0 {
+            add(.showNotificationDigest, score: 36, reason: "Focus Mode has queued notifications", subtitle: "Generate digest for pending alerts")
+        }
+        if importedDocument != nil {
+            add(.searchMyFiles, score: 16, reason: "You recently used documents", subtitle: "Find related local files")
+        }
+
+        for (kind, weight) in historyWeights {
+            guard weight > 0 else { continue }
+            add(kind, score: min(32, 6 * weight), reason: "Based on your recent usage", subtitle: "Frequently used in your workflow")
+        }
+
+        guard let best = candidates.max(by: { $0.score < $1.score }) else {
+            topSuggestion = TopSuggestion(
+                title: "Think with me",
+                subtitle: "Start a structured decision walkthrough",
+                confidence: 52,
+                actionKind: .thinkWithMe,
+                reasons: ["No strong contextual signal detected"]
+            )
+            return
+        }
+        let action = quickAction(for: best.kind)
+        let confidence = min(99, max(35, best.score))
+        let reasons = Array(best.reasons.prefix(2))
+        topSuggestion = TopSuggestion(
+            title: action.title,
+            subtitle: best.subtitle + " in \(appName).",
+            confidence: confidence,
+            actionKind: best.kind,
+            reasons: reasons
+        )
+    }
+
     private func handlePaletteCommand(_ raw: String) -> Bool {
         let command = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         switch command {
         case "why did this happen?", "why did this happen":
+            commandHistoryStore.recordAction(.whyDidThisHappen)
             selectedTab = .why
+            refreshTopSuggestion()
             return true
         case "search my files", "find files":
+            commandHistoryStore.recordAction(.searchMyFiles)
             selectedTab = .fileSearch
+            refreshTopSuggestion()
             return true
         case "toggle focus mode":
+            commandHistoryStore.recordAction(.toggleFocusMode)
             toggleFocusModeCommand()
             return true
         case "show notification digest":
+            commandHistoryStore.recordAction(.showNotificationDigest)
             showNotificationDigestCommand()
             return true
         case "add current app to priority list":
+            commandHistoryStore.recordAction(.addCurrentAppToPriority)
             addCurrentAppToPriorityCommand()
             return true
         case "privacy report":
+            commandHistoryStore.recordAction(.privacyReport)
             selectedTab = .privacy
             buildPrivacyReport()
+            refreshTopSuggestion()
             return true
         case "think with me":
+            commandHistoryStore.recordAction(.thinkWithMe)
             selectedTab = .thinking
+            refreshTopSuggestion()
             return true
         default:
             return false
         }
+    }
+}
+
+private final class CommandHistoryStore {
+    private enum Keys {
+        static let actionCounts = "jarvis.command_history.action_counts"
+        static let prompts = "jarvis.command_history.prompts"
+    }
+
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    func recordAction(_ action: QuickAction.ActionKind) {
+        var counts = defaults.dictionary(forKey: Keys.actionCounts) as? [String: Int] ?? [:]
+        counts[action.rawValue, default: 0] += 1
+        defaults.set(counts, forKey: Keys.actionCounts)
+    }
+
+    func recordPrompt(_ prompt: String) {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var prompts = defaults.stringArray(forKey: Keys.prompts) ?? []
+        if let index = prompts.firstIndex(of: trimmed) {
+            prompts.remove(at: index)
+        }
+        prompts.append(trimmed)
+        if prompts.count > 40 {
+            prompts.removeFirst(prompts.count - 40)
+        }
+        defaults.set(prompts, forKey: Keys.prompts)
+    }
+
+    func actionWeights() -> [QuickAction.ActionKind: Int] {
+        let counts = defaults.dictionary(forKey: Keys.actionCounts) as? [String: Int] ?? [:]
+        var output: [QuickAction.ActionKind: Int] = [:]
+        for (rawKey, value) in counts {
+            guard let kind = QuickAction.ActionKind(rawValue: rawKey) else { continue }
+            output[kind] = value
+        }
+        return output
+    }
+
+    func recentPrompts(limit: Int) -> [String] {
+        let prompts = defaults.stringArray(forKey: Keys.prompts) ?? []
+        return Array(prompts.reversed().prefix(max(1, limit)))
     }
 }

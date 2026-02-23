@@ -11,6 +11,7 @@ final class NotificationViewModel: ObservableObject {
     @Published var focusModeEnabled: Bool = false
     @Published var allowUrgentInQuietHours: Bool = true
     @Published var digestOutput: String = ""
+    @Published var isDigestRunning: Bool = false
     @Published var lowPriorityCount: Int = 0
     @Published var notificationsPermissionGranted: Bool = false
 
@@ -121,6 +122,7 @@ final class NotificationViewModel: ObservableObject {
             digestOutput = "No notifications to summarize."
             return
         }
+        isDigestRunning = true
         Task {
             let prompt = """
             Summarize these notifications in <=8 bullets.
@@ -140,10 +142,12 @@ final class NotificationViewModel: ObservableObject {
                 let response = try await ollama.generate(request: request)
                 await MainActor.run {
                     self.digestOutput = response.trimmingCharacters(in: .whitespacesAndNewlines)
+                    self.isDigestRunning = false
                 }
             } catch {
                 await MainActor.run {
                     self.digestOutput = "Digest failed: \(error.localizedDescription)"
+                    self.isDigestRunning = false
                 }
             }
         }

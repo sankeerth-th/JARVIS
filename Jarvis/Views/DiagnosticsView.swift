@@ -14,8 +14,7 @@ struct DiagnosticsView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text("Latency: \(String(format: "%.2fs", viewModel.latency))")
-                    .font(.headline)
+                LatencyPill(milliseconds: viewModel.latency * 1000)
             }
 
             List(viewModel.statuses) { status in

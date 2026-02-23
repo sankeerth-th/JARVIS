@@ -72,17 +72,30 @@ Then restart Jarvis once after granting permissions.
 
 The main app works without this.
 
-To enable extension in Apple Mail:
+To enable and use the extension in Apple Mail:
 
 1. Build and run Jarvis once.
 2. Open Mail -> Settings -> Extensions.
 3. Enable `JarvisMailExtension` if listed.
+4. Open a **new compose** window or click **Reply** on any email.
+5. In the compose toolbar, click the **Extensions** button, then select **Jarvis**.
+6. The Jarvis panel appears with:
+   - `Draft with Jarvis`
+   - `Improve tone`
+   - `Summarize thread`
+7. If thread/body text is limited by MailKit, click `Paste from clipboard` after copying the relevant text.
+8. Use `Copy to clipboard`, then paste into the Mail body (`Insert` shows guidance when direct insertion is unavailable).
 
 If it does not appear:
 
 - Ensure both targets are signed with the same non-adhoc Apple Development team.
 - Quit and reopen Mail.
 - Rebuild Jarvis.
+- Open a new compose/reply window after enabling the extension (Mail does not attach already-open compose windows).
+- Check Console logs using subsystem `com.offline.Jarvis.MailExtension` to confirm callbacks:
+  - `handler(for:) requested`
+  - `mailComposeSessionDidBegin`
+  - `viewController(for:) requested`
 
 ## Troubleshooting
 

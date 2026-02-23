@@ -45,6 +45,10 @@ struct CommandPaletteView: View {
                 if commandVM.toolRequiresConfirmation, let pendingTool = commandVM.pendingTool {
                     pendingToolBanner(invocation: pendingTool)
                 }
+                if let suggestion = commandVM.topSuggestion {
+                    topSuggestionCard(suggestion)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
                 if isCompactMode {
                     compactIdleBody
                         .transition(.opacity.combined(with: .scale(scale: 0.98)))
@@ -68,6 +72,7 @@ struct CommandPaletteView: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(Color.white.opacity(0.16), lineWidth: 1)
         )
+        .shadow(color: Color.black.opacity(0.28), radius: 32, x: 0, y: 18)
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .background(.ultraThinMaterial)
         .onAppear {
@@ -101,6 +106,9 @@ struct CommandPaletteView: View {
         }
         .onChange(of: isCompactMode) { _, compact in
             ensureWindowSize(forCompactMode: compact)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWorkspace.didActivateApplicationNotification)) { _ in
+            commandVM.refreshSuggestionContext()
         }
     }
 
@@ -391,6 +399,38 @@ struct CommandPaletteView: View {
         .padding(10)
         .assistantCard(fill: Color.yellow.opacity(0.10), border: Color.yellow.opacity(0.24))
     }
+
+    private func topSuggestionCard(_ suggestion: CommandPaletteViewModel.TopSuggestion) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text("Suggested")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    KeyHintView(key: "Enter", meaning: "run")
+                }
+                Text(suggestion.title)
+                    .font(.headline)
+                Text(suggestion.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ForEach(suggestion.reasons.prefix(2), id: \.self) { reason in
+                    Text("• \(reason)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                ConfidenceBar(value: Double(suggestion.confidence) / 100.0)
+                    .frame(maxWidth: 220)
+            }
+            Spacer()
+            Button("Run suggestion") {
+                commandVM.executeTopSuggestion()
+            }
+            .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.20)))
+        }
+        .padding(10)
+        .assistantCard(fill: Color.cyan.opacity(0.07), border: Color.cyan.opacity(0.20))
+    }
 }
 
 private struct ChatTabView: View {
@@ -463,24 +503,37 @@ private struct ChatTabView: View {
             Text("History")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            LazyVStack(spacing: 8) {
-                ForEach(commandVM.history.prefix(12)) { convo in
-                    Button {
-                        commandVM.selectConversation(convo)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(convo.title)
-                                .font(.system(size: 13, weight: .medium))
-                                .lineLimit(2)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Text(convo.updatedAt.formatted(date: .abbreviated, time: .shortened))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+            if commandVM.history.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("No recent commands yet")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Try: Search files, Draft email, Explain screen")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+            } else {
+                LazyVStack(spacing: 8) {
+                    ForEach(commandVM.history.prefix(12)) { convo in
+                        Button {
+                            commandVM.selectConversation(convo)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(convo.title)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .lineLimit(2)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Text(convo.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(8)
+                            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                         }
-                        .padding(8)
-                        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
         }
@@ -493,16 +546,26 @@ private struct ChatTabView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
+                    if commandVM.conversation.messages.isEmpty && !commandVM.isStreaming {
+                        EmptyStateCardView(
+                            title: "No messages yet",
+                            subtitle: "Try: Search files, Draft email, Explain screen."
+                        )
+                    }
                     ForEach(commandVM.conversation.messages) { message in
                         ConversationRow(message: message)
                     }
                     if commandVM.isStreaming {
-                        ConversationRow(message: ChatMessage(
-                            id: streamingMessageID,
-                            role: .assistant,
-                            text: commandVM.streamingBuffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Jarvis is generating..." : commandVM.streamingBuffer,
-                            isStreaming: true
-                        ))
+                        if commandVM.streamingBuffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            StreamingSkeletonView()
+                        } else {
+                            ConversationRow(message: ChatMessage(
+                                id: streamingMessageID,
+                                role: .assistant,
+                                text: commandVM.streamingBuffer,
+                                isStreaming: true
+                            ))
+                        }
                     }
                     Color.clear
                         .frame(height: 1)
@@ -535,31 +598,58 @@ private struct ChatTabView: View {
     }
 
     private var inputArea: some View {
-        HStack(spacing: 10) {
-            TextField("Ask Jarvis...", text: $commandVM.inputText, axis: .vertical)
-                .lineLimit(1...3)
-                .textFieldStyle(.plain)
-                .focused($inputFocused)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(inputFocused ? Color.cyan.opacity(0.55) : Color.white.opacity(0.12), lineWidth: 1)
-                )
-                .shadow(color: inputFocused ? Color.cyan.opacity(0.25) : .clear, radius: 10)
-                .animation(.easeInOut(duration: 0.18), value: inputFocused)
-                .onSubmit { commandVM.sendCurrentPrompt() }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                TextField("Ask Jarvis...", text: $commandVM.inputText, axis: .vertical)
+                    .lineLimit(1...3)
+                    .textFieldStyle(.plain)
+                    .focused($inputFocused)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(inputFocused ? Color.cyan.opacity(0.55) : Color.white.opacity(0.12), lineWidth: 1)
+                    )
+                    .shadow(color: inputFocused ? Color.cyan.opacity(0.25) : .clear, radius: 10)
+                    .animation(.easeInOut(duration: 0.18), value: inputFocused)
+                    .onSubmit { commandVM.sendCurrentPrompt() }
 
-            Button(action: commandVM.sendCurrentPrompt) {
-                Image(systemName: "paperplane.fill")
-                    .padding(10)
+                Button(action: commandVM.sendCurrentPrompt) {
+                    Image(systemName: "paperplane.fill")
+                        .padding(10)
+                }
+                .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.25)))
+                .keyboardShortcut(.return, modifiers: .command)
             }
-            .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.25)))
-            .keyboardShortcut(.return, modifiers: .command)
+            HStack(spacing: 8) {
+                KeyHintView(key: "⌘↩", meaning: "run")
+                KeyHintView(key: "⌘C", meaning: "copy")
+                KeyHintView(key: "⌘R", meaning: "repeat")
+                KeyHintView(key: "↑↓", meaning: "navigate")
+                Spacer()
+                Button("Repeat") { commandVM.repeatLastPrompt() }
+                    .font(.caption2)
+                    .buttonStyle(.plain)
+                    .keyboardShortcut("r", modifiers: .command)
+                Button("Copy") { commandVM.copyLatestAssistantMessage() }
+                    .font(.caption2)
+                    .buttonStyle(.plain)
+            }
+            .foregroundStyle(.secondary)
         }
         .padding(10)
         .assistantCard()
+        .onMoveCommand { direction in
+            switch direction {
+            case .up:
+                commandVM.recallPrompt(up: true)
+            case .down:
+                commandVM.recallPrompt(up: false)
+            default:
+                break
+            }
+        }
         .onAppear {
             inputFocused = true
         }
@@ -782,39 +872,52 @@ private struct FileSearchView: View {
                     .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.22)))
             }
             if !commandVM.fileSearchStatus.isEmpty {
-                Text(commandVM.fileSearchStatus)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            List(commandVM.fileSearchResults) { result in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text(result.document.title)
-                            .font(.subheadline.weight(.semibold))
-                        Spacer()
-                        Text(String(format: "%.2f", result.score))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    if commandVM.fileSearchStatus.localizedCaseInsensitiveContains("searching") {
+                        ActivityPulse(label: "Searching")
                     }
-                    Text(result.document.path)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Text(result.snippet)
+                    Text(commandVM.fileSearchStatus)
                         .font(.caption)
-                        .lineLimit(2)
-                    HStack {
-                        Button("Open") { commandVM.openSearchResult(result) }
-                            .buttonStyle(.bordered)
-                        Button("Summarize this file") { commandVM.summarizeSearchResult(result) }
-                            .buttonStyle(.borderedProminent)
-                    }
+                        .foregroundStyle(.secondary)
                 }
-                .padding(.vertical, 4)
-                .listRowBackground(Color.clear)
             }
-            .scrollContentBackground(.hidden)
+            if commandVM.fileSearchResults.isEmpty {
+                EmptyStateCardView(
+                    title: "No file results yet",
+                    subtitle: "Try: \"invoice\", \"permissions hotkey\", \"meeting notes\"."
+                )
+            } else {
+                List(commandVM.fileSearchResults) { result in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(result.document.title)
+                                .font(.subheadline.weight(.semibold))
+                            Spacer()
+                            Text(String(format: "%.2f", result.score))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        ConfidenceBar(value: max(0.0, min(1.0, result.score)))
+                        Text(result.document.path)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text(result.snippet)
+                            .font(.caption)
+                            .lineLimit(2)
+                        HStack {
+                            Button("Open") { commandVM.openSearchResult(result) }
+                                .buttonStyle(.bordered)
+                            Button("Summarize this file") { commandVM.summarizeSearchResult(result) }
+                                .buttonStyle(.borderedProminent)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    .listRowBackground(Color.clear)
+                }
+                .scrollContentBackground(.hidden)
+            }
             if !commandVM.fileSearchSummary.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Summary")
@@ -990,6 +1093,127 @@ private struct TableExtractionView: View {
     }
 }
 
+struct ConfidenceBar: View {
+    let value: Double
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = max(0, min(1, value)) * proxy.size.width
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.white.opacity(0.09))
+                Capsule()
+                    .fill(Color.cyan.opacity(0.7))
+                    .frame(width: width)
+            }
+        }
+        .frame(height: 6)
+        .accessibilityLabel("Confidence")
+        .accessibilityValue("\(Int(max(0, min(1, value)) * 100)) percent")
+    }
+}
+
+struct LatencyPill: View {
+    let milliseconds: Double
+
+    var body: some View {
+        Label("\(Int(milliseconds)) ms", systemImage: "speedometer")
+            .font(.caption)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color.white.opacity(0.08), in: Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
+            )
+    }
+}
+
+struct ActivityPulse: View {
+    let label: String
+    @State private var animate = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 3) {
+                ForEach(0..<3, id: \.self) { index in
+                    Circle()
+                        .fill(Color.cyan.opacity(0.8))
+                        .frame(width: 5, height: 5)
+                        .scaleEffect(animate ? 1.0 : 0.6)
+                        .opacity(animate ? 1.0 : 0.35)
+                        .animation(.easeInOut(duration: 0.7).repeatForever().delay(Double(index) * 0.1), value: animate)
+                }
+            }
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .onAppear { animate = true }
+    }
+}
+
+private struct KeyHintView: View {
+    let key: String
+    let meaning: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(key)
+                .font(.caption2.monospaced())
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            Text(meaning)
+                .font(.caption2)
+        }
+    }
+}
+
+private struct EmptyStateCardView: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+            Text(subtitle)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+        )
+    }
+}
+
+private struct StreamingSkeletonView: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Jarvis")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.white.opacity(0.10))
+                .frame(height: 14)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 14)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.white.opacity(0.06))
+                .frame(width: 160, height: 14)
+        }
+        .padding(10)
+        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .redacted(reason: .placeholder)
+    }
+}
+
 private struct AssistantOrbView: View {
     @State private var glow: Bool = false
 
@@ -1064,6 +1288,7 @@ private struct AssistantCardModifier: ViewModifier {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .stroke(border, lineWidth: 1)
             )
+            .shadow(color: Color.black.opacity(0.16), radius: 12, x: 0, y: 6)
     }
 }
 
