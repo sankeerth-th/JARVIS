@@ -34,6 +34,34 @@ struct DiagnosticsView: View {
             }
             .scrollContentBackground(.hidden)
             .background(Color.clear)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Module Health")
+                    .font(.headline)
+                ForEach(viewModel.moduleHealth) { module in
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(module.enabled ? Color.green : Color.gray)
+                            .frame(width: 8, height: 8)
+                        Text(module.module)
+                            .font(.subheadline)
+                        Spacer()
+                        Text(module.permissionsOK ? "Permissions OK" : "Permissions missing")
+                            .font(.caption)
+                            .foregroundStyle(module.permissionsOK ? .green : .orange)
+                        Text(module.lastRun?.formatted(date: .abbreviated, time: .shortened) ?? "Never run")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+            .padding(10)
+            .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
+            )
         }
         .padding(10)
         .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))

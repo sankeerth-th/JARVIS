@@ -3,10 +3,13 @@ import UserNotifications
 
 final class NotificationService: NSObject, ObservableObject {
     @Published private(set) var prioritizedNotifications: [NotificationItem] = []
+    @Published private(set) var lowPriorityCount: Int = 0
     private var keywordRules: [String: NotificationItem.Priority] = [:]
     private var priorityApps: Set<String> = []
     private var quietHours: QuietHours?
     private var focusModeActive = false
+    private var allowUrgentInQuietHours = true
+    private var repeatedFingerprintCount: [String: Int] = [:]
     private let center = UNUserNotificationCenter.current()
 
     override init() {
@@ -48,6 +51,11 @@ final class NotificationService: NSObject, ObservableObject {
 
     func setFocusMode(active: Bool) {
         focusModeActive = active
+        recomputeLowPriorityCount()
+    }
+
+    func setAllowUrgentInQuietHours(_ allow: Bool) {
+        allowUrgentInQuietHours = allow
     }
 
     func ingest(appIdentifier: String, title: String, body: String, metadata: [String: String]) {
@@ -55,6 +63,7 @@ final class NotificationService: NSObject, ObservableObject {
         item.priority = classify(item: item)
         prioritizedNotifications.insert(item, at: 0)
         if prioritizedNotifications.count > 100 { prioritizedNotifications.removeLast() }
+        recomputeLowPriorityCount()
     }
 
     func summarize(limit: Int = 5) -> String {
@@ -72,22 +81,68 @@ final class NotificationService: NSObject, ObservableObject {
         return Array(filtered.prefix(limit))
     }
 
+    func topNotificationsForFocus(limit: Int = 12) -> [NotificationItem] {
+        let filtered = prioritizedNotifications.filter { $0.priority != .low || !focusModeActive }
+        return Array(filtered.prefix(limit))
+    }
+
+    func notificationsPermissionStatus() async -> UNAuthorizationStatus {
+        await withCheckedContinuation { continuation in
+            center.getNotificationSettings { settings in
+                continuation.resume(returning: settings.authorizationStatus)
+            }
+        }
+    }
+
     private func classify(item: NotificationItem) -> NotificationItem.Priority {
-        if focusModeActive { return .low }
-        if let quietHours, quietHours.contains(date: item.date) { return .low }
+        let fingerprint = "\(item.appIdentifier)|\(item.title.lowercased())|\(item.body.lowercased())"
+        let repeatCount = (repeatedFingerprintCount[fingerprint] ?? 0) + 1
+        repeatedFingerprintCount[fingerprint] = repeatCount
+
+        var score = 0
         if priorityApps.contains(item.appIdentifier) {
-            return .urgent
+            score += 45
         }
         for (keyword, priority) in keywordRules where item.body.localizedCaseInsensitiveContains(keyword) || item.title.localizedCaseInsensitiveContains(keyword) {
-            return priority
+            switch priority {
+            case .urgent: score += 45
+            case .needsReply: score += 30
+            case .fyi: score += 12
+            case .low: score -= 8
+            }
+        }
+        if item.body.localizedCaseInsensitiveContains("urgent")
+            || item.body.localizedCaseInsensitiveContains("asap")
+            || item.body.localizedCaseInsensitiveContains("payment failed")
+            || item.body.localizedCaseInsensitiveContains("verification code") {
+            score += 40
         }
         if item.body.localizedCaseInsensitiveContains("reply") || item.body.localizedCaseInsensitiveContains("respond") {
-            return .needsReply
+            score += 20
         }
-        if item.body.localizedCaseInsensitiveContains("invoice") || item.body.localizedCaseInsensitiveContains("verification code") {
+        if repeatCount > 2 {
+            score -= min((repeatCount - 2) * 8, 24)
+        }
+        if let quietHours, quietHours.contains(date: item.date), !(allowUrgentInQuietHours && score >= 45) {
+            score -= 35
+        }
+        if focusModeActive {
+            score -= 18
+        }
+        if score >= 50 {
             return .urgent
         }
-        return .fyi
+        if score >= 24 {
+            return .needsReply
+        }
+        if score >= 8 {
+            return .fyi
+        }
+        return .low
+    }
+
+    private func recomputeLowPriorityCount() {
+        lowPriorityCount = prioritizedNotifications.filter { $0.priority == .low }.count
     }
 }
 

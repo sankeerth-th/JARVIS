@@ -10,7 +10,7 @@ final class SettingsStore: ObservableObject {
         self.defaults = defaults
         if let data = defaults.data(forKey: userDefaultsKey),
            let decoded = try? JSONDecoder().decode(AppSettings.self, from: data) {
-            settings = decoded
+            settings = Self.normalizedSettings(decoded)
         } else {
             settings = .default
         }
@@ -48,6 +48,58 @@ final class SettingsStore: ObservableObject {
         update { $0.clipboardWatcherEnabled = enabled }
     }
 
+    func setIndexedFolders(_ folders: [String]) {
+        update { $0.indexedFolders = folders }
+    }
+
+    func addIndexedFolder(_ path: String) {
+        update { settings in
+            guard !settings.indexedFolders.contains(path) else { return }
+            settings.indexedFolders.append(path)
+        }
+    }
+
+    func removeIndexedFolder(_ path: String) {
+        update { settings in
+            settings.indexedFolders.removeAll { $0 == path }
+        }
+    }
+
+    func setFocusModeEnabled(_ enabled: Bool) {
+        update { $0.focusModeEnabled = enabled }
+    }
+
+    func setFocusPriorityApps(_ apps: [String]) {
+        update { $0.focusPriorityApps = apps }
+    }
+
+    func setFocusAllowUrgent(_ allow: Bool) {
+        update { $0.focusAllowUrgent = allow }
+    }
+
+    func setQuietHours(startHour: Int, endHour: Int) {
+        update {
+            $0.quietHoursStartHour = max(0, min(startHour, 23))
+            $0.quietHoursEndHour = max(0, min(endHour, 23))
+        }
+    }
+
+    func setPrivacyGuardianEnabled(_ enabled: Bool) {
+        update { $0.privacyGuardianEnabled = enabled }
+    }
+
+    func setPrivacyClipboardMonitorEnabled(_ enabled: Bool) {
+        update { $0.privacyClipboardMonitorEnabled = enabled }
+    }
+
+    func setPrivacySensitiveDetectionEnabled(_ enabled: Bool) {
+        update { $0.privacySensitiveDetectionEnabled = enabled }
+    }
+
+    func setPrivacyNetworkMonitorEnabled(_ enabled: Bool) {
+        update { $0.privacyNetworkMonitorEnabled = enabled }
+    }
+
     func setLogging(enabled: Bool) {
         update { $0.disableLogging = !enabled }
     }
@@ -68,10 +120,22 @@ final class SettingsStore: ObservableObject {
 
     func quickActions() -> [QuickAction] { settings.quickActions }
 
+    func indexedFolders() -> [String] { settings.indexedFolders }
+
     var current: AppSettings { settings }
 
     private func persist(_ settings: AppSettings) {
         guard let data = try? JSONEncoder().encode(settings) else { return }
         defaults.set(data, forKey: userDefaultsKey)
+    }
+
+    private static func normalizedSettings(_ settings: AppSettings) -> AppSettings {
+        var copy = settings
+        let existingKinds = Set(copy.quickActions.map { $0.kind })
+        let missing = QuickAction.defaults.filter { !existingKinds.contains($0.kind) }
+        if !missing.isEmpty {
+            copy.quickActions.append(contentsOf: missing)
+        }
+        return copy
     }
 }

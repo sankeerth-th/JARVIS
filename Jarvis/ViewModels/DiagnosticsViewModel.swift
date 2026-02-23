@@ -3,6 +3,7 @@ import Foundation
 @MainActor
 final class DiagnosticsViewModel: ObservableObject {
     @Published var statuses: [DiagnosticStatus] = []
+    @Published var moduleHealth: [ModuleHealthStatus] = []
     @Published var latency: TimeInterval = 0
     @Published var lastUpdated: Date? = nil
 
@@ -19,8 +20,10 @@ final class DiagnosticsViewModel: ObservableObject {
     func refresh() {
         Task {
             let statuses = await diagnosticsService.fetchStatuses(selectedModel: settingsStore.selectedModel())
+            let moduleHealth = await diagnosticsService.moduleHealth(settings: settingsStore.current)
             await MainActor.run {
                 self.statuses = statuses
+                self.moduleHealth = moduleHealth
                 self.lastUpdated = Date()
             }
         }

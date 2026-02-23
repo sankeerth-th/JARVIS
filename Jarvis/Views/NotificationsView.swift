@@ -3,6 +3,7 @@ import AppKit
 
 struct NotificationsView: View {
     @EnvironmentObject private var viewModel: NotificationViewModel
+    @EnvironmentObject private var settingsVM: SettingsViewModel
     @State private var keyword: String = ""
     @State private var selectedPriority: NotificationItem.Priority = .urgent
     @State private var focusModeEnabled: Bool = false
@@ -13,6 +14,10 @@ struct NotificationsView: View {
                 Toggle("Focus mode", isOn: $focusModeEnabled)
                     .toggleStyle(.switch)
                 Spacer()
+                Button("Batch digest now") {
+                    viewModel.batchDigestNow(model: settingsVM.settings.selectedModel)
+                }
+                .buttonStyle(.bordered)
                 Menu("Quiet hours") {
                     Button("None") {
                         viewModel.quietHours = nil
@@ -30,6 +35,27 @@ struct NotificationsView: View {
                 .buttonStyle(.bordered)
             }
 
+            if !viewModel.notificationsPermissionGranted {
+                HStack {
+                    Text("Notifications permission is missing.")
+                        .font(.caption)
+                    Spacer()
+                    Button("Open System Settings") {
+                        PermissionsManager.shared.openNotificationSettings()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding(8)
+                .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+
+            if viewModel.focusModeEnabled && viewModel.lowPriorityCount > 0 {
+                Text("You have \(viewModel.lowPriorityCount) low-priority notifications.")
+                    .font(.caption)
+                    .padding(8)
+                    .background(Color.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+
             Text(viewModel.summary())
                 .font(.body)
                 .textSelection(.enabled)
@@ -39,6 +65,18 @@ struct NotificationsView: View {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .stroke(Color.white.opacity(0.10), lineWidth: 1)
                 )
+
+            if !viewModel.digestOutput.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Batch digest")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(viewModel.digestOutput)
+                        .textSelection(.enabled)
+                        .padding(8)
+                        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+            }
 
             keywordRuleEditor
 
@@ -79,6 +117,9 @@ struct NotificationsView: View {
         )
         .onAppear {
             focusModeEnabled = viewModel.focusModeEnabled
+            Task {
+                await viewModel.refreshPermissionStatus()
+            }
         }
         .onChange(of: focusModeEnabled) { _, enabled in
             guard viewModel.focusModeEnabled != enabled else { return }

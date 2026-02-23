@@ -58,6 +58,7 @@ struct ChatRequest: Encodable {
 final class OllamaClient {
     private let session: URLSession
     private let candidateBaseURLs: [URL]
+    var onNetworkRequest: ((URL) -> Void)?
 
     init(baseURL: URL = URL(string: "http://localhost:11434")!, session: URLSession = .shared) {
         self.session = session
@@ -186,7 +187,9 @@ final class OllamaClient {
 
     private func request(path: String, method: String = "GET", body: Data? = nil) async throws -> (Data, URLResponse) {
         try await withFallback { baseURL in
-            var urlRequest = URLRequest(url: baseURL.appendingPathComponent(path))
+            let targetURL = baseURL.appendingPathComponent(path)
+            self.onNetworkRequest?(targetURL)
+            var urlRequest = URLRequest(url: targetURL)
             urlRequest.httpMethod = method
             urlRequest.httpBody = body
             if body != nil {
@@ -198,7 +201,9 @@ final class OllamaClient {
 
     private func streamRequest(path: String, body: Data) async throws -> (URLSession.AsyncBytes, URLResponse) {
         try await withFallback { baseURL in
-            var urlRequest = URLRequest(url: baseURL.appendingPathComponent(path))
+            let targetURL = baseURL.appendingPathComponent(path)
+            self.onNetworkRequest?(targetURL)
+            var urlRequest = URLRequest(url: targetURL)
             urlRequest.httpMethod = "POST"
             urlRequest.httpBody = body
             urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")

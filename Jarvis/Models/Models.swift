@@ -202,6 +202,16 @@ struct AppSettings: Codable, Equatable {
     var clipboardWatcherEnabled: Bool
     var privacyStatus: PrivacyStatus
     var quickActions: [QuickAction]
+    var indexedFolders: [String]
+    var focusModeEnabled: Bool
+    var focusPriorityApps: [String]
+    var focusAllowUrgent: Bool
+    var quietHoursStartHour: Int
+    var quietHoursEndHour: Int
+    var privacyGuardianEnabled: Bool
+    var privacyClipboardMonitorEnabled: Bool
+    var privacySensitiveDetectionEnabled: Bool
+    var privacyNetworkMonitorEnabled: Bool
 
     static let `default` = AppSettings(
         selectedModel: "mistral",
@@ -210,8 +220,96 @@ struct AppSettings: Codable, Equatable {
         disableLogging: false,
         clipboardWatcherEnabled: false,
         privacyStatus: .offline,
-        quickActions: QuickAction.defaults
+        quickActions: QuickAction.defaults,
+        indexedFolders: [],
+        focusModeEnabled: false,
+        focusPriorityApps: ["com.apple.mail", "com.apple.MobileSMS", "com.tinyspeck.slackmacgap"],
+        focusAllowUrgent: true,
+        quietHoursStartHour: 22,
+        quietHoursEndHour: 7,
+        privacyGuardianEnabled: false,
+        privacyClipboardMonitorEnabled: false,
+        privacySensitiveDetectionEnabled: true,
+        privacyNetworkMonitorEnabled: true
     )
+
+    enum CodingKeys: String, CodingKey {
+        case selectedModel
+        case systemPrompt
+        case tone
+        case disableLogging
+        case clipboardWatcherEnabled
+        case privacyStatus
+        case quickActions
+        case indexedFolders
+        case focusModeEnabled
+        case focusPriorityApps
+        case focusAllowUrgent
+        case quietHoursStartHour
+        case quietHoursEndHour
+        case privacyGuardianEnabled
+        case privacyClipboardMonitorEnabled
+        case privacySensitiveDetectionEnabled
+        case privacyNetworkMonitorEnabled
+    }
+
+    init(selectedModel: String,
+         systemPrompt: String,
+         tone: ToneStyle,
+         disableLogging: Bool,
+         clipboardWatcherEnabled: Bool,
+         privacyStatus: PrivacyStatus,
+         quickActions: [QuickAction],
+         indexedFolders: [String],
+         focusModeEnabled: Bool,
+         focusPriorityApps: [String],
+         focusAllowUrgent: Bool,
+         quietHoursStartHour: Int,
+         quietHoursEndHour: Int,
+         privacyGuardianEnabled: Bool,
+         privacyClipboardMonitorEnabled: Bool,
+         privacySensitiveDetectionEnabled: Bool,
+         privacyNetworkMonitorEnabled: Bool) {
+        self.selectedModel = selectedModel
+        self.systemPrompt = systemPrompt
+        self.tone = tone
+        self.disableLogging = disableLogging
+        self.clipboardWatcherEnabled = clipboardWatcherEnabled
+        self.privacyStatus = privacyStatus
+        self.quickActions = quickActions
+        self.indexedFolders = indexedFolders
+        self.focusModeEnabled = focusModeEnabled
+        self.focusPriorityApps = focusPriorityApps
+        self.focusAllowUrgent = focusAllowUrgent
+        self.quietHoursStartHour = quietHoursStartHour
+        self.quietHoursEndHour = quietHoursEndHour
+        self.privacyGuardianEnabled = privacyGuardianEnabled
+        self.privacyClipboardMonitorEnabled = privacyClipboardMonitorEnabled
+        self.privacySensitiveDetectionEnabled = privacySensitiveDetectionEnabled
+        self.privacyNetworkMonitorEnabled = privacyNetworkMonitorEnabled
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = AppSettings.default
+        selectedModel = try container.decodeIfPresent(String.self, forKey: .selectedModel) ?? defaults.selectedModel
+        systemPrompt = try container.decodeIfPresent(String.self, forKey: .systemPrompt) ?? defaults.systemPrompt
+        tone = try container.decodeIfPresent(ToneStyle.self, forKey: .tone) ?? defaults.tone
+        disableLogging = try container.decodeIfPresent(Bool.self, forKey: .disableLogging) ?? defaults.disableLogging
+        clipboardWatcherEnabled = try container.decodeIfPresent(Bool.self, forKey: .clipboardWatcherEnabled) ?? defaults.clipboardWatcherEnabled
+        privacyStatus = try container.decodeIfPresent(PrivacyStatus.self, forKey: .privacyStatus) ?? defaults.privacyStatus
+        quickActions = try container.decodeIfPresent([QuickAction].self, forKey: .quickActions) ?? defaults.quickActions
+        indexedFolders = try container.decodeIfPresent([String].self, forKey: .indexedFolders) ?? defaults.indexedFolders
+        focusModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .focusModeEnabled) ?? defaults.focusModeEnabled
+        focusPriorityApps = try container.decodeIfPresent([String].self, forKey: .focusPriorityApps) ?? defaults.focusPriorityApps
+        focusAllowUrgent = try container.decodeIfPresent(Bool.self, forKey: .focusAllowUrgent) ?? defaults.focusAllowUrgent
+        quietHoursStartHour = try container.decodeIfPresent(Int.self, forKey: .quietHoursStartHour) ?? defaults.quietHoursStartHour
+        quietHoursEndHour = try container.decodeIfPresent(Int.self, forKey: .quietHoursEndHour) ?? defaults.quietHoursEndHour
+        privacyGuardianEnabled = try container.decodeIfPresent(Bool.self, forKey: .privacyGuardianEnabled) ?? defaults.privacyGuardianEnabled
+        privacyClipboardMonitorEnabled = try container.decodeIfPresent(Bool.self, forKey: .privacyClipboardMonitorEnabled) ?? defaults.privacyClipboardMonitorEnabled
+        privacySensitiveDetectionEnabled = try container.decodeIfPresent(Bool.self, forKey: .privacySensitiveDetectionEnabled) ?? defaults.privacySensitiveDetectionEnabled
+        privacyNetworkMonitorEnabled = try container.decodeIfPresent(Bool.self, forKey: .privacyNetworkMonitorEnabled) ?? defaults.privacyNetworkMonitorEnabled
+    }
 }
 
 enum PrivacyStatus: String, Codable {
@@ -237,6 +335,13 @@ struct QuickAction: Identifiable, Codable, Equatable {
         case codeHelper
         case searchKnowledgeBase
         case workflowMacro
+        case whyDidThisHappen
+        case searchMyFiles
+        case toggleFocusMode
+        case showNotificationDigest
+        case addCurrentAppToPriority
+        case privacyReport
+        case thinkWithMe
     }
 
     let id: UUID
@@ -260,7 +365,14 @@ struct QuickAction: Identifiable, Codable, Equatable {
         QuickAction(title: "Meeting recap", kind: .meetingSummary, icon: "person.3.sequence"),
         QuickAction(title: "Code helper", kind: .codeHelper, icon: "curlybraces"),
         QuickAction(title: "Search docs", kind: .searchKnowledgeBase, icon: "magnifyingglass"),
-        QuickAction(title: "Run macro", kind: .workflowMacro, icon: "gear" )
+        QuickAction(title: "Run macro", kind: .workflowMacro, icon: "gear"),
+        QuickAction(title: "Why did this happen?", kind: .whyDidThisHappen, icon: "questionmark.circle"),
+        QuickAction(title: "Search my files", kind: .searchMyFiles, icon: "folder"),
+        QuickAction(title: "Toggle focus mode", kind: .toggleFocusMode, icon: "moon.zzz"),
+        QuickAction(title: "Show digest", kind: .showNotificationDigest, icon: "text.bubble"),
+        QuickAction(title: "Add current app", kind: .addCurrentAppToPriority, icon: "plus.app"),
+        QuickAction(title: "Privacy report", kind: .privacyReport, icon: "lock.shield"),
+        QuickAction(title: "Think with me", kind: .thinkWithMe, icon: "brain")
     ]
 }
 
@@ -304,13 +416,110 @@ struct IndexedDocument: Identifiable, Codable {
     var title: String
     var path: String
     var embedding: [Double]
+    var extractedText: String
+    var lastModified: Date?
     var lastIndexed: Date
 
-    init(id: UUID = UUID(), title: String, path: String, embedding: [Double], lastIndexed: Date = .init()) {
+    init(id: UUID = UUID(), title: String, path: String, embedding: [Double], extractedText: String = "", lastModified: Date? = nil, lastIndexed: Date = .init()) {
         self.id = id
         self.title = title
         self.path = path
         self.embedding = embedding
+        self.extractedText = extractedText
+        self.lastModified = lastModified
         self.lastIndexed = lastIndexed
+    }
+}
+
+struct FileSearchResult: Identifiable {
+    let id: UUID
+    let document: IndexedDocument
+    let snippet: String
+    let score: Double
+
+    init(id: UUID = UUID(), document: IndexedDocument, snippet: String, score: Double) {
+        self.id = id
+        self.document = document
+        self.snippet = snippet
+        self.score = score
+    }
+}
+
+struct FeatureEvent: Identifiable, Codable, Equatable {
+    let id: UUID
+    let feature: String
+    let type: String
+    let summary: String
+    let metadata: [String: String]
+    let createdAt: Date
+
+    init(id: UUID = UUID(), feature: String, type: String, summary: String, metadata: [String: String] = [:], createdAt: Date = .init()) {
+        self.id = id
+        self.feature = feature
+        self.type = type
+        self.summary = summary
+        self.metadata = metadata
+        self.createdAt = createdAt
+    }
+}
+
+struct ModuleHealthStatus: Identifiable, Equatable {
+    let id = UUID()
+    let module: String
+    let enabled: Bool
+    let permissionsOK: Bool
+    let lastRun: Date?
+}
+
+enum WhySymptom: String, CaseIterable, Identifiable {
+    case notificationOverload = "Notification overload"
+    case appLag = "App lag"
+    case highCPU = "High CPU"
+    case draftFailed = "Draft failed"
+    case other = "Other"
+
+    var id: String { rawValue }
+}
+
+struct ThinkingEntry: Identifiable, Codable, Equatable {
+    enum Role: String, Codable {
+        case assistant
+        case user
+    }
+
+    let id: UUID
+    let role: Role
+    let text: String
+    let createdAt: Date
+
+    init(id: UUID = UUID(), role: Role, text: String, createdAt: Date = .init()) {
+        self.id = id
+        self.role = role
+        self.text = text
+        self.createdAt = createdAt
+    }
+}
+
+struct ThinkingSessionRecord: Identifiable, Codable, Equatable {
+    let id: UUID
+    var title: String
+    var problem: String
+    var constraints: String
+    var options: [String]
+    var entries: [ThinkingEntry]
+    var summary: String
+    var createdAt: Date
+    var updatedAt: Date
+
+    init(id: UUID = UUID(), title: String, problem: String, constraints: String, options: [String], entries: [ThinkingEntry], summary: String, createdAt: Date = .init(), updatedAt: Date = .init()) {
+        self.id = id
+        self.title = title
+        self.problem = problem
+        self.constraints = constraints
+        self.options = options
+        self.entries = entries
+        self.summary = summary
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
     }
 }

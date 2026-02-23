@@ -29,9 +29,9 @@ final class AppEnvironment: ObservableObject {
                                             screenshotService: screenshotService,
                                             ocrService: ocrService,
                                             ollama: ollamaClient)
-    lazy var diagnosticsService = DiagnosticsService(ollama: ollamaClient)
+    lazy var diagnosticsService = DiagnosticsService(ollama: ollamaClient, database: database)
 
-    lazy var notificationViewModel = NotificationViewModel(service: notificationService)
+    lazy var notificationViewModel = NotificationViewModel(service: notificationService, settingsStore: settingsStore, ollama: ollamaClient)
     lazy var settingsViewModel = SettingsViewModel(settingsStore: settingsStore,
                                                    permissions: permissionsManager,
                                                    localIndexService: localIndexService,
@@ -59,8 +59,18 @@ final class AppEnvironment: ObservableObject {
                                                                ollama: ollamaClient)
 
     func startServices() {
-        notificationService.requestPermission()
-        if settingsStore.clipboardWatcherEnabled() {
+        ollamaClient.onNetworkRequest = { [weak self] url in
+            guard let self else { return }
+            let settings = self.settingsStore.current
+            guard settings.privacyGuardianEnabled, settings.privacyNetworkMonitorEnabled else { return }
+            let host = url.host?.lowercased() ?? "unknown"
+            let isLocal = host == "127.0.0.1" || host == "localhost" || host == "::1"
+            let type = isLocal ? "network.local" : "network.external"
+            let summary = isLocal ? "Jarvis network call -> \(host)" : "Unexpected outbound call -> \(host)"
+            self.diagnosticsService.logEvent(feature: "Privacy guardian", type: type, summary: summary, metadata: ["url": url.absoluteString])
+        }
+        let settings = settingsStore.current
+        if settings.clipboardWatcherEnabled || (settings.privacyGuardianEnabled && settings.privacyClipboardMonitorEnabled) {
             clipboardWatcher.start()
         }
     }

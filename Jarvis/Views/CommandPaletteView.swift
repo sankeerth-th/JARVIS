@@ -282,6 +282,10 @@ struct CommandPaletteView: View {
         case .notifications: return "bell"
         case .documents: return "doc.text"
         case .email: return "envelope"
+        case .why: return "questionmark.circle"
+        case .fileSearch: return "folder"
+        case .thinking: return "brain.head.profile"
+        case .privacy: return "lock.shield"
         case .knowledge: return "books.vertical"
         case .macros: return "bolt"
         case .diagnostics: return "stethoscope"
@@ -310,12 +314,25 @@ struct CommandPaletteView: View {
         case .notifications:
             NotificationsView()
                 .environmentObject(notificationVM)
+                .environmentObject(settingsVM)
         case .documents:
             DocumentWorkspaceView()
                 .environmentObject(commandVM)
         case .email:
             EmailWorkspaceView()
                 .environmentObject(emailVM)
+        case .why:
+            WhyModeView()
+                .environmentObject(commandVM)
+        case .fileSearch:
+            FileSearchView()
+                .environmentObject(commandVM)
+        case .thinking:
+            ThinkingCompanionView()
+                .environmentObject(commandVM)
+        case .privacy:
+            PrivacyGuardianView()
+                .environmentObject(commandVM)
         case .knowledge:
             KnowledgeBaseView()
                 .environmentObject(commandVM)
@@ -649,6 +666,237 @@ private struct EmailWorkspaceView: View {
             EmailDraftView()
                 .environmentObject(emailVM)
                 .assistantCard()
+        }
+        .padding(10)
+        .assistantCard()
+    }
+}
+
+private struct WhyModeView: View {
+    @EnvironmentObject private var commandVM: CommandPaletteViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Picker("Symptom", selection: $commandVM.whySymptom) {
+                    ForEach(WhySymptom.allCases) { symptom in
+                        Text(symptom.rawValue).tag(symptom)
+                    }
+                }
+                .frame(width: 220)
+                Spacer()
+                Button("Analyze", action: commandVM.runWhyAnalysis)
+                    .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.22)))
+                Button("Copy report", action: commandVM.copyWhyReport)
+                    .buttonStyle(AssistantPillButtonStyle(tint: Color.white.opacity(0.12)))
+                    .disabled(commandVM.whyReport.isEmpty)
+                Button("Create checklist", action: commandVM.createChecklistFromWhyReport)
+                    .buttonStyle(AssistantPillButtonStyle(tint: Color.green.opacity(0.20)))
+                    .disabled(commandVM.whyReport.isEmpty)
+            }
+            TextField("Optional notes (1-2 lines)", text: $commandVM.whyAdditionalNotes, axis: .vertical)
+                .lineLimit(1...2)
+                .textFieldStyle(.roundedBorder)
+            if commandVM.isWhyRunning {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Analyzing local signals...")
+                        .font(.caption)
+                }
+            }
+            ScrollView {
+                Text(commandVM.whyReport.isEmpty ? "Run analysis to generate a local root-cause report." : commandVM.whyReport)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .padding(10)
+            }
+            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .padding(10)
+        .assistantCard()
+    }
+}
+
+private struct FileSearchView: View {
+    @EnvironmentObject private var commandVM: CommandPaletteViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                TextField("Find that invoice where they overcharged...", text: $commandVM.fileSearchQuery)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { commandVM.runFileSearch() }
+                Button("Search", action: commandVM.runFileSearch)
+                    .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.22)))
+            }
+            if !commandVM.fileSearchStatus.isEmpty {
+                Text(commandVM.fileSearchStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            List(commandVM.fileSearchResults) { result in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(result.document.title)
+                            .font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Text(String(format: "%.2f", result.score))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(result.document.path)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(result.snippet)
+                        .font(.caption)
+                        .lineLimit(2)
+                    HStack {
+                        Button("Open") { commandVM.openSearchResult(result) }
+                            .buttonStyle(.bordered)
+                        Button("Summarize this file") { commandVM.summarizeSearchResult(result) }
+                            .buttonStyle(.borderedProminent)
+                    }
+                }
+                .padding(.vertical, 4)
+                .listRowBackground(Color.clear)
+            }
+            .scrollContentBackground(.hidden)
+            if !commandVM.fileSearchSummary.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Summary")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(commandVM.fileSearchSummary)
+                        .textSelection(.enabled)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+            }
+        }
+        .padding(10)
+        .assistantCard()
+    }
+}
+
+private struct PrivacyGuardianView: View {
+    @EnvironmentObject private var commandVM: CommandPaletteViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Button("Privacy Report", action: commandVM.buildPrivacyReport)
+                    .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.22)))
+                Spacer()
+                Button("Clear clipboard now", action: commandVM.clearClipboardNow)
+                    .buttonStyle(AssistantPillButtonStyle(tint: Color.red.opacity(0.20)))
+            }
+            if let warning = commandVM.privacyWarning {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.yellow)
+                    Text(warning)
+                        .font(.caption)
+                    Spacer()
+                }
+                .padding(8)
+                .background(Color.orange.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            if !commandVM.privacyReport.isEmpty {
+                Text(commandVM.privacyReport)
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            List(commandVM.privacyEvents) { event in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("[\(event.type)] \(event.summary)")
+                            .font(.caption)
+                        Text(event.createdAt.formatted(date: .abbreviated, time: .shortened))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .listRowBackground(Color.clear)
+            }
+            .scrollContentBackground(.hidden)
+        }
+        .padding(10)
+        .assistantCard()
+    }
+}
+
+private struct ThinkingCompanionView: View {
+    @EnvironmentObject private var commandVM: CommandPaletteViewModel
+    @State private var selectedOption: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TextField("Problem statement", text: $commandVM.thinkProblemStatement, axis: .vertical)
+                .lineLimit(1...2)
+                .textFieldStyle(.roundedBorder)
+            TextField("Constraints (budget, time, must-haves)", text: $commandVM.thinkConstraints, axis: .vertical)
+                .lineLimit(1...2)
+                .textFieldStyle(.roundedBorder)
+            TextField("Options (one per line)", text: $commandVM.thinkOptionsInput, axis: .vertical)
+                .lineLimit(2...4)
+                .textFieldStyle(.roundedBorder)
+
+            HStack {
+                Button("Next question", action: commandVM.nextThinkingQuestion)
+                    .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.22)))
+                Button("Build options", action: commandVM.buildThinkingRecommendation)
+                    .buttonStyle(AssistantPillButtonStyle(tint: Color.white.opacity(0.12)))
+                Button("Save session", action: commandVM.saveThinkingSession)
+                    .buttonStyle(AssistantPillButtonStyle(tint: Color.green.opacity(0.2)))
+            }
+
+            List(commandVM.thinkEntries) { entry in
+                HStack(alignment: .top) {
+                    Text(entry.role == .assistant ? "Jarvis" : "You")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 48, alignment: .leading)
+                    Text(entry.text)
+                        .font(.caption)
+                }
+                .listRowBackground(Color.clear)
+            }
+            .scrollContentBackground(.hidden)
+
+            HStack {
+                TextField("Your answer...", text: $commandVM.thinkAnswerDraft)
+                    .textFieldStyle(.roundedBorder)
+                Button("Submit", action: commandVM.submitThinkingAnswer)
+                    .buttonStyle(.borderedProminent)
+            }
+
+            if !commandVM.thinkRecommendation.isEmpty {
+                Text(commandVM.thinkRecommendation)
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+
+            HStack {
+                TextField("Option to simulate", text: $selectedOption)
+                    .textFieldStyle(.roundedBorder)
+                Button("Simulate outcomes") { commandVM.simulateThinkingOutcome(option: selectedOption) }
+                    .buttonStyle(.bordered)
+            }
+
+            if !commandVM.thinkSimulation.isEmpty {
+                Text(commandVM.thinkSimulation)
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
         }
         .padding(10)
         .assistantCard()

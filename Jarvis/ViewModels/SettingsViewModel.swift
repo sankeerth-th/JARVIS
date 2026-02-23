@@ -70,6 +70,34 @@ final class SettingsViewModel: ObservableObject {
         settingsStore.setModel(model)
     }
 
+    func setFocusModeEnabled(_ enabled: Bool) {
+        settingsStore.setFocusModeEnabled(enabled)
+    }
+
+    func setFocusAllowUrgent(_ allow: Bool) {
+        settingsStore.setFocusAllowUrgent(allow)
+    }
+
+    func setQuietHours(startHour: Int, endHour: Int) {
+        settingsStore.setQuietHours(startHour: startHour, endHour: endHour)
+    }
+
+    func setPrivacyGuardianEnabled(_ enabled: Bool) {
+        settingsStore.setPrivacyGuardianEnabled(enabled)
+    }
+
+    func setPrivacyClipboardMonitorEnabled(_ enabled: Bool) {
+        settingsStore.setPrivacyClipboardMonitorEnabled(enabled)
+    }
+
+    func setPrivacySensitiveDetectionEnabled(_ enabled: Bool) {
+        settingsStore.setPrivacySensitiveDetectionEnabled(enabled)
+    }
+
+    func setPrivacyNetworkMonitorEnabled(_ enabled: Bool) {
+        settingsStore.setPrivacyNetworkMonitorEnabled(enabled)
+    }
+
     func refreshModels() {
         Task {
             do {
@@ -99,10 +127,32 @@ final class SettingsViewModel: ObservableObject {
             indexingStatus = "Indexing..."
             do {
                 let count = try await localIndexService.indexFolder(url)
+                settingsStore.addIndexedFolder(url.path)
                 indexingStatus = "Indexed \(count) files from \(url.lastPathComponent)"
             } catch {
                 indexingStatus = "Index failed: \(error.localizedDescription)"
             }
+        }
+    }
+
+    func removeIndexedFolder(path: String) {
+        settingsStore.removeIndexedFolder(path)
+    }
+
+    func reindexConfiguredFolders() {
+        let folders = settingsStore.current.indexedFolders.map { URL(fileURLWithPath: $0) }
+        guard !folders.isEmpty else {
+            indexingStatus = "No indexed folders configured."
+            return
+        }
+        Task {
+            indexingStatus = "Re-indexing..."
+            var total = 0
+            for folder in folders {
+                let count = (try? await localIndexService.indexFolder(folder)) ?? 0
+                total += count
+            }
+            indexingStatus = "Indexed \(total) files across \(folders.count) folder(s)."
         }
     }
 
