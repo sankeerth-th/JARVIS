@@ -32,7 +32,8 @@ final class PermissionsManager {
     }
 
     func openNotificationSettings() {
-        openSettings(urlString: "x-apple.systempreferences:com.apple.preference.notifications")
+        let bundleID = Bundle.main.bundleIdentifier ?? "com.offline.Jarvis"
+        openSettings(urlString: "x-apple.systempreferences:com.apple.preference.notifications?\(bundleID)")
     }
 
     private func openSettings(urlString: String) {

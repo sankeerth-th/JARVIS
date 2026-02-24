@@ -28,6 +28,12 @@ final class NotificationService: NSObject, ObservableObject {
         center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
+    func requestPermissionIfNeeded() async {
+        let status = await notificationsPermissionStatus()
+        guard status == .notDetermined else { return }
+        requestPermission()
+    }
+
     func sendTestNotification() {
         let content = UNMutableNotificationContent()
         content.title = "Jarvis Permission Check"

@@ -67,11 +67,12 @@ final class ConversationService {
             )
         }
         messages.append(contentsOf: conversation.messages.compactMap { mapToOllamaChatMessage($0) })
+        let latestPrompt = conversation.messages.last(where: { $0.role == .user })?.text ?? ""
         let request = ChatRequest(
             model: settings.selectedModel,
             messages: messages,
             stream: true,
-            options: ["temperature": 0.2, "num_predict": 420]
+            options: streamOptions(latestPrompt: latestPrompt, hasExtraContext: !contextChunks.isEmpty)
         )
         return ollama.streamChat(request: request)
     }
@@ -199,6 +200,20 @@ final class ConversationService {
         - Keep responses concise and actionable.
         """
         return [base, toolGuide, strictBehavior].joined(separator: "\n")
+    }
+
+    private func streamOptions(latestPrompt: String, hasExtraContext: Bool) -> [String: Double] {
+        let tokenCount = latestPrompt
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .count
+        let likelyUnclear = tokenCount < 3 || latestPrompt.contains("??")
+        if !hasExtraContext && tokenCount > 0 && tokenCount <= 8 && !likelyUnclear {
+            return ["temperature": 0.1, "num_predict": 220]
+        }
+        if likelyUnclear {
+            return ["temperature": 0.2, "num_predict": 320]
+        }
+        return ["temperature": 0.2, "num_predict": 420]
     }
 
     private func sanitizeModelOutput(_ text: String) -> String {

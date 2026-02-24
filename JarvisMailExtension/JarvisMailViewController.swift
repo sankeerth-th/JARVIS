@@ -11,6 +11,8 @@ final class JarvisMailViewController: MEExtensionViewController {
     init(session: MEComposeSession, sessionBegan: Bool) {
         self.viewModel = JarvisMailPanelViewModel(session: session, sessionBegan: sessionBegan)
         super.init(nibName: nil, bundle: nil)
+        self.title = "Jarvis"
+        self.preferredContentSize = NSSize(width: 460, height: 360)
     }
 
     @available(*, unavailable)

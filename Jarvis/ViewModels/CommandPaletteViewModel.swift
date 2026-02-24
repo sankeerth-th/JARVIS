@@ -21,9 +21,21 @@ final class CommandPaletteViewModel: ObservableObject {
         case fileSearch = "Search"
         case thinking = "Think"
         case privacy = "Privacy"
-        case knowledge = "Knowledge"
         case macros = "Macros"
         case diagnostics = "Diagnostics"
+    }
+
+    enum FileSearchScope: String, CaseIterable, Identifiable {
+        case allIndexed = "All indexed folders"
+        case selectedFolder = "Single folder"
+        var id: String { rawValue }
+    }
+
+    enum IndexPresetFolder: String, CaseIterable, Identifiable {
+        case desktop = "Desktop"
+        case documents = "Documents"
+        case downloads = "Downloads"
+        var id: String { rawValue }
     }
 
     @Published var shouldShowOverlay: Bool = false
@@ -57,6 +69,9 @@ final class CommandPaletteViewModel: ObservableObject {
     @Published var fileSearchResults: [FileSearchResult] = []
     @Published var fileSearchSummary: String = ""
     @Published var fileSearchStatus: String = ""
+    @Published var fileSearchScope: FileSearchScope = .allIndexed
+    @Published var fileSearchSelectedFolder: String = ""
+    @Published var isIndexingSearchFolders: Bool = false
     @Published var privacyWarning: String? = nil
     @Published var privacyReport: String = ""
     @Published var privacyEvents: [FeatureEvent] = []
@@ -68,6 +83,7 @@ final class CommandPaletteViewModel: ObservableObject {
     @Published var thinkRecommendation: String = ""
     @Published var thinkSimulation: String = ""
     @Published var topSuggestion: TopSuggestion? = nil
+    @Published var thinkingStatus: String = ""
 
     private let settingsStore: SettingsStore
     private let conversationService: ConversationService
@@ -91,6 +107,7 @@ final class CommandPaletteViewModel: ObservableObject {
     private var thinkingQuestionCount = 0
     private let commandHistoryStore = CommandHistoryStore()
     private var promptRecallCursor: Int = -1
+    private var hasReceivedStreamingToken = false
 
     init(settingsStore: SettingsStore,
          conversationService: ConversationService,
@@ -178,6 +195,9 @@ final class CommandPaletteViewModel: ObservableObject {
 
     func selectTab(_ tab: PaletteTab) {
         selectedTab = tab
+        if tab == .fileSearch {
+            ensureFileSearchFolderSelection()
+        }
         refreshTopSuggestion()
     }
 
@@ -198,6 +218,9 @@ final class CommandPaletteViewModel: ObservableObject {
 
     func send(prompt: String) {
         commandHistoryStore.recordPrompt(prompt)
+        let promptInsights = analyzePrompt(prompt)
+        thinkingStatus = promptInsights.thinkingMessage
+        statusMessage = promptInsights.statusMessage
         var convo = conversation
         let userMessage = ChatMessage(role: .user, text: prompt)
         convo.messages.append(userMessage)
@@ -207,12 +230,14 @@ final class CommandPaletteViewModel: ObservableObject {
         rawStreamingBuffer = ""
         handledToolInvocationKeys = []
         streamingBuffer = ""
+        hasReceivedStreamingToken = false
         isStreaming = true
-        let context = buildContext(for: prompt)
         selectedQuickAction = nil
         refreshTopSuggestion()
         streamTask?.cancel()
         streamTask = Task {
+            await preloadKnowledgeForPromptIfNeeded(prompt)
+            let context = buildContext(for: prompt)
             do {
                 let stream = conversationService.streamResponse(conversation: convo, context: context, settings: settingsStore.current)
                 for try await chunk in stream {
@@ -227,6 +252,7 @@ final class CommandPaletteViewModel: ObservableObject {
                 conversation.updatedAt = Date()
                 conversationService.persist(conversation)
                 history = conversationService.loadRecentConversations()
+                thinkingStatus = ""
                 isStreaming = false
             }
         }
@@ -234,6 +260,10 @@ final class CommandPaletteViewModel: ObservableObject {
 
     private func consume(chunk: String) {
         rawStreamingBuffer.append(chunk)
+        if !chunk.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !hasReceivedStreamingToken {
+            hasReceivedStreamingToken = true
+            thinkingStatus = "Generating answer in real time..."
+        }
         guard rawStreamingBuffer.contains("tool{") else {
             // Fast path for normal chat streaming; avoids reparsing the whole buffer per token.
             streamingBuffer = rawStreamingBuffer
@@ -266,6 +296,7 @@ final class CommandPaletteViewModel: ObservableObject {
         rawStreamingBuffer = ""
         handledToolInvocationKeys = []
         streamingBuffer = ""
+        thinkingStatus = ""
         isStreaming = false
     }
 
@@ -292,6 +323,53 @@ final class CommandPaletteViewModel: ObservableObject {
             return "I could not generate a useful answer. Please retry."
         }
         return cleaned
+    }
+
+    private func analyzePrompt(_ prompt: String) -> (thinkingMessage: String, statusMessage: String?) {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tokens = trimmed
+            .lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+        let likelyUnclear = tokens.count < 3
+            || trimmed.contains("??")
+            || trimmed.range(of: "\\b(pls|plz|asap|idk|wanna|gimme)\\b", options: .regularExpression) != nil
+        if likelyUnclear {
+            return (
+                thinkingMessage: "Interpreting your request and correcting wording...",
+                statusMessage: "I will infer intent first, then answer."
+            )
+        }
+        if tokens.count <= 8 {
+            return (
+                thinkingMessage: "Fast mode: concise answer...",
+                statusMessage: nil
+            )
+        }
+        return (
+            thinkingMessage: "Breaking down the request before answering...",
+            statusMessage: nil
+        )
+    }
+
+    private func preloadKnowledgeForPromptIfNeeded(_ prompt: String) async {
+        let normalized = prompt.lowercased()
+        guard shouldIncludeKnowledgeContext(prompt: normalized, actionKind: selectedQuickAction?.kind) else { return }
+        guard promptContainsAny(normalized, keywords: ["search", "find", "file", "pdf", "photo", "image", "document"]) else { return }
+        do {
+            let roots = settingsStore.current.indexedFolders
+            let results = try await localIndexService.searchFiles(
+                query: prompt,
+                limit: 6,
+                queryExpansionModel: settingsStore.current.selectedModel,
+                rootFolders: roots.isEmpty ? nil : roots
+            )
+            await MainActor.run {
+                self.knowledgeResults = results.map { $0.document }
+            }
+        } catch {
+            // Keep chat responsive even if semantic preload fails.
+        }
     }
 
     private func buildContext(for prompt: String) -> ConversationContext {
@@ -337,7 +415,7 @@ final class CommandPaletteViewModel: ObservableObject {
     }
 
     private func shouldIncludeKnowledgeContext(prompt: String, actionKind: QuickAction.ActionKind?) -> Bool {
-        if selectedTab == .knowledge || selectedTab == .fileSearch {
+        if selectedTab == .fileSearch {
             return true
         }
         if actionKind == .searchKnowledgeBase || actionKind == .searchMyFiles {
@@ -473,23 +551,11 @@ final class CommandPaletteViewModel: ObservableObject {
     }
 
     func searchKnowledgeBase() {
-        Task {
-            do {
-                let results = try await localIndexService.search(query: knowledgeQuery, limit: 5)
-                await MainActor.run {
-                    self.knowledgeResults = results
-                    if results.isEmpty {
-                        self.statusMessage = "No local matches. Add a folder in Knowledge and re-index."
-                    } else {
-                        self.statusMessage = "Found \(results.count) local match(es)."
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    self.statusMessage = "Search failed: \(error.localizedDescription)"
-                }
-            }
+        if !knowledgeQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            fileSearchQuery = knowledgeQuery
         }
+        selectedTab = .fileSearch
+        runFileSearch()
     }
 
     func refreshMacros() {
@@ -605,19 +671,107 @@ final class CommandPaletteViewModel: ObservableObject {
             fileSearchResults = []
             return
         }
+        ensureFileSearchFolderSelection()
         fileSearchStatus = "Searching local files..."
+        let roots: [String]? = {
+            switch fileSearchScope {
+            case .allIndexed:
+                return settingsStore.current.indexedFolders.isEmpty ? nil : settingsStore.current.indexedFolders
+            case .selectedFolder:
+                let selected = fileSearchSelectedFolder.trimmingCharacters(in: .whitespacesAndNewlines)
+                return selected.isEmpty ? nil : [selected]
+            }
+        }()
         Task {
             do {
-                let results = try await localIndexService.searchFiles(query: query, limit: 20, queryExpansionModel: settingsStore.current.selectedModel)
+                let results = try await localIndexService.searchFiles(
+                    query: query,
+                    limit: 20,
+                    queryExpansionModel: nil,
+                    rootFolders: roots
+                )
                 await MainActor.run {
                     self.fileSearchResults = results
                     self.fileSearchStatus = results.isEmpty ? "No matches." : "Found \(results.count) result(s)."
+                    self.knowledgeResults = results.map { $0.document }
                     self.diagnosticsService.logEvent(feature: "Semantic search", type: "run", summary: "Search executed", metadata: ["query": query, "results": "\(results.count)"])
                 }
             } catch {
                 await MainActor.run {
                     self.fileSearchStatus = "Search failed: \(error.localizedDescription)"
                     self.diagnosticsService.logEvent(feature: "Semantic search", type: "error", summary: "Search failed", metadata: ["error": error.localizedDescription])
+                }
+            }
+        }
+    }
+
+    func ensureFileSearchFolderSelection() {
+        let options = fileSearchFolderOptions
+        if fileSearchSelectedFolder.isEmpty || !options.contains(fileSearchSelectedFolder) {
+            fileSearchSelectedFolder = options.first ?? ""
+        }
+    }
+
+    func addFolderForSearchIndex() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Add"
+        guard panel.runModal() == .OK, let folder = panel.urls.first else { return }
+        indexSearchFolder(folder)
+    }
+
+    func indexPresetFolder(_ preset: IndexPresetFolder) {
+        let manager = FileManager.default
+        let directory: FileManager.SearchPathDirectory
+        switch preset {
+        case .desktop: directory = .desktopDirectory
+        case .documents: directory = .documentDirectory
+        case .downloads: directory = .downloadsDirectory
+        }
+        guard let url = manager.urls(for: directory, in: .userDomainMask).first else { return }
+        indexSearchFolder(url)
+    }
+
+    func reindexSearchFolders() {
+        let folders = settingsStore.current.indexedFolders
+        guard !folders.isEmpty else {
+            fileSearchStatus = "Add at least one folder to index."
+            return
+        }
+        isIndexingSearchFolders = true
+        fileSearchStatus = "Re-indexing \(folders.count) folder(s)..."
+        Task {
+            var total = 0
+            for path in folders {
+                let url = URL(fileURLWithPath: path, isDirectory: true)
+                let count = (try? await localIndexService.indexFolder(url)) ?? 0
+                total += count
+            }
+            await MainActor.run {
+                self.isIndexingSearchFolders = false
+                self.fileSearchStatus = "Indexed \(total) files across \(folders.count) folder(s). OCR is applied for images and scanned PDFs."
+            }
+        }
+    }
+
+    private func indexSearchFolder(_ folder: URL) {
+        isIndexingSearchFolders = true
+        fileSearchStatus = "Indexing \(folder.lastPathComponent)..."
+        Task {
+            do {
+                let count = try await localIndexService.indexFolder(folder)
+                await MainActor.run {
+                    self.settingsStore.addIndexedFolder(folder.path)
+                    self.ensureFileSearchFolderSelection()
+                    self.isIndexingSearchFolders = false
+                    self.fileSearchStatus = "Indexed \(count) files from \(folder.lastPathComponent)."
+                }
+            } catch {
+                await MainActor.run {
+                    self.isIndexingSearchFolders = false
+                    self.fileSearchStatus = "Index failed: \(error.localizedDescription)"
                 }
             }
         }
@@ -950,7 +1104,7 @@ final class CommandPaletteViewModel: ObservableObject {
                 send(prompt: "Explain this code and suggest tests:\n\(clipboard)")
             }
         case .searchKnowledgeBase:
-            selectedTab = .knowledge
+            selectedTab = .fileSearch
         case .workflowMacro:
             selectedTab = .macros
         case .whyDidThisHappen:
@@ -1071,6 +1225,16 @@ final class CommandPaletteViewModel: ObservableObject {
 
     var availableMacros: [Macro] {
         macroService.macros
+    }
+
+    var fileSearchFolderOptions: [String] {
+        let configured = settingsStore.current.indexedFolders
+        let defaults = [
+            FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first?.path,
+            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.path,
+            FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path
+        ].compactMap { $0 }
+        return Array(Set(configured + defaults)).sorted()
     }
 
     var latestAssistantMessage: String? {

@@ -300,7 +300,6 @@ struct CommandPaletteView: View {
         case .fileSearch: return "folder"
         case .thinking: return "brain.head.profile"
         case .privacy: return "lock.shield"
-        case .knowledge: return "books.vertical"
         case .macros: return "bolt"
         case .diagnostics: return "stethoscope"
         }
@@ -371,10 +370,6 @@ struct CommandPaletteView: View {
         case .privacy:
             PrivacyGuardianView()
                 .environmentObject(commandVM)
-        case .knowledge:
-            KnowledgeBaseView()
-                .environmentObject(commandVM)
-                .environmentObject(settingsVM)
         case .macros:
             MacroListView()
                 .environmentObject(commandVM)
@@ -556,6 +551,9 @@ private struct ChatTabView: View {
                         ConversationRow(message: message)
                     }
                     if commandVM.isStreaming {
+                        if !commandVM.thinkingStatus.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            ThinkingStatusRow(text: commandVM.thinkingStatus)
+                        }
                         if commandVM.streamingBuffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             StreamingSkeletonView()
                         } else {
@@ -583,7 +581,9 @@ private struct ChatTabView: View {
                 }
                 .onChange(of: commandVM.streamingBuffer.count) { _, _ in
                     guard commandVM.isStreaming else { return }
-                    proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                    }
                 }
                 .onChange(of: commandVM.isStreaming) { _, streaming in
                     if streaming {
@@ -871,6 +871,42 @@ private struct FileSearchView: View {
                 Button("Search", action: commandVM.runFileSearch)
                     .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.22)))
             }
+            HStack(spacing: 8) {
+                Picker("Scope", selection: $commandVM.fileSearchScope) {
+                    ForEach(CommandPaletteViewModel.FileSearchScope.allCases) { scope in
+                        Text(scope.rawValue).tag(scope)
+                    }
+                }
+                .frame(width: 180)
+                if commandVM.fileSearchScope == .selectedFolder {
+                    Picker("Folder", selection: $commandVM.fileSearchSelectedFolder) {
+                        ForEach(commandVM.fileSearchFolderOptions, id: \.self) { folder in
+                            Text(folder).tag(folder)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                Button("Add folder", action: commandVM.addFolderForSearchIndex)
+                    .buttonStyle(.bordered)
+                Menu("Quick add") {
+                    ForEach(CommandPaletteViewModel.IndexPresetFolder.allCases) { preset in
+                        Button(preset.rawValue) {
+                            commandVM.indexPresetFolder(preset)
+                        }
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                Button("Re-index", action: commandVM.reindexSearchFolders)
+                    .buttonStyle(.bordered)
+            }
+            if commandVM.isIndexingSearchFolders {
+                HStack(spacing: 8) {
+                    ActivityPulse(label: "Indexing")
+                    Text("Extracting local text (including OCR for images/scanned PDFs).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
             if !commandVM.fileSearchStatus.isEmpty {
                 HStack(spacing: 8) {
                     if commandVM.fileSearchStatus.localizedCaseInsensitiveContains("searching") {
@@ -933,6 +969,9 @@ private struct FileSearchView: View {
         }
         .padding(10)
         .assistantCard()
+        .onAppear {
+            commandVM.ensureFileSearchFolderSelection()
+        }
     }
 }
 
@@ -1211,6 +1250,28 @@ private struct StreamingSkeletonView: View {
         .padding(10)
         .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .redacted(reason: .placeholder)
+    }
+}
+
+private struct ThinkingStatusRow: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ActivityPulse(label: "Thinking")
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color.cyan.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.cyan.opacity(0.20), lineWidth: 1)
+        )
     }
 }
 

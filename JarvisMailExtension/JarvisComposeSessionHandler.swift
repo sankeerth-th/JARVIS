@@ -2,6 +2,7 @@ import Foundation
 import MailKit
 import OSLog
 
+@objc(JarvisComposeSessionHandler)
 @MainActor
 final class JarvisComposeSessionHandler: NSObject, MEComposeSessionHandler {
     private static var activeSessionIDs: Set<UUID> = []

@@ -75,7 +75,10 @@ final class NotificationViewModel: ObservableObject {
                 let source = self.service.prioritizedNotifications
                 self.notifications = enabled ? self.service.topNotificationsForFocus(limit: 25) : source
                 if enabled {
-                    self.service.requestPermission()
+                    Task {
+                        await self.service.requestPermissionIfNeeded()
+                        await self.refreshPermissionStatus()
+                    }
                 }
             }
             .store(in: &cancellables)

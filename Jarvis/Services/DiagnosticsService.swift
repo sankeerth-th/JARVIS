@@ -140,7 +140,18 @@ final class DiagnosticsService: ObservableObject {
             UNUserNotificationCenter.current().getNotificationSettings { settings in
                 switch settings.authorizationStatus {
                 case .authorized, .provisional, .ephemeral:
-                    continuation.resume(returning: (true, "Granted"))
+                    let alertDetail: String
+                    switch settings.alertSetting {
+                    case .enabled:
+                        alertDetail = "alerts on"
+                    case .disabled:
+                        alertDetail = "alerts off"
+                    case .notSupported:
+                        alertDetail = "alerts unsupported"
+                    @unknown default:
+                        alertDetail = "alerts unknown"
+                    }
+                    continuation.resume(returning: (true, "Granted (\(alertDetail))"))
                 case .denied:
                     continuation.resume(returning: (false, "Denied"))
                 case .notDetermined:

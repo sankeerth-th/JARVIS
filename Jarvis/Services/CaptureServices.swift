@@ -20,10 +20,10 @@ final class ScreenshotService {
         }
     }
 
-    private var hasPromptedForScreenCapture = false
-
     func captureActiveWindow() throws -> NSImage {
-        promptForScreenCaptureIfNeeded()
+        guard hasScreenCapturePermission() else {
+            throw ScreenshotError.screenPermissionMissing
+        }
         let currentPID = ProcessInfo.processInfo.processIdentifier
         let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         guard let infoList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]],
@@ -60,7 +60,9 @@ final class ScreenshotService {
     }
 
     func captureFullScreen() throws -> NSImage {
-        promptForScreenCaptureIfNeeded()
+        guard hasScreenCapturePermission() else {
+            throw ScreenshotError.screenPermissionMissing
+        }
         guard let image = CGDisplayCreateImage(CGMainDisplayID()) else {
             if !hasScreenCapturePermission() {
                 throw ScreenshotError.screenPermissionMissing
@@ -71,7 +73,9 @@ final class ScreenshotService {
     }
 
     func capture(selection rect: CGRect) throws -> NSImage {
-        promptForScreenCaptureIfNeeded()
+        guard hasScreenCapturePermission() else {
+            throw ScreenshotError.screenPermissionMissing
+        }
         guard let cgImage = CGWindowListCreateImage(rect, [.optionOnScreenOnly], kCGNullWindowID, [.bestResolution]) else {
             if !hasScreenCapturePermission() {
                 throw ScreenshotError.screenPermissionMissing
@@ -83,13 +87,6 @@ final class ScreenshotService {
 
     private func hasScreenCapturePermission() -> Bool {
         CGPreflightScreenCaptureAccess()
-    }
-
-    private func promptForScreenCaptureIfNeeded() {
-        guard !hasScreenCapturePermission() else { return }
-        guard !hasPromptedForScreenCapture else { return }
-        hasPromptedForScreenCapture = true
-        _ = CGRequestScreenCaptureAccess()
     }
 }
 
