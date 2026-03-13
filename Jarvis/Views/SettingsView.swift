@@ -4,6 +4,7 @@ import AppKit
 struct SettingsView: View {
     @EnvironmentObject private var settingsVM: SettingsViewModel
     @EnvironmentObject private var notificationVM: NotificationViewModel
+
     @State private var selectedModel: String = ""
     @State private var selectedTone: ToneStyle = .professional
     @State private var disableLogging: Bool = false
@@ -18,88 +19,148 @@ struct SettingsView: View {
     @State private var privacySensitiveDetectionEnabled: Bool = true
     @State private var privacyNetworkMonitorEnabled: Bool = true
 
+    @State private var accessibilityGranted: Bool = AXIsProcessTrusted()
+    @State private var screenCaptureGranted: Bool = CGPreflightScreenCaptureAccess()
+    @State private var notificationsGranted: Bool = false
+
     var body: some View {
-        Form {
-            Section("Models") {
-                Picker("Ollama model", selection: $selectedModel) {
-                    ForEach(modelOptions, id: \.self) { model in
-                        Text(model).tag(model)
-                    }
-                }
-                .disabled(modelOptions.isEmpty)
-                Button("Refresh models", action: settingsVM.refreshModels)
-            }
-            Section("Tone") {
-                Picker("Response tone", selection: $selectedTone) {
-                    ForEach(ToneStyle.allCases, id: \.self) { tone in
-                        Text(tone.rawValue.capitalized).tag(tone)
-                    }
-                }
-            }
-            Section("Privacy") {
-                Toggle("Disable logging", isOn: $disableLogging)
-                Toggle("Clipboard watcher", isOn: $clipboardWatcher)
-                Toggle("Privacy Guardian", isOn: $privacyGuardianEnabled)
-                Toggle("Clipboard monitor (guardian)", isOn: $privacyClipboardMonitorEnabled)
-                Toggle("Sensitive pattern detection", isOn: $privacySensitiveDetectionEnabled)
-                Toggle("Network monitor (Jarvis only)", isOn: $privacyNetworkMonitorEnabled)
-                Button("Clear conversation history", action: settingsVM.clearHistory)
-            }
-            Section("Permissions") {
-                HStack {
-                    Button("Grant Accessibility", action: settingsVM.requestAccessibility)
-                    Button("Open Settings", action: settingsVM.openAccessibilitySettings)
-                }
-                HStack {
-                    Button("Grant Screen Recording", action: settingsVM.requestScreenRecording)
-                    Button("Open Settings", action: settingsVM.openScreenRecordingSettings)
-                }
-                HStack {
-                    Button("Grant Notifications", action: settingsVM.requestNotifications)
-                    Button("Open Settings", action: settingsVM.openNotificationSettings)
-                }
-                Button("Send test notification", action: notificationVM.sendTestNotification)
-            }
-            Section("Notifications") {
-                Toggle("Focus Mode", isOn: $focusModeEnabled)
-                Toggle("Allow urgent during quiet hours", isOn: $allowUrgentInQuietHours)
-                HStack {
-                    TextField("Priority apps (comma separated)", text: $priorityAppsText)
-                    Button("Save", action: applyPriorityApps)
-                }
-                HStack {
-                    Stepper("Quiet start: \(quietStartHour):00", value: $quietStartHour, in: 0...23)
-                    Stepper("Quiet end: \(quietEndHour):00", value: $quietEndHour, in: 0...23)
-                }
-            }
-            Section("Indexed folders") {
-                Button("Add folder", action: pickFolderForIndex)
-                Button("Re-index configured folders", action: settingsVM.reindexConfiguredFolders)
-                ForEach(settingsVM.settings.indexedFolders, id: \.self) { path in
-                    HStack {
-                        Text(path)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Spacer()
-                        Button("Remove") {
-                            settingsVM.removeIndexedFolder(path: path)
+        VStack(alignment: .leading, spacing: JarvisSpacing.small) {
+            JarvisSectionHeader(
+                title: "Jarvis settings",
+                subtitle: "Local-first defaults, privacy controls, and permission access"
+            )
+            Form {
+                Section("Model") {
+                    Picker("Ollama model", selection: $selectedModel) {
+                        ForEach(modelOptions, id: \.self) { model in
+                            Text(model).tag(model)
                         }
-                        .buttonStyle(.borderless)
+                    }
+                    .disabled(modelOptions.isEmpty)
+                    Picker("Default tone", selection: $selectedTone) {
+                        ForEach(ToneStyle.allCases, id: \.self) { tone in
+                            Text(tone.rawValue.capitalized).tag(tone)
+                        }
+                    }
+                    HStack {
+                        Button("Refresh models", action: settingsVM.refreshModels)
+                            .buttonStyle(JarvisButtonStyle(tone: .secondary))
+                        Spacer(minLength: 0)
+                        Text("Applies to all Jarvis text generation.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("Privacy") {
+                    Toggle("Disable logs", isOn: $disableLogging)
+                    Toggle("Clipboard watcher", isOn: $clipboardWatcher)
+                    Toggle("Privacy guardian", isOn: $privacyGuardianEnabled)
+                    Toggle("Guardian clipboard monitor", isOn: $privacyClipboardMonitorEnabled)
+                    Toggle("Sensitive pattern detection", isOn: $privacySensitiveDetectionEnabled)
+                    Toggle("Network monitor (Jarvis only)", isOn: $privacyNetworkMonitorEnabled)
+                    Button("Clear conversation history", action: settingsVM.clearHistory)
+                        .buttonStyle(JarvisButtonStyle(tone: .danger))
+                    JarvisStatusRow(
+                        tone: .info,
+                        message: "Jarvis runs locally by default. Enable only the monitors you need."
+                    )
+                }
+
+                Section("Permissions") {
+                    JarvisPermissionRow(
+                        title: "Accessibility",
+                        subtitle: "Required for global hotkey and foreground automation.",
+                        status: accessibilityGranted ? "Enabled" : "Not enabled",
+                        isGranted: accessibilityGranted,
+                        primaryActionTitle: "Request",
+                        primaryAction: requestAccessibility,
+                        secondaryActionTitle: "Open Settings",
+                        secondaryAction: settingsVM.openAccessibilitySettings
+                    )
+                    JarvisPermissionRow(
+                        title: "Screen recording",
+                        subtitle: "Needed for capture and OCR workflows.",
+                        status: screenCaptureGranted ? "Enabled" : "Not enabled",
+                        isGranted: screenCaptureGranted,
+                        primaryActionTitle: "Request",
+                        primaryAction: requestScreenCapture,
+                        secondaryActionTitle: "Open Settings",
+                        secondaryAction: settingsVM.openScreenRecordingSettings
+                    )
+                    JarvisPermissionRow(
+                        title: "Notifications",
+                        subtitle: "Needed for focus mode and digest alerts.",
+                        status: notificationsGranted ? "Enabled" : "Not enabled",
+                        isGranted: notificationsGranted,
+                        primaryActionTitle: "Request",
+                        primaryAction: requestNotifications,
+                        secondaryActionTitle: "Open Settings",
+                        secondaryAction: settingsVM.openNotificationSettings
+                    )
+                }
+
+                Section("Notifications") {
+                    Toggle("Focus mode", isOn: $focusModeEnabled)
+                    Toggle("Allow urgent during quiet hours", isOn: $allowUrgentInQuietHours)
+                    HStack {
+                        TextField("Priority apps (comma separated bundle IDs)", text: $priorityAppsText)
+                        Button("Save", action: applyPriorityApps)
+                            .buttonStyle(JarvisButtonStyle(tone: .secondary))
+                    }
+                    HStack {
+                        Stepper("Quiet start: \(quietStartHour):00", value: $quietStartHour, in: 0...23)
+                        Stepper("Quiet end: \(quietEndHour):00", value: $quietEndHour, in: 0...23)
+                    }
+                    Button("Send test notification", action: notificationVM.sendTestNotification)
+                        .buttonStyle(JarvisButtonStyle(tone: .secondary))
+                }
+
+                Section("Indexed folders") {
+                    HStack {
+                        Button("Add folder", action: pickFolderForIndex)
+                            .buttonStyle(JarvisButtonStyle(tone: .secondary))
+                        Button("Re-index configured folders", action: settingsVM.reindexConfiguredFolders)
+                            .buttonStyle(JarvisButtonStyle(tone: .secondary))
+                    }
+                    ForEach(settingsVM.settings.indexedFolders, id: \.self) { path in
+                        HStack {
+                            Text(path)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer()
+                            Button("Remove") {
+                                settingsVM.removeIndexedFolder(path: path)
+                            }
+                            .buttonStyle(JarvisButtonStyle(tone: .tertiary))
+                        }
                     }
                 }
             }
+            .formStyle(.grouped)
         }
         .padding(20)
-        .frame(minWidth: 480, minHeight: 460)
+        .frame(minWidth: 560, minHeight: 560)
         .onAppear {
             syncFromViewModels()
+            refreshPermissionState()
             settingsVM.refreshModels()
+            Task {
+                await notificationVM.refreshPermissionStatus()
+                await MainActor.run {
+                    refreshPermissionState()
+                }
+            }
         }
         .onChange(of: settingsVM.settings) { _, _ in
             syncFromViewModels()
+            refreshPermissionState()
         }
         .onChange(of: notificationVM.priorityApps) { _, _ in
             syncPriorityApps()
+        }
+        .onChange(of: notificationVM.notificationsPermissionGranted) { _, _ in
+            refreshPermissionState()
         }
         .onChange(of: selectedModel) { _, model in
             guard !model.isEmpty, settingsVM.settings.selectedModel != model else { return }
@@ -180,6 +241,12 @@ struct SettingsView: View {
         syncPriorityApps()
     }
 
+    private func refreshPermissionState() {
+        accessibilityGranted = AXIsProcessTrusted()
+        screenCaptureGranted = CGPreflightScreenCaptureAccess()
+        notificationsGranted = notificationVM.notificationsPermissionGranted
+    }
+
     private func syncPriorityApps() {
         let joined = notificationVM.priorityApps.joined(separator: ",")
         if priorityAppsText != joined {
@@ -193,6 +260,26 @@ struct SettingsView: View {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         notificationVM.priorityApps = apps
+    }
+
+    private func requestAccessibility() {
+        settingsVM.requestAccessibility()
+        refreshPermissionState()
+    }
+
+    private func requestScreenCapture() {
+        settingsVM.requestScreenRecording()
+        refreshPermissionState()
+    }
+
+    private func requestNotifications() {
+        settingsVM.requestNotifications()
+        Task {
+            await notificationVM.refreshPermissionStatus()
+            await MainActor.run {
+                refreshPermissionState()
+            }
+        }
     }
 
     private func pickFolderForIndex() {

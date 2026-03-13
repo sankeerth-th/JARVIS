@@ -8,8 +8,10 @@ struct MacroListView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Workflow macros chain Jarvis skills locally.")
-                .font(.body)
+            JarvisSectionHeader(
+                title: "Workflow macros",
+                subtitle: "Create and run reusable local automations"
+            )
 
             HStack {
                 TextField("Macro name", text: $macroName)
@@ -23,7 +25,7 @@ struct MacroListView: View {
                     macroPrompt = ""
                 }
                 .disabled(macroName.isEmpty || macroPrompt.isEmpty)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(JarvisButtonStyle(tone: .primary))
             }
 
             HStack {
@@ -34,7 +36,7 @@ struct MacroListView: View {
                     ]
                     settingsVM.createMacro(name: "Window OCR Cleanup", steps: steps)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(JarvisButtonStyle(tone: .secondary))
                 Text("Capture active window -> OCR -> clean rewrite")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -51,7 +53,7 @@ struct MacroListView: View {
                     }
                     Spacer()
                     Button("Run") { commandVM.runMacro(macro) }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(JarvisButtonStyle(tone: .primary))
                     Button(role: .destructive, action: { settingsVM.deleteMacro(macro) }) {
                         Image(systemName: "trash")
                     }
@@ -70,7 +72,7 @@ struct MacroListView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 6) {
                             ForEach(commandVM.macroLogs) { log in
-                                Text("- \(log.message)")
+                                Text("• \(log.message)")
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
@@ -78,18 +80,10 @@ struct MacroListView: View {
                     .frame(height: 120)
                 }
                 .padding(10)
-                .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                )
+                .jarvisCard(fill: JarvisPalette.panel, border: JarvisPalette.border, shadowOpacity: 0.02)
             }
         }
         .padding(10)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.11), lineWidth: 1)
-        )
+        .jarvisCard(fill: JarvisPalette.panelMuted, border: JarvisPalette.border, shadowOpacity: 0.02)
     }
 }

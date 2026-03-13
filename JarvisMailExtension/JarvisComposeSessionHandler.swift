@@ -14,6 +14,7 @@ final class JarvisComposeSessionHandler: NSObject, MEComposeSessionHandler {
 
     func mailComposeSessionDidEnd(_ session: MEComposeSession) {
         Self.activeSessionIDs.remove(session.sessionID)
+        JarvisMailPanelStateStore.remove(sessionID: session.sessionID)
         logger.info("mailComposeSessionDidEnd. session=\(session.sessionID.uuidString, privacy: .public)")
     }
 

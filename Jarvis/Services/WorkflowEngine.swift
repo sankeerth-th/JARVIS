@@ -73,19 +73,21 @@ final class WorkflowEngine {
             case .runTool:
                 let toolName = step.payload["tool"] ?? ""
                 if toolName == "ocrCurrentWindow" {
-                    do {
-                        let image = try screenshotService.captureActiveWindow()
-                        let text = try ocrService.recognizeText(from: image)
-                        let extracted = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if extracted.isEmpty {
-                            logs.append(MacroExecutionLog(message: "OCR step completed: no text detected"))
-                            lastOutput = ""
-                        } else {
-                            logs.append(MacroExecutionLog(message: "OCR output:\n\(extracted.prefix(2000))"))
-                            lastOutput = extracted
+                    Task {
+                        do {
+                            let image = try await screenshotService.captureActiveWindow()
+                            let text = try ocrService.recognizeText(from: image)
+                            let extracted = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if extracted.isEmpty {
+                                logs.append(MacroExecutionLog(message: "OCR step completed: no text detected"))
+                                lastOutput = ""
+                            } else {
+                                logs.append(MacroExecutionLog(message: "OCR output:\n\(extracted.prefix(2000))"))
+                                lastOutput = extracted
+                            }
+                        } catch {
+                            logs.append(MacroExecutionLog(message: "OCR step failed: \(error.localizedDescription). Check Screen Recording permission."))
                         }
-                    } catch {
-                        logs.append(MacroExecutionLog(message: "OCR step failed: \(error.localizedDescription). Check Screen Recording permission."))
                     }
                 } else {
                     logs.append(MacroExecutionLog(message: "Unknown tool step: \(toolName)"))

@@ -16,4 +16,9 @@ xcuserdata/
 ModuleCache.noindex/
 
 # Logs
-*.log
+*.log.derivedData/
+DerivedData/
+build/
+*.backup
+*.backup.*
+.DS_Store

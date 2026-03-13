@@ -6,15 +6,28 @@ struct KnowledgeBaseView: View {
     @EnvironmentObject private var settingsVM: SettingsViewModel
 
     var body: some View {
+        ModernSearchView()
+            .environmentObject(commandVM)
+            .environmentObject(settingsVM)
+    }
+}
+
+// Legacy view kept for reference - can be deleted after ModernSearchView is fully tested
+struct LegacyKnowledgeBaseView: View {
+    @EnvironmentObject private var commandVM: CommandPaletteViewModel
+    @EnvironmentObject private var settingsVM: SettingsViewModel
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            JarvisSectionHeader(title: "Knowledge base", subtitle: "Search OCR-indexed local documents")
             HStack {
                 TextField("Search local docs", text: $commandVM.knowledgeQuery)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit { commandVM.searchKnowledgeBase() }
                 Button("Search", action: commandVM.searchKnowledgeBase)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(JarvisButtonStyle(tone: .primary))
                 Button("Add folder", action: pickFolder)
-                    .buttonStyle(.bordered)
+                    .buttonStyle(JarvisButtonStyle(tone: .secondary))
             }
 
             Text("PDF and image files are OCR-indexed locally for search.")
@@ -43,7 +56,7 @@ struct KnowledgeBaseView: View {
                         let url = URL(fileURLWithPath: doc.path)
                         NSWorkspace.shared.open(url)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(JarvisButtonStyle(tone: .secondary))
                 }
                 .listRowBackground(Color.clear)
             }
@@ -51,11 +64,7 @@ struct KnowledgeBaseView: View {
             .background(Color.clear)
         }
         .padding(10)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.11), lineWidth: 1)
-        )
+        .jarvisCard(fill: JarvisPalette.panelMuted, border: JarvisPalette.border, shadowOpacity: 0.02)
     }
 
     private func pickFolder() {

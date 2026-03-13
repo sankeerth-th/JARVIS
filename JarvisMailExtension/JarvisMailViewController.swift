@@ -1,4 +1,6 @@
 import AppKit
+import ApplicationServices
+import Carbon.HIToolbox
 import MailKit
 import OSLog
 import SwiftUI
@@ -12,7 +14,7 @@ final class JarvisMailViewController: MEExtensionViewController {
         self.viewModel = JarvisMailPanelViewModel(session: session, sessionBegan: sessionBegan)
         super.init(nibName: nil, bundle: nil)
         self.title = "Jarvis"
-        self.preferredContentSize = NSSize(width: 460, height: 360)
+        self.preferredContentSize = NSSize(width: 520, height: 620)
     }
 
     @available(*, unavailable)
@@ -63,10 +65,20 @@ private final class JarvisMailPanelViewModel: ObservableObject {
     @Published var extractedThreadPreview: String = ""
 
     private let session: MEComposeSession
+    private let sessionID: UUID
     private let logger = Logger(subsystem: "com.offline.Jarvis.MailExtension", category: "PanelVM")
 
     init(session: MEComposeSession, sessionBegan: Bool) {
         self.session = session
+        self.sessionID = session.sessionID
+        if let persisted = JarvisMailPanelStateStore.load(sessionID: sessionID) {
+            modelName = persisted.modelName
+            outputText = persisted.outputText
+            statusText = persisted.statusText
+            userInstruction = persisted.userInstruction
+            clipboardPreview = persisted.clipboardPreview
+            extractedThreadPreview = persisted.extractedThreadPreview
+        }
         if !sessionBegan {
             troubleshootingMessage = "Compose session not available yet. Open a new compose/reply window and click Jarvis again."
         }
@@ -76,6 +88,7 @@ private final class JarvisMailPanelViewModel: ObservableObject {
         logger.info("Panel onAppear. session=\(self.session.sessionID.uuidString, privacy: .public)")
         refreshContext()
         contextSummary = buildContextSummary()
+        persistDraft()
     }
 
     func run(_ action: Action) {
@@ -97,6 +110,7 @@ private final class JarvisMailPanelViewModel: ObservableObject {
             statusText = "Loaded text from clipboard."
         }
         contextSummary = buildContextSummary()
+        persistDraft()
     }
 
     func copyOutput() {
@@ -105,11 +119,35 @@ private final class JarvisMailPanelViewModel: ObservableObject {
         NSPasteboard.general.setString(outputText, forType: .string)
         statusText = "Copied draft to clipboard."
         logger.info("Copied output to clipboard")
+        persistDraft()
+    }
+
+    func copyForMailBody() {
+        guard !outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(outputText, forType: .string)
+        statusText = "Copied for Mail body. Click message body and press Cmd+V."
+        logger.info("Copied output for Mail body paste")
+        persistDraft()
     }
 
     func insertFallback() {
-        statusText = "Direct insert is not available in MailKit. Use Copy and paste into the compose body."
-        logger.info("Insert requested, fallback to clipboard")
+        guard !outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(outputText, forType: .string)
+        let trusted = AXIsProcessTrusted()
+        if trusted {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                Self.sendCommandVKeystroke()
+            }
+            statusText = "Insert attempted. If not pasted, click message body and press Cmd+V."
+            logger.info("Insert attempted via Cmd+V event")
+        } else {
+            // Keep flow non-blocking; avoid opening Settings repeatedly.
+            statusText = "Copied. Auto-insert needs Accessibility in this extension context. Click body and press Cmd+V."
+            logger.info("Insert fallback: accessibility unavailable for extension context")
+        }
+        persistDraft()
     }
 
     private func streamResponse(for action: Action) async {
@@ -121,6 +159,7 @@ private final class JarvisMailPanelViewModel: ObservableObject {
         isRunning = true
         outputText = ""
         statusText = "Contacting local Ollama..."
+        persistDraft()
         defer { isRunning = false }
         do {
             var request = URLRequest(url: URL(string: "http://127.0.0.1:11434/api/generate")!)
@@ -151,6 +190,7 @@ private final class JarvisMailPanelViewModel: ObservableObject {
                     aggregated.append(token)
                     outputText = aggregated
                     statusText = "Generating..."
+                    persistDraft()
                 }
                 if let done = json["done"] as? Bool, done {
                     break
@@ -158,9 +198,11 @@ private final class JarvisMailPanelViewModel: ObservableObject {
             }
             statusText = aggregated.isEmpty ? "No output generated. Try a different model." : "Done. Copy the output into Mail."
             logger.info("Ollama call completed. chars=\(aggregated.count, privacy: .public)")
+            persistDraft()
         } catch {
             statusText = "Ollama request failed: \(error.localizedDescription)"
             logger.error("Ollama call failed: \(error.localizedDescription, privacy: .public)")
+            persistDraft()
         }
     }
 
@@ -276,6 +318,7 @@ private final class JarvisMailPanelViewModel: ObservableObject {
             extractedThreadPreview = ""
             statusText = "MailKit did not provide thread body. Copy thread text and click Paste from clipboard."
         }
+        persistDraft()
     }
 
     private func normalizedSubject() -> String {
@@ -295,6 +338,29 @@ private final class JarvisMailPanelViewModel: ObservableObject {
     private func emailString(_ address: MEEmailAddress) -> String {
         address.addressString ?? address.rawString
     }
+
+    private static func sendCommandVKeystroke() {
+        guard let source = CGEventSource(stateID: .combinedSessionState) else { return }
+        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: true)
+        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: false)
+        keyDown?.flags = .maskCommand
+        keyUp?.flags = .maskCommand
+        keyDown?.post(tap: .cghidEventTap)
+        keyUp?.post(tap: .cghidEventTap)
+    }
+
+    func persistDraft() {
+        let state = JarvisMailPanelStateStore.State(
+            modelName: modelName,
+            outputText: outputText,
+            statusText: statusText,
+            userInstruction: userInstruction,
+            clipboardPreview: clipboardPreview,
+            extractedThreadPreview: extractedThreadPreview,
+            updatedAt: Date()
+        )
+        JarvisMailPanelStateStore.save(state, sessionID: sessionID)
+    }
 }
 
 private struct JarvisMailPanelView: View {
@@ -302,107 +368,115 @@ private struct JarvisMailPanelView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Jarvis")
-                    .font(.headline)
-                Text("Mail Assistant")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if viewModel.isRunning {
-                    ProgressView()
-                        .controlSize(.small)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Jarvis")
+                            .font(.headline)
+                        Text("Mail Assistant")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        if viewModel.isRunning {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                    }
+
+                    if let troubleshooting = viewModel.troubleshootingMessage {
+                        Text(troubleshooting)
+                            .font(.caption)
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.orange.opacity(0.18), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+
+                    HStack(spacing: 8) {
+                        Text("Model")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField("gemma3:12b", text: $viewModel.modelName)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Compose context")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        ScrollView {
+                            Text(viewModel.contextSummary)
+                                .font(.caption)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(height: 84)
+                        .padding(6)
+                        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Ask Jarvis")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextEditor(text: $viewModel.userInstruction)
+                            .font(.body)
+                            .frame(height: 62)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                            )
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Extracted thread preview")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        ScrollView {
+                            Text(viewModel.extractedThreadPreview.isEmpty ? "No body extracted yet. Use Paste from clipboard for reliable thread text." : viewModel.extractedThreadPreview)
+                                .font(.caption)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(height: 66)
+                        .padding(6)
+                        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+
+                    HStack(spacing: 8) {
+                        Button("Draft with Jarvis") { viewModel.run(.draft) }
+                            .buttonStyle(.borderedProminent)
+                        Button("Improve tone") { viewModel.run(.improve) }
+                            .buttonStyle(.bordered)
+                        Button("Summarize thread") { viewModel.run(.summarize) }
+                            .buttonStyle(.bordered)
+                    }
+
+                    HStack(spacing: 8) {
+                        Button("Paste from clipboard", action: viewModel.loadClipboard)
+                            .buttonStyle(.bordered)
+                        if !viewModel.clipboardPreview.isEmpty {
+                            Text("Clipboard loaded")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    TextEditor(text: $viewModel.outputText)
+                        .font(.body)
+                        .frame(minHeight: 160)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                        )
                 }
             }
-
-            if let troubleshooting = viewModel.troubleshootingMessage {
-                Text(troubleshooting)
-                    .font(.caption)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.orange.opacity(0.18), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
-
-            HStack(spacing: 8) {
-                Text("Model")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextField("gemma3:12b", text: $viewModel.modelName)
-                    .textFieldStyle(.roundedBorder)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Compose context")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                ScrollView {
-                    Text(viewModel.contextSummary)
-                        .font(.caption)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(height: 84)
-                .padding(6)
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Ask Jarvis")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextEditor(text: $viewModel.userInstruction)
-                    .font(.body)
-                    .frame(height: 62)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                    )
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Extracted thread preview")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                ScrollView {
-                    Text(viewModel.extractedThreadPreview.isEmpty ? "No body extracted yet. Use Paste from clipboard for reliable thread text." : viewModel.extractedThreadPreview)
-                        .font(.caption)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(height: 66)
-                .padding(6)
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
-
-            HStack(spacing: 8) {
-                Button("Draft with Jarvis") { viewModel.run(.draft) }
-                    .buttonStyle(.borderedProminent)
-                Button("Improve tone") { viewModel.run(.improve) }
-                    .buttonStyle(.bordered)
-                Button("Summarize thread") { viewModel.run(.summarize) }
-                    .buttonStyle(.bordered)
-            }
-
-            HStack(spacing: 8) {
-                Button("Paste from clipboard", action: viewModel.loadClipboard)
-                    .buttonStyle(.bordered)
-                if !viewModel.clipboardPreview.isEmpty {
-                    Text("Clipboard loaded")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            TextEditor(text: $viewModel.outputText)
-                .font(.body)
-                .frame(minHeight: 100)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             HStack {
                 Button("Copy to clipboard", action: viewModel.copyOutput)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("Copy for Mail body", action: viewModel.copyForMailBody)
                     .buttonStyle(.borderedProminent)
                     .disabled(viewModel.outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button("Insert", action: viewModel.insertFallback)
@@ -415,8 +489,59 @@ private struct JarvisMailPanelView: View {
                     .multilineTextAlignment(.trailing)
             }
         }
+        .onChange(of: viewModel.userInstruction) { viewModel.persistDraft() }
+        .onChange(of: viewModel.modelName) { viewModel.persistDraft() }
+        .onChange(of: viewModel.outputText) { viewModel.persistDraft() }
         .padding(12)
-        .frame(minWidth: 430, minHeight: 420)
+        .frame(minWidth: 480, minHeight: 560)
+    }
+}
+
+enum JarvisMailPanelStateStore {
+    struct State: Codable {
+        var modelName: String
+        var outputText: String
+        var statusText: String
+        var userInstruction: String
+        var clipboardPreview: String
+        var extractedThreadPreview: String
+        var updatedAt: Date
+    }
+
+    private static let defaults = UserDefaults.standard
+    private static let keyPrefix = "jarvis_mail_session_"
+    private static let staleInterval: TimeInterval = 7 * 24 * 3600
+
+    static func save(_ state: State, sessionID: UUID) {
+        guard let data = try? JSONEncoder().encode(state) else { return }
+        defaults.set(data, forKey: keyPrefix + sessionID.uuidString)
+        prune()
+    }
+
+    static func load(sessionID: UUID) -> State? {
+        guard let data = defaults.data(forKey: keyPrefix + sessionID.uuidString),
+              let state = try? JSONDecoder().decode(State.self, from: data) else {
+            return nil
+        }
+        return state
+    }
+
+    static func remove(sessionID: UUID) {
+        defaults.removeObject(forKey: keyPrefix + sessionID.uuidString)
+    }
+
+    private static func prune() {
+        let now = Date()
+        for (key, value) in defaults.dictionaryRepresentation() where key.hasPrefix(keyPrefix) {
+            guard let data = value as? Data,
+                  let state = try? JSONDecoder().decode(State.self, from: data) else {
+                defaults.removeObject(forKey: key)
+                continue
+            }
+            if now.timeIntervalSince(state.updatedAt) > staleInterval {
+                defaults.removeObject(forKey: key)
+            }
+        }
     }
 }
 

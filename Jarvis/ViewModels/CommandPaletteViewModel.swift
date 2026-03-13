@@ -47,6 +47,9 @@ final class CommandPaletteViewModel: ObservableObject {
     @Published var availableModels: [String] = []
     @Published var isStreaming: Bool = false
     @Published var streamingBuffer: String = ""
+    @Published var routingDebugSummary: String = ""
+    @Published var routeExecutionState: RouteExecutionState = .idle
+    @Published var routeExecutionReason: String = ""
     @Published var statusMessage: String? = nil
     @Published var pendingTool: ToolInvocation? = nil
     @Published var toolRequiresConfirmation: Bool = false
@@ -72,6 +75,7 @@ final class CommandPaletteViewModel: ObservableObject {
     @Published var fileSearchScope: FileSearchScope = .allIndexed
     @Published var fileSearchSelectedFolder: String = ""
     @Published var isIndexingSearchFolders: Bool = false
+    @Published var fileSearchShowDebugDetails: Bool = false
     @Published var privacyWarning: String? = nil
     @Published var privacyReport: String = ""
     @Published var privacyEvents: [FeatureEvent] = []
@@ -97,10 +101,11 @@ final class CommandPaletteViewModel: ObservableObject {
     private let clipboardWatcher: ClipboardWatcher
     private let diagnosticsService: DiagnosticsService
     private let ollama: OllamaClient
+    private let intentClassifier = IntentClassifier()
+    private let routePlanner = RoutePlanner()
     private let parser = ToolInvocationParser()
     private var streamTask: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
-    private var selectedQuickAction: QuickAction?
     private var clipboardWatcherEnabled = false
     private var rawStreamingBuffer: String = ""
     private var handledToolInvocationKeys: Set<String> = []
@@ -108,6 +113,9 @@ final class CommandPaletteViewModel: ObservableObject {
     private let commandHistoryStore = CommandHistoryStore()
     private var promptRecallCursor: Int = -1
     private var hasReceivedStreamingToken = false
+    private var streamOwnership = StreamOwnershipController()
+    private var pendingToolRequestID: UUID?
+    private var knowledgeContextResults: [IndexedDocument] = []
 
     init(settingsStore: SettingsStore,
          conversationService: ConversationService,
@@ -194,6 +202,9 @@ final class CommandPaletteViewModel: ObservableObject {
     func hideOverlay() { shouldShowOverlay = false }
 
     func selectTab(_ tab: PaletteTab) {
+        if tab != selectedTab, tab != .chat, streamOwnership.activeRequest != nil {
+            cancelActiveStream(reason: "tab_switched:\(tab.rawValue)")
+        }
         selectedTab = tab
         if tab == .fileSearch {
             ensureFileSearchFolderSelection()
@@ -212,17 +223,32 @@ final class CommandPaletteViewModel: ObservableObject {
             inputText = ""
             return
         }
-        send(prompt: trimmed)
+        send(prompt: trimmed, requestedAction: nil)
         inputText = ""
     }
 
-    func send(prompt: String) {
+    func send(prompt: String, requestedAction: QuickAction? = nil) {
         commandHistoryStore.recordPrompt(prompt)
         let promptInsights = analyzePrompt(prompt)
         thinkingStatus = promptInsights.thinkingMessage
         statusMessage = promptInsights.statusMessage
+        routeExecutionState = .analyzingInput
+        routeExecutionReason = "Analyzing prompt and active UI context"
+        let signal = routeSignal(for: requestedAction)
+        let classification = intentClassifier.classify(prompt: prompt, signal: signal)
+        let routePlan = routePlanner.makePlan(classification: classification, signal: signal)
+        cancelActiveStream(reason: "new_request_started")
         var convo = conversation
-        let userMessage = ChatMessage(role: .user, text: prompt)
+        let activeRequest = streamOwnership.begin(conversationID: convo.id, routePlan: routePlan)
+        let userMessage = ChatMessage(
+            role: .user,
+            text: prompt,
+            metadata: requestMetadata(
+                requestID: activeRequest.requestID,
+                routePlan: routePlan,
+                source: "route.user"
+            )
+        )
         convo.messages.append(userMessage)
         convo.updatedAt = Date()
         conversation = convo
@@ -232,40 +258,73 @@ final class CommandPaletteViewModel: ObservableObject {
         streamingBuffer = ""
         hasReceivedStreamingToken = false
         isStreaming = true
-        selectedQuickAction = nil
         refreshTopSuggestion()
-        streamTask?.cancel()
+        routeExecutionState = .routeSelected
+        routeExecutionReason = classification.reasons.joined(separator: "; ")
+        routingDebugSummary = routeSummary(request: activeRequest, classification: classification)
+        diagnosticsService.logEvent(
+            feature: "Routing",
+            type: "route.selected",
+            summary: "Selected route for prompt",
+            metadata: [
+                "requestID": activeRequest.requestID.uuidString,
+                "intent": routePlan.intent.rawValue,
+                "promptTemplate": routePlan.promptTemplate.rawValue,
+                "memoryScope": routePlan.memoryScope.rawValue,
+                "contextPolicy": contextPolicySummary(routePlan.contextPolicy),
+                "allowedTools": routePlan.allowedTools.map(\.rawValue).joined(separator: ","),
+                "surface": signal.selectedSurface.rawValue
+            ]
+        )
+        routeExecutionState = .executingRoute
+        routeExecutionReason = "Executing \(routePlan.intent.rawValue) with one primary route"
         streamTask = Task {
-            await preloadKnowledgeForPromptIfNeeded(prompt)
-            let context = buildContext(for: prompt)
+            await preloadKnowledgeForPromptIfNeeded(prompt, routePlan: routePlan)
+            let context = buildContext(routePlan: routePlan, requestedAction: requestedAction)
             do {
-                let stream = conversationService.streamResponse(conversation: convo, context: context, settings: settingsStore.current)
+                let stream = conversationService.streamResponse(
+                    conversation: convo,
+                    context: context,
+                    routePlan: routePlan,
+                    settings: settingsStore.current
+                )
                 for try await chunk in stream {
-                    consume(chunk: chunk)
+                    guard streamOwnership.owns(activeRequest.requestID) else { break }
+                    consume(
+                        chunk: chunk,
+                        requestID: activeRequest.requestID,
+                        conversationID: activeRequest.conversationID,
+                        routePlan: routePlan
+                    )
                 }
-                finishStreaming()
+                finishStreaming(requestID: activeRequest.requestID, conversationID: activeRequest.conversationID)
             } catch {
+                guard streamOwnership.owns(activeRequest.requestID) else { return }
                 statusMessage = "Ollama error: \(error.localizedDescription)"
+                routeExecutionState = .failed
+                routeExecutionReason = error.localizedDescription
                 diagnosticsService.logEvent(feature: "Chat", type: "error", summary: "Chat request failed", metadata: ["error": error.localizedDescription])
-                let errorMessage = ChatMessage(role: .assistant, text: "I could not reach the selected Ollama model. Check Diagnostics and retry.")
-                conversation.messages.append(errorMessage)
-                conversation.updatedAt = Date()
-                conversationService.persist(conversation)
-                history = conversationService.loadRecentConversations()
+                appendMessageToConversation(
+                    id: activeRequest.conversationID,
+                    message: ChatMessage(role: .assistant, text: "I could not reach the selected Ollama model. Check Diagnostics and retry.")
+                )
                 thinkingStatus = ""
                 isStreaming = false
+                streamOwnership.complete(requestID: activeRequest.requestID)
             }
         }
     }
 
-    private func consume(chunk: String) {
+    private func consume(chunk: String, requestID: UUID, conversationID: UUID, routePlan: RoutePlan) {
+        guard streamOwnership.owns(requestID) else { return }
         rawStreamingBuffer.append(chunk)
         if !chunk.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !hasReceivedStreamingToken {
             hasReceivedStreamingToken = true
             thinkingStatus = "Generating answer in real time..."
+            routeExecutionState = .streamingResponse
+            routeExecutionReason = "Active request owns streaming sink"
         }
         guard rawStreamingBuffer.contains("tool{") else {
-            // Fast path for normal chat streaming; avoids reparsing the whole buffer per token.
             streamingBuffer = rawStreamingBuffer
             return
         }
@@ -275,29 +334,56 @@ final class CommandPaletteViewModel: ObservableObject {
             let invocationKey = toolInvocationKey(invocation)
             guard handledToolInvocationKeys.contains(invocationKey) == false else { continue }
             handledToolInvocationKeys.insert(invocationKey)
+            guard routePlan.allowedTools.contains(invocation.name) else {
+                diagnosticsService.logEvent(
+                    feature: "Routing",
+                    type: "tool.blocked",
+                    summary: "Blocked tool not allowed for route",
+                    metadata: [
+                        "requestID": requestID.uuidString,
+                        "tool": invocation.name.rawValue,
+                        "intent": routePlan.intent.rawValue
+                    ]
+                )
+                continue
+            }
             if toolService.requiresConfirmation(for: invocation.name) {
                 pendingTool = invocation
                 toolRequiresConfirmation = true
+                pendingToolRequestID = requestID
             } else {
                 Task {
-                    await self.handleTool(invocation: invocation)
+                    await self.handleTool(invocation: invocation, requestID: requestID, conversationID: conversationID, routePlan: routePlan)
                 }
             }
         }
     }
 
-    private func finishStreaming() {
+    private func finishStreaming(requestID: UUID, conversationID: UUID) {
+        guard streamOwnership.owns(requestID) else { return }
         let finalReply = sanitizeAssistantReply(streamingBuffer)
-        let assistantMessage = ChatMessage(role: .assistant, text: finalReply)
-        conversation.messages.append(assistantMessage)
-        conversation.updatedAt = Date()
-        conversationService.persist(conversation)
-        history = conversationService.loadRecentConversations()
+        appendMessageToConversation(
+            id: conversationID,
+            message: ChatMessage(
+                role: .assistant,
+                text: finalReply,
+                metadata: responseProvenance(requestID: requestID, routePlan: streamOwnership.activeRequest?.routePlan)
+            )
+        )
         rawStreamingBuffer = ""
         handledToolInvocationKeys = []
         streamingBuffer = ""
         thinkingStatus = ""
         isStreaming = false
+        streamOwnership.complete(requestID: requestID)
+        routeExecutionState = .completed
+        routeExecutionReason = "Stream completed and response persisted"
+        diagnosticsService.logEvent(
+            feature: "Routing",
+            type: "stream.completed",
+            summary: "Completed streaming request",
+            metadata: ["requestID": requestID.uuidString, "conversationID": conversationID.uuidString]
+        )
     }
 
     private func sanitizeAssistantReply(_ raw: String) -> String {
@@ -352,10 +438,16 @@ final class CommandPaletteViewModel: ObservableObject {
         )
     }
 
-    private func preloadKnowledgeForPromptIfNeeded(_ prompt: String) async {
+    private func preloadKnowledgeForPromptIfNeeded(_ prompt: String, routePlan: RoutePlan) async {
         let normalized = prompt.lowercased()
-        guard shouldIncludeKnowledgeContext(prompt: normalized, actionKind: selectedQuickAction?.kind) else { return }
-        guard promptContainsAny(normalized, keywords: ["search", "find", "file", "pdf", "photo", "image", "document"]) else { return }
+        guard routePlan.contextPolicy.includeKnowledgeContext else {
+            knowledgeContextResults = []
+            return
+        }
+        guard promptContainsAny(normalized, keywords: ["search", "find", "file", "pdf", "photo", "image", "document"]) else {
+            knowledgeContextResults = []
+            return
+        }
         do {
             let roots = settingsStore.current.indexedFolders
             let results = try await localIndexService.searchFiles(
@@ -365,106 +457,130 @@ final class CommandPaletteViewModel: ObservableObject {
                 rootFolders: roots.isEmpty ? nil : roots
             )
             await MainActor.run {
-                self.knowledgeResults = results.map { $0.document }
+                self.knowledgeContextResults = results.map { $0.document }
             }
         } catch {
+            await MainActor.run {
+                self.knowledgeContextResults = []
+            }
             // Keep chat responsive even if semantic preload fails.
         }
     }
 
-    private func buildContext(for prompt: String) -> ConversationContext {
-        let normalizedPrompt = prompt.lowercased()
-        let actionKind = selectedQuickAction?.kind
-
-        let includeDocument = shouldIncludeDocumentContext(prompt: normalizedPrompt, actionKind: actionKind)
-        let includeKnowledge = shouldIncludeKnowledgeContext(prompt: normalizedPrompt, actionKind: actionKind)
-        let includeClipboard = shouldIncludeClipboardContext(prompt: normalizedPrompt, actionKind: actionKind)
-        let includeNotifications = shouldIncludeNotificationContext(prompt: normalizedPrompt, actionKind: actionKind)
-        let includeMacro = shouldIncludeMacroContext(prompt: normalizedPrompt, actionKind: actionKind)
-
-        let knowledgeSnippets: [String] = includeKnowledge
-            ? knowledgeResults.map { "\($0.title): \($0.path)" }
+    private func buildContext(routePlan: RoutePlan, requestedAction: QuickAction?) -> ConversationContext {
+        let knowledgeSnippets: [String] = routePlan.contextPolicy.includeKnowledgeContext
+            ? knowledgeContextResults.map { "\($0.title): \($0.path)" }
             : []
-        let digest = includeNotifications ? notificationViewModel.summary(limit: 5) : nil
+        let digest = routePlan.contextPolicy.includeNotificationContext ? notificationViewModel.summary(limit: 5) : nil
 
         return ConversationContext(
-            selectedDocument: includeDocument ? importedDocument : nil,
+            selectedDocument: routePlan.contextPolicy.includeDocumentContext ? importedDocument : nil,
             notificationDigest: digest,
-            clipboardPreview: includeClipboard ? clipboardBanner : nil,
+            clipboardPreview: routePlan.contextPolicy.includeClipboardContext ? clipboardBanner : nil,
             knowledgeBaseSnippets: knowledgeSnippets,
-            macroSummary: includeMacro ? macroLogs.map { $0.message }.joined(separator: "\n") : nil,
-            requestedAction: selectedQuickAction
+            macroSummary: routePlan.contextPolicy.includeMacroContext ? macroLogs.map { $0.message }.joined(separator: "\n") : nil,
+            requestedAction: requestedAction
         )
-    }
-
-    private func shouldIncludeDocumentContext(prompt: String, actionKind: QuickAction.ActionKind?) -> Bool {
-        if selectedTab == .documents {
-            return true
-        }
-        if actionKind == .extractTable {
-            return true
-        }
-        return promptContainsAny(
-            prompt,
-            keywords: [
-                "document", "pdf", "resume", "this file", "this text",
-                "summarize this", "bullet points", "action items", "rewrite",
-                "fix grammar", "convert to table"
-            ]
-        )
-    }
-
-    private func shouldIncludeKnowledgeContext(prompt: String, actionKind: QuickAction.ActionKind?) -> Bool {
-        if selectedTab == .fileSearch {
-            return true
-        }
-        if actionKind == .searchKnowledgeBase || actionKind == .searchMyFiles {
-            return true
-        }
-        return promptContainsAny(
-            prompt,
-            keywords: ["search my files", "search docs", "find file", "knowledge base", "local docs", "indexed files"]
-        )
-    }
-
-    private func shouldIncludeClipboardContext(prompt: String, actionKind: QuickAction.ActionKind?) -> Bool {
-        let clipboardActions: Set<QuickAction.ActionKind> = [
-            .summarizeClipboard, .fixClipboardGrammar, .makeChecklist, .meetingSummary, .codeHelper, .extractTable
-        ]
-        if let actionKind, clipboardActions.contains(actionKind) {
-            return true
-        }
-        return promptContainsAny(
-            prompt,
-            keywords: ["clipboard", "copied text", "paste", "selection", "selected text"]
-        )
-    }
-
-    private func shouldIncludeNotificationContext(prompt: String, actionKind: QuickAction.ActionKind?) -> Bool {
-        if selectedTab == .notifications {
-            return true
-        }
-        let notificationActions: Set<QuickAction.ActionKind> = [
-            .toggleFocusMode, .showNotificationDigest, .addCurrentAppToPriority
-        ]
-        if let actionKind, notificationActions.contains(actionKind) {
-            return true
-        }
-        return promptContainsAny(
-            prompt,
-            keywords: ["notification", "focus mode", "digest", "inbox", "urgent", "priority app"]
-        )
-    }
-
-    private func shouldIncludeMacroContext(prompt: String, actionKind: QuickAction.ActionKind?) -> Bool {
-        if selectedTab == .macros || actionKind == .workflowMacro {
-            return true
-        }
-        return promptContainsAny(prompt, keywords: ["macro", "workflow", "daily wrap-up"])
     }
 
     private func promptContainsAny(_ prompt: String, keywords: [String]) -> Bool {
         keywords.contains { prompt.contains($0) }
+    }
+
+    private func routeSignal(for requestedAction: QuickAction?) -> RouteSignal {
+        RouteSignal(
+            selectedSurface: selectedTab.conversationSurface,
+            quickActionKind: requestedAction?.kind,
+            hasImportedDocument: importedDocument != nil,
+            hasClipboardText: !(clipboardBanner?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true),
+            hasIndexedFolders: !settingsStore.current.indexedFolders.isEmpty
+        )
+    }
+
+    private func routeSummary(request: StreamRequest, classification: IntentClassification) -> String {
+        let reasons = classification.reasons.prefix(2).joined(separator: "; ")
+        return "Route \(request.routePlan.intent.rawValue) | state \(routeExecutionState.rawValue) | scope \(request.routePlan.memoryScope.rawValue) | request \(request.requestID.uuidString.prefix(8)) | \(reasons)"
+    }
+
+    private func cancelActiveStream(reason: String) {
+        streamTask?.cancel()
+        streamTask = nil
+        if let active = streamOwnership.cancelActive() {
+            diagnosticsService.logEvent(
+                feature: "Routing",
+                type: "stream.cancelled",
+                summary: "Cancelled active stream",
+                metadata: [
+                    "requestID": active.requestID.uuidString,
+                    "conversationID": active.conversationID.uuidString,
+                    "reason": reason
+                ]
+            )
+            routeExecutionState = .cancelled
+            routeExecutionReason = reason
+        }
+        pendingTool = nil
+        pendingToolRequestID = nil
+        toolRequiresConfirmation = false
+        rawStreamingBuffer = ""
+        handledToolInvocationKeys = []
+        streamingBuffer = ""
+        isStreaming = false
+        if streamOwnership.activeRequest == nil, routeExecutionState != .cancelled {
+            routeExecutionState = .idle
+            routeExecutionReason = ""
+        }
+    }
+
+    private func appendMessageToConversation(id: UUID, message: ChatMessage) {
+        if conversation.id == id {
+            conversation.messages.append(message)
+            conversation.updatedAt = Date()
+            conversationService.persist(conversation)
+            history = conversationService.loadRecentConversations()
+            return
+        }
+        var recent = conversationService.loadRecentConversations()
+        guard var target = recent.first(where: { $0.id == id }) else { return }
+        target.messages.append(message)
+        target.updatedAt = Date()
+        conversationService.persist(target)
+        recent = conversationService.loadRecentConversations()
+        history = recent
+        if conversation.id == id, let refreshed = recent.first(where: { $0.id == id }) {
+            conversation = refreshed
+        }
+    }
+
+    private func contextPolicySummary(_ policy: RouteContextPolicy) -> String {
+        var parts: [String] = []
+        if policy.includeDocumentContext { parts.append("document") }
+        if policy.includeNotificationContext { parts.append("notifications") }
+        if policy.includeClipboardContext { parts.append("clipboard") }
+        if policy.includeKnowledgeContext { parts.append("knowledge") }
+        if policy.includeMacroContext { parts.append("macro") }
+        return parts.isEmpty ? "none" : parts.joined(separator: ",")
+    }
+
+    private func responseProvenance(requestID: UUID, routePlan: RoutePlan?) -> [String: String] {
+        guard let routePlan else {
+            return ["requestID": requestID.uuidString, "source": "route.unknown"]
+        }
+        return requestMetadata(
+            requestID: requestID,
+            routePlan: routePlan,
+            source: "route.\(routePlan.intent.rawValue)"
+        )
+    }
+
+    private func requestMetadata(requestID: UUID, routePlan: RoutePlan, source: String) -> [String: String] {
+        [
+            "requestID": requestID.uuidString,
+            "intent": routePlan.intent.rawValue,
+            "promptTemplate": routePlan.promptTemplate.rawValue,
+            "memoryScope": routePlan.memoryScope.rawValue,
+            "source": source
+        ]
     }
 
     func importDocuments(urls: [URL]) {
@@ -503,7 +619,6 @@ final class CommandPaletteViewModel: ObservableObject {
             return
         }
         statusMessage = "Running \(action.rawValue)…"
-        selectedQuickAction = QuickAction(title: action.rawValue, kind: .summarizeClipboard, icon: "doc.text")
         isDocumentActionRunning = true
         Task {
             do {
@@ -699,6 +814,7 @@ final class CommandPaletteViewModel: ObservableObject {
             } catch {
                 await MainActor.run {
                     self.fileSearchStatus = "Search failed: \(error.localizedDescription)"
+                    self.fileSearchResults = []
                     self.diagnosticsService.logEvent(feature: "Semantic search", type: "error", summary: "Search failed", metadata: ["error": error.localizedDescription])
                 }
             }
@@ -1052,44 +1168,84 @@ final class CommandPaletteViewModel: ObservableObject {
     }
 
     func approvePendingTool() {
-        guard let invocation = pendingTool else { return }
+        guard let invocation = pendingTool,
+              let pendingRequestID = pendingToolRequestID,
+              let active = streamOwnership.activeRequest,
+              active.requestID == pendingRequestID else { return }
         toolRequiresConfirmation = false
         pendingTool = nil
+        pendingToolRequestID = nil
         Task {
-            await handleTool(invocation: invocation)
+            await handleTool(
+                invocation: invocation,
+                requestID: active.requestID,
+                conversationID: active.conversationID,
+                routePlan: active.routePlan
+            )
         }
     }
 
     func rejectPendingTool() {
+        if let requestID = pendingToolRequestID {
+            diagnosticsService.logEvent(
+                feature: "Routing",
+                type: "tool.rejected",
+                summary: "User rejected pending tool invocation",
+                metadata: ["requestID": requestID.uuidString]
+            )
+        }
         pendingTool = nil
+        pendingToolRequestID = nil
         toolRequiresConfirmation = false
     }
 
-    private func handleTool(invocation: ToolInvocation) async {
+    private func handleTool(invocation: ToolInvocation, requestID: UUID, conversationID: UUID, routePlan: RoutePlan) async {
+        guard streamOwnership.owns(requestID) else { return }
+        guard routePlan.allowedTools.contains(invocation.name) else { return }
         do {
             let result = try await toolService.execute(invocation, context: ToolExecutionContext(settings: settingsStore.current, requestedByUser: false))
-            let toolMessage = ChatMessage(role: .tool, text: result.content, metadata: result.metadata)
-            conversation.messages.append(toolMessage)
+            let metadata = requestMetadata(
+                requestID: requestID,
+                routePlan: routePlan,
+                source: "route.tool"
+            ).merging(result.metadata, uniquingKeysWith: { _, newValue in newValue })
+            let toolMessage = ChatMessage(role: .tool, text: result.content, metadata: metadata)
+            appendMessageToConversation(id: conversationID, message: toolMessage)
+            diagnosticsService.logEvent(
+                feature: "Routing",
+                type: "tool.executed",
+                summary: "Executed route-allowed tool",
+                metadata: [
+                    "requestID": requestID.uuidString,
+                    "tool": invocation.name.rawValue,
+                    "intent": routePlan.intent.rawValue
+                ]
+            )
         } catch {
             statusMessage = "Tool failed: \(error.localizedDescription)"
+            diagnosticsService.logEvent(
+                feature: "Routing",
+                type: "tool.error",
+                summary: "Tool execution failed",
+                metadata: ["requestID": requestID.uuidString, "error": error.localizedDescription]
+            )
         }
     }
 
     func performQuickAction(_ action: QuickAction) {
         commandHistoryStore.recordAction(action.kind)
-        selectedQuickAction = action
         switch action.kind {
         case .summarizeClipboard:
             if let clipboard = clipboardBanner {
-                send(prompt: "Summarize this clipboard content:\n\(clipboard)")
+                send(prompt: "Summarize this clipboard content:\n\(clipboard)", requestedAction: action)
             }
         case .fixClipboardGrammar:
             if let clipboard = clipboardBanner {
-                send(prompt: "Improve grammar and clarity:\n\(clipboard)")
+                send(prompt: "Improve grammar and clarity:\n\(clipboard)", requestedAction: action)
             }
         case .makeChecklist:
             if let clipboard = clipboardBanner {
-                send(prompt: "Turn this into a checklist:\n\(clipboard)")
+                send(prompt: "Turn this into a checklist:\n\(clipboard)", requestedAction: action)
             }
         case .draftEmail:
             selectedTab = .email
@@ -1097,11 +1253,11 @@ final class CommandPaletteViewModel: ObservableObject {
             runTableExtraction()
         case .meetingSummary:
             if let clipboard = clipboardBanner {
-                send(prompt: "Summarize this meeting transcript with decisions and follow-ups:\n\(clipboard)")
+                send(prompt: "Summarize this meeting transcript with decisions and follow-ups:\n\(clipboard)", requestedAction: action)
             }
         case .codeHelper:
             if let clipboard = clipboardBanner {
-                send(prompt: "Explain this code and suggest tests:\n\(clipboard)")
+                send(prompt: "Explain this code and suggest tests:\n\(clipboard)", requestedAction: action)
             }
         case .searchKnowledgeBase:
             selectedTab = .fileSearch
@@ -1166,6 +1322,7 @@ final class CommandPaletteViewModel: ObservableObject {
     }
 
     func clearHistory() {
+        cancelActiveStream(reason: "history_cleared")
         conversation = Conversation(title: "New Chat", model: settingsStore.selectedModel())
         history = []
         conversationService.clearHistory()
@@ -1173,6 +1330,9 @@ final class CommandPaletteViewModel: ObservableObject {
     }
 
     func selectConversation(_ conversation: Conversation) {
+        if let active = streamOwnership.activeRequest, active.conversationID != conversation.id {
+            cancelActiveStream(reason: "conversation_switched")
+        }
         self.conversation = conversation
     }
 
@@ -1239,6 +1399,19 @@ final class CommandPaletteViewModel: ObservableObject {
 
     var latestAssistantMessage: String? {
         conversation.messages.last(where: { $0.role == .assistant })?.text
+    }
+
+    var isStreamingSelectedConversation: Bool {
+        guard let active = streamOwnership.activeRequest else { return false }
+        return isStreaming && active.conversationID == conversation.id
+    }
+
+    var visibleStreamingBuffer: String {
+        isStreamingSelectedConversation ? streamingBuffer : ""
+    }
+
+    var visibleThinkingStatus: String {
+        isStreamingSelectedConversation ? thinkingStatus : ""
     }
 
     private func toolInvocationKey(_ invocation: ToolInvocation) -> String {
@@ -1522,5 +1695,22 @@ private final class CommandHistoryStore {
     func recentPrompts(limit: Int) -> [String] {
         let prompts = defaults.stringArray(forKey: Keys.prompts) ?? []
         return Array(prompts.reversed().prefix(max(1, limit)))
+    }
+}
+
+private extension CommandPaletteViewModel.PaletteTab {
+    var conversationSurface: ConversationSurface {
+        switch self {
+        case .chat: return .chat
+        case .notifications: return .notifications
+        case .documents: return .documents
+        case .email: return .email
+        case .why: return .why
+        case .fileSearch: return .fileSearch
+        case .thinking: return .thinking
+        case .privacy: return .privacy
+        case .macros: return .macros
+        case .diagnostics: return .diagnostics
+        }
     }
 }

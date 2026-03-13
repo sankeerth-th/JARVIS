@@ -43,7 +43,7 @@ final class ToolExecutionService {
             return ToolResult(content: content, metadata: ["expression": result.expression])
         case .ocrCurrentWindow:
             let reason = invocation.arguments["reason"] ?? ""
-            let image = try screenshotService.captureActiveWindow()
+            let image = try await screenshotService.captureActiveWindow()
             let text = try ocrService.recognizeText(from: image)
             return ToolResult(content: text, metadata: ["reason": reason])
         case .listNotifications:

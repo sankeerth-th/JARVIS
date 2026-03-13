@@ -6,67 +6,98 @@ struct DiagnosticsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Button("Refresh", action: viewModel.refresh)
-                    .buttonStyle(.borderedProminent)
+                JarvisSectionHeader(title: "System diagnostics", subtitle: "Service health and module status")
+                Spacer()
                 if let updated = viewModel.lastUpdated {
                     Text("Updated \(updated.formatted(date: .omitted, time: .standard))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Spacer()
-                LatencyPill(milliseconds: viewModel.latency * 1000)
+                Text(String(format: "%.0f ms", viewModel.latency * 1000))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Refresh", action: viewModel.refresh)
+                    .buttonStyle(JarvisButtonStyle(tone: .primary))
             }
-
-            List(viewModel.statuses) { status in
-                HStack {
-                    Circle()
-                        .fill(status.isHealthy ? Color.green : Color.red)
-                        .frame(width: 10, height: 10)
-                    Text(status.name)
-                    Spacer()
-                    Text(status.detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 4)
-                .listRowBackground(Color.clear)
-            }
-            .scrollContentBackground(.hidden)
-            .background(Color.clear)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Module Health")
-                    .font(.headline)
+                Text("Services")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                List(viewModel.statuses) { status in
+                    JarvisResultRow(
+                        title: status.name,
+                        subtitle: status.isHealthy ? "Healthy" : "Needs attention",
+                        metadata: status.detail,
+                        trailing: {
+                            AnyView(
+                                HStack(spacing: 6) {
+                                    Image(systemName: status.isHealthy ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                        .foregroundStyle(status.isHealthy ? Color.green : Color.orange)
+                                    Text(status.isHealthy ? "Operational" : "Investigate")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            )
+                        }
+                    )
+                    .listRowBackground(Color.clear)
+                }
+                .scrollContentBackground(.hidden)
+                .listStyle(.plain)
+                .frame(minHeight: 150)
+            }
+            .padding(10)
+            .jarvisCard(fill: JarvisPalette.panel, border: JarvisPalette.border, shadowOpacity: 0.03)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Modules")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 ForEach(viewModel.moduleHealth) { module in
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(module.enabled ? Color.green : Color.gray)
-                            .frame(width: 8, height: 8)
-                        Text(module.module)
-                            .font(.subheadline)
-                        Spacer()
-                        Text(module.permissionsOK ? "Permissions OK" : "Permissions missing")
-                            .font(.caption)
-                            .foregroundStyle(module.permissionsOK ? .green : .orange)
-                        Text(module.lastRun?.formatted(date: .abbreviated, time: .shortened) ?? "Never run")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 2)
+                    JarvisResultRow(
+                        title: module.module,
+                        subtitle: module.enabled ? "Enabled" : "Disabled",
+                        metadata: module.lastRun?.formatted(date: .abbreviated, time: .shortened) ?? "Never run",
+                        trailing: {
+                            AnyView(
+                                Label(
+                                    module.permissionsOK ? "Permissions OK" : "Permissions missing",
+                                    systemImage: module.permissionsOK ? "checkmark.shield" : "shield"
+                                )
+                                .font(.caption2)
+                                .foregroundStyle(module.permissionsOK ? Color.green : Color.orange)
+                            )
+                        }
+                    )
                 }
             }
             .padding(10)
-            .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
-            )
+            .jarvisCard(fill: JarvisPalette.panel, border: JarvisPalette.border, shadowOpacity: 0.03)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Routing events")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if viewModel.routingEvents.isEmpty {
+                    JarvisEmptyStateRow(
+                        title: "No recent route events",
+                        subtitle: "Events will appear as Jarvis handles tab and prompt routing."
+                    )
+                } else {
+                    ForEach(viewModel.routingEvents.prefix(8)) { event in
+                        JarvisResultRow(
+                            title: event.summary,
+                            subtitle: event.type,
+                            metadata: event.createdAt.formatted(date: .omitted, time: .standard)
+                        )
+                    }
+                }
+            }
+            .padding(10)
+            .jarvisCard(fill: JarvisPalette.panel, border: JarvisPalette.border, shadowOpacity: 0.03)
         }
         .padding(10)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.11), lineWidth: 1)
-        )
+        .jarvisCard(fill: JarvisPalette.panelMuted, border: JarvisPalette.border, shadowOpacity: 0.02)
     }
 }

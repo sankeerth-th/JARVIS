@@ -1,0 +1,4 @@
+i20s dashboard
+trip odometer 12874
+average fuel 29.1 mpg
+outside temperature 72F
