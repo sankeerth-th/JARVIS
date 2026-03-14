@@ -394,6 +394,121 @@ struct ToolResult: Codable, Equatable {
     var metadata: [String: String]
 }
 
+enum AssistantIntent: String, Codable, CaseIterable {
+    case generalChat = "general_chat"
+    case searchQuery = "search_query"
+    case documentTransform = "document_transform"
+    case ocrExtract = "ocr_extract"
+    case mailDraft = "mail_draft"
+    case diagnosticsQuery = "diagnostics_query"
+    case macroExecution = "macro_execution"
+    case reflectiveMode = "reflective_mode"
+    case explanationMode = "explanation_mode"
+    case quickActionCommand = "quick_action_command"
+}
+
+enum PromptTemplateID: String, Codable {
+    case generalChat
+    case searchAssistant
+    case documentRewrite
+    case ocrInterpreter
+    case mailDraft
+    case diagnostics
+    case reflective
+    case explanation
+    case quickAction
+}
+
+enum MemoryScope: String, Codable {
+    case chatThread
+    case searchTransient
+    case documentTask
+    case ocrTask
+    case mailSession
+    case diagnosticsTask
+    case macroTask
+    case reflectiveScratch
+    case explanationScratch
+    case quickActionTransient
+}
+
+enum OutputDestination: String, Codable {
+    case chatTimeline
+    case documentPanel
+    case emailPanel
+    case diagnosticsPanel
+    case fileSearchPanel
+}
+
+enum RouteFallbackPolicy: String, Codable {
+    case askClarification
+    case fallbackToGeneralChat
+}
+
+enum ConversationSurface: String, Codable {
+    case chat
+    case notifications
+    case documents
+    case email
+    case why
+    case fileSearch
+    case thinking
+    case privacy
+    case macros
+    case diagnostics
+}
+
+struct RouteContextPolicy: Codable, Equatable {
+    var includeDocumentContext: Bool
+    var includeNotificationContext: Bool
+    var includeClipboardContext: Bool
+    var includeKnowledgeContext: Bool
+    var includeMacroContext: Bool
+}
+
+struct RoutePlan: Codable, Equatable {
+    var intent: AssistantIntent
+    var promptTemplate: PromptTemplateID
+    var memoryScope: MemoryScope
+    var output: OutputDestination
+    var contextPolicy: RouteContextPolicy
+    var allowedTools: [ToolInvocation.ToolName]
+    var fallback: RouteFallbackPolicy
+    var enableStreaming: Bool
+}
+
+struct RouteSignal: Equatable {
+    var selectedSurface: ConversationSurface
+    var quickActionKind: QuickAction.ActionKind?
+    var hasImportedDocument: Bool
+    var hasClipboardText: Bool
+    var hasIndexedFolders: Bool
+}
+
+struct IntentClassification: Equatable {
+    var intent: AssistantIntent
+    var confidence: Double
+    var reasons: [String]
+}
+
+struct StreamRequest: Equatable {
+    var requestID: UUID
+    var conversationID: UUID
+    var routePlan: RoutePlan
+    var startedAt: Date
+}
+
+enum RouteExecutionState: String, Codable {
+    case idle
+    case analyzingInput
+    case routeSelected
+    case executingRoute
+    case streamingResponse
+    case completed
+    case cancelled
+    case failed
+}
+
 struct CalculationResult: Equatable {
     let expression: String
     let result: Decimal
@@ -436,12 +551,23 @@ struct FileSearchResult: Identifiable {
     let document: IndexedDocument
     let snippet: String
     let score: Double
+    let reasons: [SearchResultReason]
+    let debugSummary: String
 
-    init(id: UUID = UUID(), document: IndexedDocument, snippet: String, score: Double) {
+    init(
+        id: UUID = UUID(),
+        document: IndexedDocument,
+        snippet: String,
+        score: Double,
+        reasons: [SearchResultReason] = [],
+        debugSummary: String = ""
+    ) {
         self.id = id
         self.document = document
         self.snippet = snippet
         self.score = score
+        self.reasons = reasons
+        self.debugSummary = debugSummary
     }
 }
 

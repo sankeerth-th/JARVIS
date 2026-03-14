@@ -11,11 +11,11 @@ struct NotificationsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
+                JarvisSectionHeader(title: "Notifications", subtitle: "Focus, digest, and prioritization rules")
+                Spacer()
                 Toggle("Focus mode", isOn: $focusModeEnabled)
                     .toggleStyle(.switch)
-                if viewModel.isDigestRunning {
-                    ActivityPulse(label: "Digesting")
-                }
+                    .controlSize(.small)
                 if viewModel.focusModeEnabled {
                     Text("\(viewModel.lowPriorityCount) queued")
                         .font(.caption)
@@ -23,26 +23,15 @@ struct NotificationsView: View {
                         .padding(.vertical, 4)
                         .background(Color.blue.opacity(0.18), in: Capsule())
                 }
-                Spacer()
-                Button("Batch digest now") {
+                Button("Batch digest") {
                     viewModel.batchDigestNow(model: settingsVM.settings.selectedModel)
                 }
-                .buttonStyle(.bordered)
-                Menu("Quiet hours") {
-                    Button("None") {
-                        viewModel.quietHours = nil
-                    }
-                    Button("10p-7a") {
-                        viewModel.quietHours = QuietHours(start: DateComponents(hour: 22), end: DateComponents(hour: 7))
-                    }
-                }
-                .menuStyle(.borderlessButton)
-
+                .buttonStyle(JarvisButtonStyle(tone: .secondary))
                 Button("Copy summary") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(viewModel.summary(), forType: .string)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(JarvisButtonStyle(tone: .secondary))
             }
 
             if !viewModel.notificationsPermissionGranted {
@@ -53,28 +42,17 @@ struct NotificationsView: View {
                     Button("Open System Settings") {
                         PermissionsManager.shared.openNotificationSettings()
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(JarvisButtonStyle(tone: .primary))
                 }
                 .padding(8)
-                .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
-
-            if viewModel.focusModeEnabled && viewModel.lowPriorityCount > 0 {
-                Text("You have \(viewModel.lowPriorityCount) low-priority notifications.")
-                    .font(.caption)
-                    .padding(8)
-                    .background(Color.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .jarvisCard(fill: JarvisPalette.warning, border: JarvisPalette.warningBorder, shadowOpacity: 0.03)
             }
 
             Text(viewModel.summary())
                 .font(.body)
                 .textSelection(.enabled)
                 .padding(10)
-                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
-                )
+                .jarvisCard(fill: JarvisPalette.panel, border: JarvisPalette.border, shadowOpacity: 0.03)
 
             if viewModel.isDigestRunning && viewModel.digestOutput.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
@@ -92,7 +70,7 @@ struct NotificationsView: View {
                         .frame(width: 220, height: 14)
                 }
                 .padding(8)
-                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .jarvisCard(fill: JarvisPalette.panelMuted, border: JarvisPalette.border, shadowOpacity: 0.02)
                 .redacted(reason: .placeholder)
             } else if !viewModel.digestOutput.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
@@ -102,7 +80,7 @@ struct NotificationsView: View {
                     Text(viewModel.digestOutput)
                         .textSelection(.enabled)
                         .padding(8)
-                        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .jarvisCard(fill: JarvisPalette.panelMuted, border: JarvisPalette.border, shadowOpacity: 0.02)
                 }
             }
 
@@ -118,7 +96,7 @@ struct NotificationsView: View {
                         .foregroundStyle(.secondary)
                 }
                 .padding(8)
-                .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .jarvisCard(fill: JarvisPalette.panelMuted, border: JarvisPalette.border, shadowOpacity: 0.02)
             } else {
                 List {
                     Section(header: Text("Urgent")) {
@@ -151,11 +129,7 @@ struct NotificationsView: View {
             }
         }
         .padding(10)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.11), lineWidth: 1)
-        )
+        .jarvisCard(fill: JarvisPalette.panelMuted, border: JarvisPalette.border, shadowOpacity: 0.02)
         .onAppear {
             focusModeEnabled = viewModel.focusModeEnabled
             Task {
@@ -192,7 +166,7 @@ struct NotificationsView: View {
                     viewModel.keywordRules[ruleKey] = selectedPriority
                     keyword = ""
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(JarvisButtonStyle(tone: .primary))
             }
             if !viewModel.keywordRules.isEmpty {
                 ForEach(viewModel.keywordRules.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
@@ -212,11 +186,7 @@ struct NotificationsView: View {
             }
         }
         .padding(10)
-        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
+        .jarvisCard(fill: JarvisPalette.panel, border: JarvisPalette.border, shadowOpacity: 0.02)
     }
 }
 
@@ -233,7 +203,7 @@ private struct NotificationRow: View {
                     .font(.caption2)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 4)
-                    .background(Color.orange.opacity(0.2), in: Capsule())
+                    .background(priorityColor.opacity(0.2), in: Capsule())
             }
             Text(item.body)
                 .font(.body)
@@ -244,6 +214,15 @@ private struct NotificationRow: View {
             }
         }
         .padding(8)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .jarvisCard(fill: JarvisPalette.panel, border: JarvisPalette.border, shadowOpacity: 0.02)
+    }
+
+    private var priorityColor: Color {
+        switch item.priority {
+        case .urgent: return .red
+        case .needsReply: return .orange
+        case .fyi: return .blue
+        case .low: return .gray
+        }
     }
 }

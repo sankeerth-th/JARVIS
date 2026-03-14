@@ -1,7 +1,8 @@
-# Jarvis (Offline macOS Assistant)
+# Jarvis (Offline macOS + iPhone Assistant)
 
 Jarvis is a local-first macOS menu bar assistant built with SwiftUI + AppKit.  
 It runs fully offline with Ollama on your Mac and opens with global `Cmd+J`.
+The same project now also includes an iPhone-native target (`JarvisIOS`) with App Shortcuts, deep links, and on-device GGUF runtime scaffolding.
 
 ## What You Need
 
@@ -9,6 +10,7 @@ It runs fully offline with Ollama on your Mac and opens with global `Cmd+J`.
 - Xcode 16+ (Apple Silicon recommended)
 - [Ollama](https://ollama.com/) installed locally
 - A pulled local model (example: `gemma3:12b`)
+- For iPhone target: iOS 17+ simulator/device in Xcode
 
 ## Install From GitHub (Clean Setup)
 
@@ -37,8 +39,12 @@ It runs fully offline with Ollama on your Mac and opens with global `Cmd+J`.
 
 ## Xcode Setup (Important)
 
-1. Select scheme: **Jarvis** (not `JarvisMailExtension`).
-2. Select run destination: **My Mac**.
+1. Select scheme:
+   - **Jarvis** for macOS menu bar app
+   - **JarvisIOS** for iPhone app
+2. Select run destination:
+   - `My Mac` for `Jarvis`
+   - iPhone simulator/device for `JarvisIOS`
 3. `Signing & Capabilities`:
    - For target `Jarvis`: choose your Apple Development team.
    - For target `JarvisMailExtension`: use same team.
@@ -47,6 +53,33 @@ It runs fully offline with Ollama on your Mac and opens with global `Cmd+J`.
 
 If Xcode asks "Choose an app to run this extension with", you are running the extension scheme by mistake.  
 Switch scheme back to `Jarvis`.
+
+## iPhone MVP (Thread 4)
+
+`JarvisIOS` is an iPhone-first shell, not a resized macOS overlay.
+
+- Home screen optimized for fast first action
+- First-run setup that requires importing a local model
+- Assistant sheet with local model state + streaming UI
+- Local knowledge surface (search saved conversation outputs)
+- Model Library with active model switching/revalidate/remove
+- Settings/status screen for model state and quick-launch guidance
+- App Intents + App Shortcuts:
+  - Open Jarvis
+  - Ask Jarvis
+  - Quick Capture
+  - Summarize Text
+  - Search Local Knowledge
+  - Continue Last Conversation
+
+### iPhone Model Import
+
+`JarvisIOS` does not use hardcoded model paths.
+
+- Import model files from Files using the in-app `Import Model` flow.
+- Current supported format is `GGUF (.gguf)`.
+- Imported files are copied into app sandbox storage and tracked in the in-app model library.
+- Set one imported model as active before using Ask/Capture/Summarize actions.
 
 ## First Launch Permissions
 
@@ -67,6 +100,17 @@ Then restart Jarvis once after granting permissions.
    - Ollama: Connected
    - Model: selected and available
 4. Import a document in Documents tab and run `Summarize`.
+
+## Retrieval & Search (v2)
+
+Jarvis now uses a unified local retrieval pipeline:
+
+- OCR + text extraction feeds normalized content into a chunk index.
+- Indexing stores file metadata (path/type/timestamps/page count/OCR confidence/content hash).
+- Search uses intent-aware lexical retrieval + reranking + duplicate suppression.
+- Results include lightweight reasoning and optional debug details in the Search tab.
+
+See `/Users/sanks04/Desktop/JARVIS/docs/retrieval-pipeline.md` for architecture details.
 
 ## Mail Extension (Optional)
 
@@ -125,6 +169,12 @@ curl http://127.0.0.1:11434/api/tags
 2. Toggle Jarvis off/on.
 3. Quit Jarvis fully and relaunch.
 
+### Search results look stale or repetitive
+
+1. In Search tab, click `Re-index` for configured folders.
+2. Enable `Debug ranking` to inspect why each result was ranked.
+3. Confirm indexed folders are scoped correctly (All indexed folders vs Single folder).
+
 ### "Open Mail" opens browser
 
 Set Apple Mail as default mail app:
@@ -139,6 +189,11 @@ This is a warning only. Build can still succeed.
 Build:
 ```bash
 xcodebuild -project Jarvis.xcodeproj -scheme Jarvis -configuration Debug -destination 'generic/platform=macOS' build
+```
+
+iPhone build (simulator, no signing required):
+```bash
+xcodebuild -project Jarvis.xcodeproj -scheme JarvisIOS -configuration Debug -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
 ```
 
 Run tests:

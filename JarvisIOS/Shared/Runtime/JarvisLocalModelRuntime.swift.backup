@@ -1,0 +1,461 @@
+import Foundation
+import Combine
+
+#if canImport(LocalLLMClientLlama)
+#if canImport(LocalLLMClientCore)
+import LocalLLMClientCore
+#endif
+import LocalLLMClientLlama
+#endif
+
+public enum JarvisGGUFEngineCapability: Equatable {
+    case fullInference
+    case placeholder
+}
+
+public struct JarvisRuntimeModelSelection: Equatable {
+    public var displayName: String
+    public var path: String
+
+    public init(displayName: String, path: String) {
+        self.displayName = displayName
+        self.path = path
+    }
+}
+
+public enum JarvisModelRuntimeState: Equatable {
+    case unavailable(reason: String)
+    case cold(modelName: String)
+    case loading(progress: Double, detail: String)
+    case ready(modelName: String)
+    case generating(modelName: String)
+    case paused(modelName: String?)
+    case failed(message: String)
+
+    public var title: String {
+        switch self {
+        case .unavailable: return "Model Unavailable"
+        case .cold: return "Model Cold"
+        case .loading: return "Loading Model"
+        case .ready: return "Ready"
+        case .generating: return "Generating"
+        case .paused: return "Paused"
+        case .failed: return "Model Error"
+        }
+    }
+}
+
+public enum JarvisModelError: LocalizedError {
+    case unavailable(String)
+    case cancelled
+    case runtimeFailure(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .unavailable(let reason): return reason
+        case .cancelled: return "Generation was cancelled"
+        case .runtimeFailure(let message): return message
+        }
+    }
+}
+
+public protocol JarvisGGUFEngine {
+    var name: String { get }
+    var isInstalled: Bool { get }
+    var capability: JarvisGGUFEngineCapability { get }
+
+    func loadModel(at path: String) async throws
+    func unloadModel() async
+    func generate(prompt: String, history: [JarvisChatMessage], onToken: @escaping @Sendable (String) -> Void) async throws
+    func cancelGeneration()
+}
+
+public final class StubGGUFEngine: JarvisGGUFEngine {
+    public init() {}
+
+    public var name: String { "stub" }
+    public var isInstalled: Bool { true }
+    public var capability: JarvisGGUFEngineCapability { .placeholder }
+
+    public func loadModel(at path: String) async throws {
+        _ = path
+        try await Task.sleep(nanoseconds: 120_000_000)
+    }
+
+    public func unloadModel() async {}
+
+    public func generate(prompt: String, history: [JarvisChatMessage], onToken: @escaping @Sendable (String) -> Void) async throws {
+        _ = prompt
+        _ = history
+        _ = onToken
+        throw JarvisModelError.runtimeFailure("This build has model import and lifecycle, but no real GGUF inference engine wired yet.")
+    }
+
+    public func cancelGeneration() {}
+}
+
+#if canImport(LocalLLMClientLlama)
+@available(iOS 17.0, *)
+public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
+    private static let systemInstruction = "You are Jarvis, a concise and practical on-device iPhone assistant. Keep answers direct and useful."
+
+    private let lock = NSLock()
+    private var session: LLMSession?
+    private var loadedModelPath: String?
+    private var cancelRequested = false
+
+    public init() {}
+
+    public var name: String { "LocalLLMClient (llama.cpp)" }
+    public var isInstalled: Bool { true }
+    public var capability: JarvisGGUFEngineCapability { .fullInference }
+
+    public func loadModel(at path: String) async throws {
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw JarvisModelError.unavailable("Selected model file could not be found.")
+        }
+
+        let pathExtension = URL(fileURLWithPath: path).pathExtension.lowercased()
+        guard pathExtension == "gguf" else {
+            throw JarvisModelError.runtimeFailure("Unsupported model format. Jarvis iPhone currently supports GGUF only.")
+        }
+
+        if let existingPath = withLock({ loadedModelPath }), existingPath == path, withLock({ session }) != nil {
+            return
+        }
+
+        withLock {
+            cancelRequested = false
+        }
+
+        let fileURL = URL(fileURLWithPath: path)
+        let parameters = LlamaClient.Parameter(
+            context: 2048,
+            numberOfThreads: max(1, ProcessInfo.processInfo.activeProcessorCount - 1),
+            batch: 256,
+            temperature: 0.7,
+            topK: 40,
+            topP: 0.9,
+            penaltyLastN: 64,
+            penaltyRepeat: 1.1
+        )
+
+        let model = LLMSession.LocalModel.llama(url: fileURL, parameter: parameters)
+        let newSession = LLMSession(model: model)
+        try await newSession.prewarm()
+
+        withLock {
+            self.session = newSession
+            self.loadedModelPath = path
+            self.cancelRequested = false
+        }
+    }
+
+    public func unloadModel() async {
+        withLock {
+            session = nil
+            loadedModelPath = nil
+            cancelRequested = false
+        }
+    }
+
+    public func generate(prompt: String, history: [JarvisChatMessage], onToken: @escaping @Sendable (String) -> Void) async throws {
+        guard let session = withLock({ session }) else {
+            throw JarvisModelError.unavailable("Model is not loaded yet.")
+        }
+
+        withLock {
+            cancelRequested = false
+        }
+
+        session.messages = mappedMessages(from: history)
+
+        do {
+            let stream = session.streamResponse(to: prompt)
+            for try await chunk in stream {
+                try Task.checkCancellation()
+                if withLock({ cancelRequested }) {
+                    throw JarvisModelError.cancelled
+                }
+                onToken(chunk)
+            }
+
+            if withLock({ cancelRequested }) {
+                throw JarvisModelError.cancelled
+            }
+        } catch is CancellationError {
+            throw JarvisModelError.cancelled
+        } catch let modelError as JarvisModelError {
+            throw modelError
+        } catch {
+            throw JarvisModelError.runtimeFailure(error.localizedDescription)
+        }
+    }
+
+    public func cancelGeneration() {
+        withLock {
+            cancelRequested = true
+        }
+    }
+
+    private func mappedMessages(from history: [JarvisChatMessage]) -> [LLMInput.Message] {
+        var messages: [LLMInput.Message] = [.system(Self.systemInstruction)]
+
+        for item in history {
+            let text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+
+            switch item.role {
+            case .system:
+                messages.append(.system(text))
+            case .user:
+                messages.append(.user(text))
+            case .assistant:
+                messages.append(.assistant(text))
+            }
+        }
+
+        return messages
+    }
+
+    private func withLock<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+}
+#endif
+
+enum JarvisGGUFEngineFactory {
+    static func makeDefault() -> JarvisGGUFEngine {
+        #if canImport(LocalLLMClientLlama)
+        if #available(iOS 17.0, *) {
+            print("[JarvisRuntime] Using LocalLLMClient GGUF engine")
+            return JarvisLocalLLMClientEngine()
+        }
+        #endif
+        print("[JarvisRuntime] Falling back to StubGGUFEngine")
+        return StubGGUFEngine()
+    }
+}
+
+@MainActor
+public final class JarvisLocalModelRuntime: ObservableObject {
+    @Published public private(set) var state: JarvisModelRuntimeState = .unavailable(reason: "Import a GGUF model to start using Jarvis.")
+
+    private let engine: JarvisGGUFEngine
+    private var selectedModel: JarvisRuntimeModelSelection?
+    private var activeGenerationTask: Task<Void, Never>?
+    private var didLoadModel = false
+    private var loadedModelPath: String?
+
+    public init(engine: JarvisGGUFEngine? = nil) {
+        self.engine = engine ?? JarvisGGUFEngineFactory.makeDefault()
+    }
+
+    public var engineName: String { engine.name }
+
+    public var isInferenceAvailable: Bool {
+        engine.isInstalled && engine.capability == .fullInference
+    }
+
+    public var inferenceUnavailableReason: String {
+        if !engine.isInstalled {
+            return "Local GGUF engine is not installed."
+        }
+        if engine.capability != .fullInference {
+            return "This build has no real GGUF inference adapter wired yet."
+        }
+        return ""
+    }
+
+    public func setSelectedModel(_ model: JarvisRuntimeModelSelection?) {
+        let previousPath = selectedModel?.path
+        activeGenerationTask?.cancel()
+        selectedModel = model
+        print("[JarvisRuntime] setSelectedModel previous=\(previousPath ?? "nil") next=\(model?.path ?? "nil")")
+
+        guard let model else {
+            didLoadModel = false
+            loadedModelPath = nil
+            Task {
+                await engine.unloadModel()
+            }
+            state = .unavailable(reason: "Import a GGUF model to start using Jarvis.")
+            return
+        }
+
+        guard FileManager.default.fileExists(atPath: model.path) else {
+            didLoadModel = false
+            loadedModelPath = nil
+            Task {
+                await engine.unloadModel()
+            }
+            state = .unavailable(reason: "Selected model file is missing. Re-import \(model.displayName).")
+            return
+        }
+
+        guard isInferenceAvailable else {
+            state = .failed(message: inferenceUnavailableReason)
+            return
+        }
+
+        if previousPath != model.path {
+            didLoadModel = false
+            loadedModelPath = nil
+            Task {
+                await engine.unloadModel()
+            }
+        }
+
+        if didLoadModel, loadedModelPath == model.path {
+            state = .ready(modelName: model.displayName)
+            return
+        }
+
+        state = .cold(modelName: model.displayName)
+    }
+
+    public func prepareIfNeeded() async throws {
+        guard let model = selectedModel else {
+            state = .unavailable(reason: "Import and select a GGUF model first.")
+            throw JarvisModelError.unavailable("No active model selected. Import a GGUF model from Files.")
+        }
+
+        guard FileManager.default.fileExists(atPath: model.path) else {
+            state = .unavailable(reason: "Selected model file is missing. Re-import \(model.displayName).")
+            throw JarvisModelError.unavailable("The active model file no longer exists.")
+        }
+
+        guard isInferenceAvailable else {
+            state = .failed(message: inferenceUnavailableReason)
+            throw JarvisModelError.runtimeFailure(inferenceUnavailableReason)
+        }
+
+        if case .ready = state, didLoadModel, loadedModelPath == model.path {
+            return
+        }
+        if case .generating = state, didLoadModel, loadedModelPath == model.path {
+            return
+        }
+        if didLoadModel, loadedModelPath == model.path {
+            state = .ready(modelName: model.displayName)
+            return
+        }
+
+        if ProcessInfo.processInfo.thermalState == .serious || ProcessInfo.processInfo.thermalState == .critical {
+            state = .paused(modelName: model.displayName)
+            throw JarvisModelError.runtimeFailure("Device thermal state is high. Let iPhone cool before running local inference.")
+        }
+
+        print("[JarvisRuntime] prepareIfNeeded model=\(model.displayName) path=\(model.path)")
+
+        do {
+            if didLoadModel, loadedModelPath != model.path {
+                print("[JarvisRuntime] unloading previous model before reload")
+                await engine.unloadModel()
+                didLoadModel = false
+                loadedModelPath = nil
+            }
+
+            state = .loading(progress: 0.15, detail: "Preparing runtime")
+            try await Task.sleep(nanoseconds: 80_000_000)
+            state = .loading(progress: 0.45, detail: "Loading \(model.displayName)")
+            try await engine.loadModel(at: model.path)
+            state = .loading(progress: 0.8, detail: "Warming decoder")
+            try await Task.sleep(nanoseconds: 80_000_000)
+            didLoadModel = true
+            loadedModelPath = model.path
+            state = .ready(modelName: model.displayName)
+            print("[JarvisRuntime] model ready \(model.displayName)")
+        } catch {
+            didLoadModel = false
+            loadedModelPath = nil
+            state = .failed(message: error.localizedDescription)
+            print("[JarvisRuntime] failed to load model \(model.displayName): \(error.localizedDescription)")
+            throw error
+        }
+    }
+
+    public func streamResponse(prompt: String, history: [JarvisChatMessage]) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            activeGenerationTask?.cancel()
+            activeGenerationTask = Task { [weak self] in
+                guard let self else { return }
+                do {
+                    try await self.prepareIfNeeded()
+                    let modelName = self.selectedModel?.displayName ?? "model"
+                    self.state = .generating(modelName: modelName)
+                    try await self.engine.generate(prompt: prompt, history: history) { token in
+                        continuation.yield(token)
+                    }
+                    self.state = .ready(modelName: modelName)
+                    continuation.finish()
+                } catch {
+                    if let modelError = error as? JarvisModelError, case .cancelled = modelError {
+                        if let modelName = self.selectedModel?.displayName {
+                            self.state = .ready(modelName: modelName)
+                        }
+                    } else {
+                        self.state = .failed(message: error.localizedDescription)
+                    }
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { [weak self] _ in
+                guard let self else { return }
+                Task { @MainActor in
+                    self.engine.cancelGeneration()
+                    self.activeGenerationTask?.cancel()
+                    if let modelName = self.selectedModel?.displayName {
+                        self.state = .ready(modelName: modelName)
+                    }
+                }
+            }
+        }
+    }
+
+    public func cancel() {
+        engine.cancelGeneration()
+        activeGenerationTask?.cancel()
+        if let modelName = selectedModel?.displayName {
+            state = .ready(modelName: modelName)
+        }
+    }
+
+    public func pauseForBackground() {
+        cancel()
+        state = .paused(modelName: selectedModel?.displayName)
+    }
+
+    public func resumeFromForeground() {
+        guard let model = selectedModel else {
+            state = .unavailable(reason: "Import a GGUF model to start using Jarvis.")
+            return
+        }
+
+        guard FileManager.default.fileExists(atPath: model.path) else {
+            state = .unavailable(reason: "Selected model file is missing. Re-import \(model.displayName).")
+            return
+        }
+
+        guard isInferenceAvailable else {
+            state = .failed(message: inferenceUnavailableReason)
+            return
+        }
+
+        state = (didLoadModel && loadedModelPath == model.path) ? .ready(modelName: model.displayName) : .cold(modelName: model.displayName)
+    }
+
+    public func unload() async {
+        print("[JarvisRuntime] unload requested")
+        cancel()
+        didLoadModel = false
+        loadedModelPath = nil
+        await engine.unloadModel()
+        if let modelName = selectedModel?.displayName {
+            state = .cold(modelName: modelName)
+        }
+    }
+}

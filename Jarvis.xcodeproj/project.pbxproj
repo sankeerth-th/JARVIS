@@ -3,18 +3,15 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 60;
+	objectVersion = 70;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		0BA37924A1574DDDA5786ACC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2F91576D8D9348829D2CFDA9 /* Assets.xcassets */; };
 		0C09101A92224B05A9393A7D /* SettingsStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D1CD63C0614279AED9F291 /* SettingsStoreTests.swift */; };
 		1A42C71E2C784F11B05C49B6 /* ConversationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84D2E82174F34D2481A47DB9 /* ConversationService.swift */; };
-		A10000000000000000000011 /* JarvisMailExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* JarvisMailExtension.swift */; };
-		A10000000000000000000012 /* JarvisComposeSessionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* JarvisComposeSessionHandler.swift */; };
-		A10000000000000000000013 /* JarvisMailViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000003 /* JarvisMailViewController.swift */; };
-		A10000000000000000000014 /* JarvisMailExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A10000000000000000000005 /* JarvisMailExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		23903BB4A5D94EB6AC3245D5 /* LocalIndexService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA6E8A2548F4E04BDB77CB8 /* LocalIndexService.swift */; };
+		2903491247F54B5BA549DF99 /* ModernSearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1957C5C21E10425E8850237C /* ModernSearchView.swift */; };
 		31D4A3FBFBDD4304BD29C352 /* KnowledgeBaseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8836F2D0020B43F188AB38DF /* KnowledgeBaseView.swift */; };
 		33998A027E084E37B2CF1F1F /* CaptureServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61D00CDB1E084085BBE4C16C /* CaptureServices.swift */; };
 		342C886A0C384BC582477DC4 /* JarvisApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D4D4018A0D548DA9577F780 /* JarvisApp.swift */; };
@@ -34,16 +31,29 @@
 		90025FF9A5A74FDE87846DAE /* TableExtractorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0597A14198647B0955E0CFA /* TableExtractorTests.swift */; };
 		9DA1483FD39E47E1818F34D9 /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F49A760AA84D420EAB1E9208 /* DiagnosticsView.swift */; };
 		9E63F9BE8E0D47479380D63D /* ToolExecutionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03B50D48937C470297F0ABD8 /* ToolExecutionService.swift */; };
+		A10000000000000000000011 /* JarvisMailExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* JarvisMailExtension.swift */; };
+		A10000000000000000000012 /* JarvisComposeSessionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* JarvisComposeSessionHandler.swift */; };
+		A10000000000000000000013 /* JarvisMailViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000003 /* JarvisMailViewController.swift */; };
+		A10000000000000000000014 /* JarvisMailExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A10000000000000000000005 /* JarvisMailExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A260E0D7788047FDA1481E9F /* NotificationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6995217B39C54812B4282066 /* NotificationViewModel.swift */; };
 		A8DDA8B34B484EBC97A4083B /* TableExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 963DA03E0EDD4D0494C0C3F4 /* TableExtractor.swift */; };
 		AF21D154FED84D84AF196399 /* OllamaClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C991F96CBECC49B1BE14740F /* OllamaClient.swift */; };
 		B1E326582F4AB5920020A11D /* SQLiteHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1E326572F4AB5920020A11D /* SQLiteHelpers.swift */; };
+		B20000000000000000000001 /* SearchModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B21000000000000000000001 /* SearchModels.swift */; };
+		B20000000000000000000002 /* SearchIngestionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B21000000000000000000002 /* SearchIngestionService.swift */; };
+		B20000000000000000000003 /* SearchChunker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B21000000000000000000003 /* SearchChunker.swift */; };
+		B20000000000000000000004 /* SearchQueryAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B21000000000000000000004 /* SearchQueryAnalyzer.swift */; };
+		B20000000000000000000005 /* SearchRanker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B21000000000000000000005 /* SearchRanker.swift */; };
+		B20000000000000000000006 /* SearchDiagnosticsLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = B21000000000000000000006 /* SearchDiagnosticsLogger.swift */; };
+		B20000000000000000000007 /* SearchPipelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B21000000000000000000007 /* SearchPipelineTests.swift */; };
 		BA93113C02724475A872C5B8 /* EmailDraftView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE42DEFC61514F3AAF6A5064 /* EmailDraftView.swift */; };
 		CB9DDA8E24E94129B5C1A931 /* EmailDraftViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89ACC6B594474F54A3778726 /* EmailDraftViewModel.swift */; };
 		CDAE0D07B0E749CABAC9347B /* WorkflowEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CBBD2A8C01F4112AA4E9EF9 /* WorkflowEngine.swift */; };
 		D3CDF9CDC6A2448DA304F540 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56EA3106B91A487EAD013ADF /* NotificationService.swift */; };
 		D67A9728C3B14EDAA0B12890 /* CommandPaletteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349643A4A44043B0BE1597DF /* CommandPaletteView.swift */; };
 		DCF9D6DE040345B6AD71D7CF /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1C3A4F65DC452888112B14 /* SettingsView.swift */; };
+		E20DC480A5010C55E8D7BB73 /* LocalLLMClientLlama in Frameworks */ = {isa = PBXBuildFile; productRef = 9767C8D00408380B3C77F716 /* LocalLLMClientLlama */; };
+		E2A04C6F4E1A4B0C9F2A1D77 /* JarvisDesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F7C2F454D224EDAB20F4C99 /* JarvisDesignSystem.swift */; };
 		E7F6B7EC71454F4691CCB4C0 /* ClipboardWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0A38A026D494E468A3E0553 /* ClipboardWatcher.swift */; };
 		E8387C0EF3FC4042B6E35B74 /* MacroListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B3365F8A7D243189DE4CCA1 /* MacroListView.swift */; };
 		F7FE8AE4BCAE441E8D62DFE4 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10F1465A3184DCE96FEC18C /* SettingsStore.swift */; };
@@ -59,6 +69,20 @@
 			remoteGlobalIDString = A10000000000000000000030;
 			remoteInfo = JarvisMailExtension;
 		};
+		B15DB9FC2F5E7E4D00AB757E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 736C7A77357744E5A73DBF1E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B15DB9EC2F5E7E4C00AB757E;
+			remoteInfo = JarvisIOS;
+		};
+		B15DBA062F5E7E4D00AB757E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 736C7A77357744E5A73DBF1E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B15DB9EC2F5E7E4C00AB757E;
+			remoteInfo = JarvisIOS;
+		};
 		DE923E119AF543B0993F1886 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 736C7A77357744E5A73DBF1E /* Project object */;
@@ -68,12 +92,28 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		A10000000000000000000024 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A10000000000000000000014 /* JarvisMailExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		03B50D48937C470297F0ABD8 /* ToolExecutionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolExecutionService.swift; sourceTree = "<group>"; };
 		0A1C3A4F65DC452888112B14 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		0CAD082D1BD646D096FAEEE4 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		1957C5C21E10425E8850237C /* ModernSearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModernSearchView.swift; sourceTree = "<group>"; };
 		1B518FB01023475394CBE4AC /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		1D4D4018A0D548DA9577F780 /* JarvisApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisApp.swift; sourceTree = "<group>"; };
+		1F7C2F454D224EDAB20F4C99 /* JarvisDesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisDesignSystem.swift; sourceTree = "<group>"; };
 		22B29DC37C0A413D904A96E4 /* PermissionsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsManager.swift; sourceTree = "<group>"; };
 		2F91576D8D9348829D2CFDA9 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		349643A4A44043B0BE1597DF /* CommandPaletteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPaletteView.swift; sourceTree = "<group>"; };
@@ -95,8 +135,23 @@
 		93E28D92B2D84A42B64C6D9B /* ClipboardBannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardBannerView.swift; sourceTree = "<group>"; };
 		963DA03E0EDD4D0494C0C3F4 /* TableExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableExtractor.swift; sourceTree = "<group>"; };
 		991D21F2EE0C45AE8911CCFF /* DocumentImportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentImportService.swift; sourceTree = "<group>"; };
+		A10000000000000000000001 /* JarvisMailExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisMailExtension.swift; sourceTree = "<group>"; };
+		A10000000000000000000002 /* JarvisComposeSessionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisComposeSessionHandler.swift; sourceTree = "<group>"; };
+		A10000000000000000000003 /* JarvisMailViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisMailViewController.swift; sourceTree = "<group>"; };
+		A10000000000000000000004 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A10000000000000000000005 /* JarvisMailExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; path = JarvisMailExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		AE42DEFC61514F3AAF6A5064 /* EmailDraftView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailDraftView.swift; sourceTree = "<group>"; };
+		B15DB9ED2F5E7E4C00AB757E /* JarvisIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = JarvisIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B15DB9FB2F5E7E4D00AB757E /* JarvisIOSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = JarvisIOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B15DBA052F5E7E4D00AB757E /* JarvisIOSUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = JarvisIOSUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B1E326572F4AB5920020A11D /* SQLiteHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SQLiteHelpers.swift; sourceTree = "<group>"; };
+		B21000000000000000000001 /* SearchModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchModels.swift; sourceTree = "<group>"; };
+		B21000000000000000000002 /* SearchIngestionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchIngestionService.swift; sourceTree = "<group>"; };
+		B21000000000000000000003 /* SearchChunker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchChunker.swift; sourceTree = "<group>"; };
+		B21000000000000000000004 /* SearchQueryAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchQueryAnalyzer.swift; sourceTree = "<group>"; };
+		B21000000000000000000005 /* SearchRanker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchRanker.swift; sourceTree = "<group>"; };
+		B21000000000000000000006 /* SearchDiagnosticsLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchDiagnosticsLogger.swift; sourceTree = "<group>"; };
+		B21000000000000000000007 /* SearchPipelineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchPipelineTests.swift; sourceTree = "<group>"; };
 		B808E8847731409CB4EDFAE6 /* DiagnosticsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsViewModel.swift; sourceTree = "<group>"; };
 		BA59BF53B4E04D6AA2B5BBAA /* JarvisDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisDatabase.swift; sourceTree = "<group>"; };
 		BBB1805C105844EEBD8697BC /* OverlayWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayWindowController.swift; sourceTree = "<group>"; };
@@ -113,29 +168,23 @@
 		F49A760AA84D420EAB1E9208 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
 		F8171823B1B74600BAF98059 /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
 		FA133D6BEE4B400EBF4B9A48 /* DiagnosticsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsService.swift; sourceTree = "<group>"; };
-		A10000000000000000000001 /* JarvisMailExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisMailExtension.swift; sourceTree = "<group>"; };
-		A10000000000000000000002 /* JarvisComposeSessionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisComposeSessionHandler.swift; sourceTree = "<group>"; };
-		A10000000000000000000003 /* JarvisMailViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisMailViewController.swift; sourceTree = "<group>"; };
-		A10000000000000000000004 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		A10000000000000000000005 /* JarvisMailExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; path = JarvisMailExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
-/* Begin PBXCopyFilesBuildPhase section */
-		A10000000000000000000024 /* Embed App Extensions */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 13;
-			files = (
-				A10000000000000000000014 /* JarvisMailExtension.appex in Embed App Extensions */,
-			);
-			name = "Embed App Extensions";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		B15DB9EE2F5E7E4C00AB757E /* JarvisIOS */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = JarvisIOS; sourceTree = "<group>"; };
+		B15DB9FE2F5E7E4D00AB757E /* JarvisIOSTests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = JarvisIOSTests; sourceTree = "<group>"; };
+		B15DBA082F5E7E4D00AB757E /* JarvisIOSUITests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = JarvisIOSUITests; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		566620FFACB9449B8F8C30B9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		90486B89FD614CFEBB10D030 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -149,7 +198,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		90486B89FD614CFEBB10D030 /* Frameworks */ = {
+		B15DB9EA2F5E7E4C00AB757E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E20DC480A5010C55E8D7BB73 /* LocalLLMClientLlama in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B15DB9F82F5E7E4D00AB757E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B15DBA022F5E7E4D00AB757E /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -194,6 +258,7 @@
 				DF5494781D2A4460BE400DF5 /* CalculatorTests.swift */,
 				D0597A14198647B0955E0CFA /* TableExtractorTests.swift */,
 				37D1CD63C0614279AED9F291 /* SettingsStoreTests.swift */,
+				B21000000000000000000007 /* SearchPipelineTests.swift */,
 				1B518FB01023475394CBE4AC /* Info.plist */,
 			);
 			path = JarvisTests;
@@ -213,9 +278,11 @@
 				349643A4A44043B0BE1597DF /* CommandPaletteView.swift */,
 				C134977B0E2D413B9D9BFD0C /* NotificationsView.swift */,
 				AE42DEFC61514F3AAF6A5064 /* EmailDraftView.swift */,
+				1F7C2F454D224EDAB20F4C99 /* JarvisDesignSystem.swift */,
 				0A1C3A4F65DC452888112B14 /* SettingsView.swift */,
 				F49A760AA84D420EAB1E9208 /* DiagnosticsView.swift */,
 				8836F2D0020B43F188AB38DF /* KnowledgeBaseView.swift */,
+				1957C5C21E10425E8850237C /* ModernSearchView.swift */,
 				3B3365F8A7D243189DE4CCA1 /* MacroListView.swift */,
 				93E28D92B2D84A42B64C6D9B /* ClipboardBannerView.swift */,
 			);
@@ -228,6 +295,9 @@
 				1AFC005A019E4E76B9222C94 /* Jarvis */,
 				A10000000000000000000006 /* JarvisMailExtension */,
 				48FE19BA35844076850B2DD8 /* JarvisTests */,
+				B15DB9EE2F5E7E4C00AB757E /* JarvisIOS */,
+				B15DB9FE2F5E7E4D00AB757E /* JarvisIOSTests */,
+				B15DBA082F5E7E4D00AB757E /* JarvisIOSUITests */,
 				E821E7F69F6D472B96A8AA1D /* Products */,
 				61764E1200D148809694058F /* README.md */,
 			);
@@ -242,6 +312,19 @@
 				A10000000000000000000004 /* Info.plist */,
 			);
 			path = JarvisMailExtension;
+			sourceTree = "<group>";
+		};
+		B22000000000000000000001 /* Search */ = {
+			isa = PBXGroup;
+			children = (
+				B21000000000000000000001 /* SearchModels.swift */,
+				B21000000000000000000002 /* SearchIngestionService.swift */,
+				B21000000000000000000003 /* SearchChunker.swift */,
+				B21000000000000000000004 /* SearchQueryAnalyzer.swift */,
+				B21000000000000000000005 /* SearchRanker.swift */,
+				B21000000000000000000006 /* SearchDiagnosticsLogger.swift */,
+			);
+			path = Search;
 			sourceTree = "<group>";
 		};
 		C2B04E078B41477CB5672C2C /* Services */ = {
@@ -261,6 +344,7 @@
 				511BF4F14B2C42B9B3444332 /* MacroService.swift */,
 				3CBBD2A8C01F4112AA4E9EF9 /* WorkflowEngine.swift */,
 				FA133D6BEE4B400EBF4B9A48 /* DiagnosticsService.swift */,
+				B22000000000000000000001 /* Search */,
 				E1D05E2FAB6D4E9BB9C343FD /* HotKeyCenter.swift */,
 				22B29DC37C0A413D904A96E4 /* PermissionsManager.swift */,
 				BBB1805C105844EEBD8697BC /* OverlayWindowController.swift */,
@@ -274,6 +358,9 @@
 				673A20B5F5C2490B892552DB /* Jarvis.app */,
 				A10000000000000000000005 /* JarvisMailExtension.appex */,
 				6A11E13A4C614A3DA70E9813 /* JarvisTests.xctest */,
+				B15DB9ED2F5E7E4C00AB757E /* JarvisIOS.app */,
+				B15DB9FB2F5E7E4D00AB757E /* JarvisIOSTests.xctest */,
+				B15DBA052F5E7E4D00AB757E /* JarvisIOSUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -317,6 +404,71 @@
 			productReference = A10000000000000000000005 /* JarvisMailExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		B15DB9EC2F5E7E4C00AB757E /* JarvisIOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B15DBA132F5E7E4D00AB757E /* Build configuration list for PBXNativeTarget "JarvisIOS" */;
+			buildPhases = (
+				B15DB9E92F5E7E4C00AB757E /* Sources */,
+				B15DB9EA2F5E7E4C00AB757E /* Frameworks */,
+				B15DB9EB2F5E7E4C00AB757E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				B15DB9EE2F5E7E4C00AB757E /* JarvisIOS */,
+			);
+			name = JarvisIOS;
+			packageProductDependencies = (
+				9767C8D00408380B3C77F716 /* LocalLLMClientLlama */,
+			);
+			productName = JarvisIOS;
+			productReference = B15DB9ED2F5E7E4C00AB757E /* JarvisIOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+		B15DB9FA2F5E7E4D00AB757E /* JarvisIOSTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B15DBA142F5E7E4D00AB757E /* Build configuration list for PBXNativeTarget "JarvisIOSTests" */;
+			buildPhases = (
+				B15DB9F72F5E7E4D00AB757E /* Sources */,
+				B15DB9F82F5E7E4D00AB757E /* Frameworks */,
+				B15DB9F92F5E7E4D00AB757E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B15DB9FD2F5E7E4D00AB757E /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				B15DB9FE2F5E7E4D00AB757E /* JarvisIOSTests */,
+			);
+			name = JarvisIOSTests;
+			productName = JarvisIOSTests;
+			productReference = B15DB9FB2F5E7E4D00AB757E /* JarvisIOSTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		B15DBA042F5E7E4D00AB757E /* JarvisIOSUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B15DBA152F5E7E4D00AB757E /* Build configuration list for PBXNativeTarget "JarvisIOSUITests" */;
+			buildPhases = (
+				B15DBA012F5E7E4D00AB757E /* Sources */,
+				B15DBA022F5E7E4D00AB757E /* Frameworks */,
+				B15DBA032F5E7E4D00AB757E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B15DBA072F5E7E4D00AB757E /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				B15DBA082F5E7E4D00AB757E /* JarvisIOSUITests */,
+			);
+			name = JarvisIOSUITests;
+			productName = JarvisIOSUITests;
+			productReference = B15DBA052F5E7E4D00AB757E /* JarvisIOSUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		E0C5082233AF4CCEBA41EE09 /* JarvisTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 1CB0CC59D6684DC6BA13566E /* Build configuration list for PBXNativeTarget "JarvisTests" */;
@@ -342,7 +494,21 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
+				LastSwiftUpdateCheck = 2610;
 				LastUpgradeCheck = 2610;
+				TargetAttributes = {
+					B15DB9EC2F5E7E4C00AB757E = {
+						CreatedOnToolsVersion = 26.1;
+					};
+					B15DB9FA2F5E7E4D00AB757E = {
+						CreatedOnToolsVersion = 26.1;
+						TestTargetID = B15DB9EC2F5E7E4C00AB757E;
+					};
+					B15DBA042F5E7E4D00AB757E = {
+						CreatedOnToolsVersion = 26.1;
+						TestTargetID = B15DB9EC2F5E7E4C00AB757E;
+					};
+				};
 			};
 			buildConfigurationList = 4581BB0C5F744BC589FA86B0 /* Build configuration list for PBXProject "Jarvis" */;
 			compatibilityVersion = "Xcode 15.0";
@@ -353,6 +519,9 @@
 				Base,
 			);
 			mainGroup = 9ADE98375D094A90BE350580;
+			packageReferences = (
+				D2E368F20B15FA3EF163F2FE /* XCRemoteSwiftPackageReference "LocalLLMClient" */,
+			);
 			productRefGroup = E821E7F69F6D472B96A8AA1D /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -360,12 +529,43 @@
 				0EBEA01C5C5145B8A4AFC209 /* Jarvis */,
 				A10000000000000000000030 /* JarvisMailExtension */,
 				E0C5082233AF4CCEBA41EE09 /* JarvisTests */,
+				B15DB9EC2F5E7E4C00AB757E /* JarvisIOS */,
+				B15DB9FA2F5E7E4D00AB757E /* JarvisIOSTests */,
+				B15DBA042F5E7E4D00AB757E /* JarvisIOSUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		A0D7AC984A9D43E88FC10827 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000023 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B15DB9EB2F5E7E4C00AB757E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B15DB9F92F5E7E4D00AB757E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B15DBA032F5E7E4D00AB757E /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -380,13 +580,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		A10000000000000000000023 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -397,6 +590,17 @@
 				3785EE0B89A74C83AA14C7B6 /* CalculatorTests.swift in Sources */,
 				90025FF9A5A74FDE87846DAE /* TableExtractorTests.swift in Sources */,
 				0C09101A92224B05A9393A7D /* SettingsStoreTests.swift in Sources */,
+				B20000000000000000000007 /* SearchPipelineTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000021 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000011 /* JarvisMailExtension.swift in Sources */,
+				A10000000000000000000012 /* JarvisComposeSessionHandler.swift in Sources */,
+				A10000000000000000000013 /* JarvisMailViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -422,6 +626,12 @@
 				62BFA53E86E849AF8E3F0E34 /* MacroService.swift in Sources */,
 				CDAE0D07B0E749CABAC9347B /* WorkflowEngine.swift in Sources */,
 				3EAC6E2B5D5743559EDB2319 /* DiagnosticsService.swift in Sources */,
+				B20000000000000000000001 /* SearchModels.swift in Sources */,
+				B20000000000000000000002 /* SearchIngestionService.swift in Sources */,
+				B20000000000000000000003 /* SearchChunker.swift in Sources */,
+				B20000000000000000000004 /* SearchQueryAnalyzer.swift in Sources */,
+				B20000000000000000000005 /* SearchRanker.swift in Sources */,
+				B20000000000000000000006 /* SearchDiagnosticsLogger.swift in Sources */,
 				4D181C6996B145CEA5645DF2 /* HotKeyCenter.swift in Sources */,
 				8711E48B108E42758F2FC29E /* PermissionsManager.swift in Sources */,
 				7325C61DC446499C8F407816 /* OverlayWindowController.swift in Sources */,
@@ -433,36 +643,59 @@
 				D67A9728C3B14EDAA0B12890 /* CommandPaletteView.swift in Sources */,
 				FFB6E37023C548FF83F76188 /* NotificationsView.swift in Sources */,
 				BA93113C02724475A872C5B8 /* EmailDraftView.swift in Sources */,
+				E2A04C6F4E1A4B0C9F2A1D77 /* JarvisDesignSystem.swift in Sources */,
 				DCF9D6DE040345B6AD71D7CF /* SettingsView.swift in Sources */,
 				9DA1483FD39E47E1818F34D9 /* DiagnosticsView.swift in Sources */,
 				31D4A3FBFBDD4304BD29C352 /* KnowledgeBaseView.swift in Sources */,
+				2903491247F54B5BA549DF99 /* ModernSearchView.swift in Sources */,
 				E8387C0EF3FC4042B6E35B74 /* MacroListView.swift in Sources */,
 				51B06842BE8C44EBAC5DB4E6 /* ClipboardBannerView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		A10000000000000000000021 /* Sources */ = {
+		B15DB9E92F5E7E4C00AB757E /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A10000000000000000000011 /* JarvisMailExtension.swift in Sources */,
-				A10000000000000000000012 /* JarvisComposeSessionHandler.swift in Sources */,
-				A10000000000000000000013 /* JarvisMailViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B15DB9F72F5E7E4D00AB757E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B15DBA012F5E7E4D00AB757E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		6550360F24EC48B195376058 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0EBEA01C5C5145B8A4AFC209 /* Jarvis */;
+			targetProxy = DE923E119AF543B0993F1886 /* PBXContainerItemProxy */;
+		};
 		A10000000000000000000042 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = A10000000000000000000030 /* JarvisMailExtension */;
 			targetProxy = A10000000000000000000041 /* PBXContainerItemProxy */;
 		};
-		6550360F24EC48B195376058 /* PBXTargetDependency */ = {
+		B15DB9FD2F5E7E4D00AB757E /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 0EBEA01C5C5145B8A4AFC209 /* Jarvis */;
-			targetProxy = DE923E119AF543B0993F1886 /* PBXContainerItemProxy */;
+			target = B15DB9EC2F5E7E4C00AB757E /* JarvisIOS */;
+			targetProxy = B15DB9FC2F5E7E4D00AB757E /* PBXContainerItemProxy */;
+		};
+		B15DBA072F5E7E4D00AB757E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B15DB9EC2F5E7E4C00AB757E /* JarvisIOS */;
+			targetProxy = B15DBA062F5E7E4D00AB757E /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -519,6 +752,26 @@
 			};
 			name = Debug;
 		};
+		98E77E93720442C19BD7F4CE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_TESTABILITY = YES;
+				INFOPLIST_FILE = JarvisTests/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.offline.JarvisTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Jarvis.app/Contents/MacOS/Jarvis";
+			};
+			name = Debug;
+		};
 		A10000000000000000000032 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -569,22 +822,317 @@
 			};
 			name = Release;
 		};
-		98E77E93720442C19BD7F4CE /* Debug */ = {
+		B15DBA0D2F5E7E4D00AB757E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
 				CLANG_ENABLE_OBJC_WEAK = YES;
-				DEAD_CODE_STRIPPING = YES;
-				INFOPLIST_FILE = JarvisTests/Info.plist;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 2FUJ9C5CK3;
+				ENABLE_PREVIEWS = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleURLTypes = "{\n    CFBundleTypeRole = Editor;\n    CFBundleURLName = \"com.offline.Jarvis.phone.url\";\n    CFBundleURLSchemes =     (\n        jarvis\n    );\n}";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
-					"@executable_path/../Frameworks",
+					"@executable_path/Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.offline.JarvisTests;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				OTHER_SWIFT_FLAGS = "$(inherited) -cxx-interoperability-mode=default";
+				PRODUCT_BUNDLE_IDENTIFIER = "sankeerth-th.JarvisIOS";
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_EMIT_LOC_STRINGS = NO;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
+				SWIFT_INTEROP_MODE = Cxx;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
+		};
+		B15DBA0E2F5E7E4D00AB757E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 2FUJ9C5CK3;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_PREVIEWS = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleURLTypes = "{\n    CFBundleTypeRole = Editor;\n    CFBundleURLName = \"com.offline.Jarvis.phone.url\";\n    CFBundleURLSchemes =     (\n        jarvis\n    );\n}";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				OTHER_SWIFT_FLAGS = "$(inherited) -cxx-interoperability-mode=default";
+				PRODUCT_BUNDLE_IDENTIFIER = "sankeerth-th.JarvisIOS";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
+				SWIFT_INTEROP_MODE = Cxx;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		B15DBA0F2F5E7E4D00AB757E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 2FUJ9C5CK3;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = "sankeerth-th.JarvisIOSTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/JarvisIOS.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/JarvisIOS";
+			};
+			name = Debug;
+		};
+		B15DBA102F5E7E4D00AB757E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 2FUJ9C5CK3;
+				ENABLE_NS_ASSERTIONS = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = "sankeerth-th.JarvisIOSTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/JarvisIOS.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/JarvisIOS";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		B15DBA112F5E7E4D00AB757E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 2FUJ9C5CK3;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = "sankeerth-th.JarvisIOSUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = JarvisIOS;
+			};
+			name = Debug;
+		};
+		B15DBA122F5E7E4D00AB757E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 2FUJ9C5CK3;
+				ENABLE_NS_ASSERTIONS = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = "sankeerth-th.JarvisIOSUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = JarvisIOS;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
 		};
 		BB7FF9026295418EBA6564DC /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -629,8 +1177,10 @@
 		C28F89A1D6534082B68CA2BE /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
 				CLANG_ENABLE_OBJC_WEAK = YES;
 				DEAD_CODE_STRIPPING = YES;
+				ENABLE_TESTABILITY = YES;
 				INFOPLIST_FILE = JarvisTests/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -640,6 +1190,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.offline.JarvisTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Jarvis.app/Contents/MacOS/Jarvis";
 			};
 			name = Release;
 		};
@@ -694,15 +1245,6 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
-		A10000000000000000000031 /* Build configuration list for PBXNativeTarget "JarvisMailExtension" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				A10000000000000000000032 /* Debug */,
-				A10000000000000000000033 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Debug;
-		};
 		2490327AE4BD44F6B489E633 /* Build configuration list for PBXNativeTarget "Jarvis" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -721,7 +1263,62 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
+		A10000000000000000000031 /* Build configuration list for PBXNativeTarget "JarvisMailExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000032 /* Debug */,
+				A10000000000000000000033 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B15DBA132F5E7E4D00AB757E /* Build configuration list for PBXNativeTarget "JarvisIOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B15DBA0D2F5E7E4D00AB757E /* Debug */,
+				B15DBA0E2F5E7E4D00AB757E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B15DBA142F5E7E4D00AB757E /* Build configuration list for PBXNativeTarget "JarvisIOSTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B15DBA0F2F5E7E4D00AB757E /* Debug */,
+				B15DBA102F5E7E4D00AB757E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B15DBA152F5E7E4D00AB757E /* Build configuration list for PBXNativeTarget "JarvisIOSUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B15DBA112F5E7E4D00AB757E /* Debug */,
+				B15DBA122F5E7E4D00AB757E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		D2E368F20B15FA3EF163F2FE /* XCRemoteSwiftPackageReference "LocalLLMClient" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/tattn/LocalLLMClient.git";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		9767C8D00408380B3C77F716 /* LocalLLMClientLlama */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D2E368F20B15FA3EF163F2FE /* XCRemoteSwiftPackageReference "LocalLLMClient" */;
+			productName = LocalLLMClientLlama;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 736C7A77357744E5A73DBF1E /* Project object */;
 }

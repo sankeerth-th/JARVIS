@@ -4,6 +4,7 @@ import Foundation
 final class DiagnosticsViewModel: ObservableObject {
     @Published var statuses: [DiagnosticStatus] = []
     @Published var moduleHealth: [ModuleHealthStatus] = []
+    @Published var routingEvents: [FeatureEvent] = []
     @Published var latency: TimeInterval = 0
     @Published var lastUpdated: Date? = nil
 
@@ -21,9 +22,11 @@ final class DiagnosticsViewModel: ObservableObject {
         Task {
             let statuses = await diagnosticsService.fetchStatuses(selectedModel: settingsStore.selectedModel())
             let moduleHealth = await diagnosticsService.moduleHealth(settings: settingsStore.current)
+            let routingEvents = diagnosticsService.recentEvents(limit: 12, feature: "Routing")
             await MainActor.run {
                 self.statuses = statuses
                 self.moduleHealth = moduleHealth
+                self.routingEvents = routingEvents
                 self.lastUpdated = Date()
             }
         }

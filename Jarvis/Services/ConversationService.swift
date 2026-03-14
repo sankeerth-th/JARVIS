@@ -33,7 +33,7 @@ final class ConversationService {
         database.deleteHistory()
     }
 
-    func streamResponse(conversation: Conversation, context: ConversationContext, settings: AppSettings) -> AsyncThrowingStream<String, Error> {
+    func streamResponse(conversation: Conversation, context: ConversationContext, routePlan: RoutePlan, settings: AppSettings) -> AsyncThrowingStream<String, Error> {
         var contextChunks: [String] = []
         if let doc = context.selectedDocument {
             contextChunks.append("Document Title: \(doc.title)\n\(doc.content.prefix(1800))")
@@ -54,7 +54,8 @@ final class ConversationService {
         if let action = context.requestedAction {
             contextChunks.append("Requested quick action: \(action.title)")
         }
-        let systemPrompt = buildSystemPrompt(settings: settings)
+        contextChunks.append("Memory scope: \(routePlan.memoryScope.rawValue)")
+        let systemPrompt = buildSystemPrompt(settings: settings, routePlan: routePlan)
         var messages: [OllamaChatMessage] = [
             OllamaChatMessage(role: "system", content: systemPrompt)
         ]
@@ -66,13 +67,14 @@ final class ConversationService {
                 )
             )
         }
-        messages.append(contentsOf: conversation.messages.compactMap { mapToOllamaChatMessage($0) })
+        let scopedMessages = ConversationScopeFilter.messages(for: conversation, routePlan: routePlan)
+        messages.append(contentsOf: scopedMessages.compactMap { mapToOllamaChatMessage($0) })
         let latestPrompt = conversation.messages.last(where: { $0.role == .user })?.text ?? ""
         let request = ChatRequest(
             model: settings.selectedModel,
             messages: messages,
             stream: true,
-            options: streamOptions(latestPrompt: latestPrompt, hasExtraContext: !contextChunks.isEmpty)
+            options: streamOptions(latestPrompt: latestPrompt, hasExtraContext: !contextChunks.isEmpty, routePlan: routePlan)
         )
         return ollama.streamChat(request: request)
     }
@@ -188,9 +190,10 @@ final class ConversationService {
         }
     }
 
-    private func buildSystemPrompt(settings: AppSettings) -> String {
+    private func buildSystemPrompt(settings: AppSettings, routePlan: RoutePlan) -> String {
         let base = settings.systemPrompt
-        let toolGuide = "Use the offline tools via the syntax <<tool{\"name\":\"toolName\",\"arguments\":{...}}>>. Available tools: calculate(expression), ocrCurrentWindow(reason), listNotifications(apps,limit), searchLocalDocs(query,topK), summarize(text,style). Request confirmation before OCR or file actions and wait for the tool result before continuing. Maintain \(settings.tone.promptValue) tone. Never claim to read files or screens unless given tool output."
+        let toolGuide = allowedToolGuide(for: routePlan, tone: settings.tone)
+        let routePrompt = promptTemplateInstructions(for: routePlan.promptTemplate)
         let strictBehavior = """
         Strict response rules:
         - Do not return generic assistant greetings.
@@ -199,14 +202,20 @@ final class ConversationService {
         - If information is missing, ask one focused clarification question.
         - Keep responses concise and actionable.
         """
-        return [base, toolGuide, strictBehavior].joined(separator: "\n")
+        return [base, routePrompt, toolGuide, strictBehavior].joined(separator: "\n")
     }
 
-    private func streamOptions(latestPrompt: String, hasExtraContext: Bool) -> [String: Double] {
+    private func streamOptions(latestPrompt: String, hasExtraContext: Bool, routePlan: RoutePlan) -> [String: Double] {
         let tokenCount = latestPrompt
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
             .count
         let likelyUnclear = tokenCount < 3 || latestPrompt.contains("??")
+        if routePlan.intent == .searchQuery || routePlan.intent == .diagnosticsQuery {
+            return ["temperature": 0.1, "num_predict": 260]
+        }
+        if routePlan.intent == .reflectiveMode || routePlan.intent == .explanationMode {
+            return ["temperature": 0.25, "num_predict": 460]
+        }
         if !hasExtraContext && tokenCount > 0 && tokenCount <= 8 && !likelyUnclear {
             return ["temperature": 0.1, "num_predict": 220]
         }
@@ -214,6 +223,45 @@ final class ConversationService {
             return ["temperature": 0.2, "num_predict": 320]
         }
         return ["temperature": 0.2, "num_predict": 420]
+    }
+
+    private func promptTemplateInstructions(for template: PromptTemplateID) -> String {
+        switch template {
+        case .generalChat:
+            return "Template: General Chat. Answer clearly and directly. Use only explicitly provided context."
+        case .searchAssistant:
+            return "Template: Search Assistant. Focus on retrieval intent, quote matching snippets, and mention confidence."
+        case .documentRewrite:
+            return "Template: Document Rewrite. Operate only on the provided document content and requested transformation."
+        case .ocrInterpreter:
+            return "Template: OCR Interpreter. Treat OCR text as noisy. Clarify uncertain reads before strong claims."
+        case .mailDraft:
+            return "Template: Mail Draft. Produce concise, actionable draft language with explicit assumptions."
+        case .diagnostics:
+            return "Template: Diagnostics. Use only local signals, cite what was used, and include uncertainty."
+        case .reflective:
+            return "Template: Reflective. Ask one focused follow-up question when needed and structure tradeoffs."
+        case .explanation:
+            return "Template: Explanation. Explain root cause, evidence, and next checks in order."
+        case .quickAction:
+            return "Template: Quick Action. Perform only the requested quick action and do not switch modes."
+        }
+    }
+
+    private func allowedToolGuide(for routePlan: RoutePlan, tone: ToneStyle) -> String {
+        let available = routePlan.allowedTools
+        if available.isEmpty {
+            return "Tool policy: No tool calls allowed for this route. Never emit tool syntax. Maintain \(tone.promptValue) tone."
+        }
+        let signatures: [ToolInvocation.ToolName: String] = [
+            .calculate: "calculate(expression)",
+            .ocrCurrentWindow: "ocrCurrentWindow(reason)",
+            .listNotifications: "listNotifications(apps,limit)",
+            .searchLocalDocs: "searchLocalDocs(query,topK)",
+            .summarize: "summarize(text,style)"
+        ]
+        let ordered = available.compactMap { signatures[$0] }
+        return "Tool policy: Use offline tools only via <<tool{\"name\":\"toolName\",\"arguments\":{...}}>>. Allowed tools for this route: \(ordered.joined(separator: ", ")). Maintain \(tone.promptValue) tone. Never claim to read files or screens unless given tool output."
     }
 
     private func sanitizeModelOutput(_ text: String) -> String {
@@ -252,6 +300,36 @@ final class ConversationService {
         }
         let tail = (existing.count + 1...width).map { "Column \($0)" }
         return existing + tail
+    }
+}
+
+enum ConversationScopeFilter {
+    static func messages(for conversation: Conversation, routePlan: RoutePlan, maxCount: Int = 24) -> [ChatMessage] {
+        let targetScope = routePlan.memoryScope.rawValue
+        let filtered = conversation.messages.filter { message in
+            let taggedScope = message.metadata["memoryScope"]
+            switch routePlan.memoryScope {
+            case .chatThread:
+                // Preserve legacy untagged messages for default chat, but drop explicitly transient scopes.
+                return taggedScope == nil || taggedScope == targetScope
+            default:
+                // Non-chat routes are strictly scoped to matching memory context only.
+                return taggedScope == targetScope
+            }
+        }
+
+        var output = filtered
+        if routePlan.memoryScope != .chatThread,
+           let latestUser = conversation.messages.last(where: { $0.role == .user }),
+           output.contains(where: { $0.id == latestUser.id }) == false {
+            // Legacy fallback: always include latest user turn so new scoped routes stay usable.
+            output.append(latestUser)
+        }
+
+        if output.count > max(1, maxCount) {
+            return Array(output.suffix(maxCount))
+        }
+        return output
     }
 }
 
@@ -304,5 +382,277 @@ struct ToolInvocationParser {
             remaining.removeSubrange(removeStart..<remaining.endIndex)
         }
         return (remaining, collected)
+    }
+}
+
+final class IntentClassifier {
+    func classify(prompt: String, signal: RouteSignal) -> IntentClassification {
+        let normalized = prompt.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let tokens = normalized.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        var reasons: [String] = []
+
+        if signal.quickActionKind != nil {
+            reasons.append("Quick action was explicitly selected")
+            return IntentClassification(intent: .quickActionCommand, confidence: 0.95, reasons: reasons)
+        }
+
+        if signal.selectedSurface == .fileSearch
+            || containsAny(normalized, terms: ["search my files", "find file", "latest invoice", "where is", "in my docs", "search docs"]) {
+            reasons.append("Query asks to locate content or files")
+            return IntentClassification(intent: .searchQuery, confidence: 0.88, reasons: reasons)
+        }
+
+        if signal.selectedSurface == .documents
+            || containsAny(normalized, terms: ["rewrite this document", "summarize this document", "fix grammar", "action items", "convert to table"]) {
+            reasons.append("Prompt references document transformation workflow")
+            return IntentClassification(intent: .documentTransform, confidence: 0.84, reasons: reasons)
+        }
+
+        if containsAny(normalized, terms: ["ocr", "screenshot", "screen text", "scan this", "extract text from image"]) {
+            reasons.append("Prompt requests OCR-derived extraction or interpretation")
+            return IntentClassification(intent: .ocrExtract, confidence: 0.82, reasons: reasons)
+        }
+
+        if signal.selectedSurface == .diagnostics
+            || signal.selectedSurface == .why
+            || containsAny(normalized, terms: ["why did this happen", "diagnose", "root cause", "what failed", "debug this"]) {
+            reasons.append("Prompt is diagnostic or explanation-seeking")
+            return IntentClassification(intent: .diagnosticsQuery, confidence: 0.86, reasons: reasons)
+        }
+
+        if signal.selectedSurface == .macros || containsAny(normalized, terms: ["run macro", "workflow step", "execute macro"]) {
+            reasons.append("Prompt targets macro execution")
+            return IntentClassification(intent: .macroExecution, confidence: 0.83, reasons: reasons)
+        }
+
+        if signal.selectedSurface == .thinking || containsAny(normalized, terms: ["think with me", "brainstorm", "tradeoffs", "options analysis"]) {
+            reasons.append("Prompt asks for reflective reasoning mode")
+            return IntentClassification(intent: .reflectiveMode, confidence: 0.81, reasons: reasons)
+        }
+
+        if containsAny(normalized, terms: ["explain why", "explain this", "how did this happen"]) {
+            reasons.append("Prompt asks for explanatory mode")
+            return IntentClassification(intent: .explanationMode, confidence: 0.72, reasons: reasons)
+        }
+
+        if signal.selectedSurface == .email || containsAny(normalized, terms: ["draft email", "reply email", "mail response"]) {
+            reasons.append("Prompt is email drafting oriented")
+            return IntentClassification(intent: .mailDraft, confidence: 0.70, reasons: reasons)
+        }
+
+        let confidence = tokens.count <= 2 ? 0.45 : 0.62
+        reasons.append("No strong mode signal, defaulting to general chat")
+        return IntentClassification(intent: .generalChat, confidence: confidence, reasons: reasons)
+    }
+
+    private func containsAny(_ text: String, terms: [String]) -> Bool {
+        terms.contains { text.contains($0) }
+    }
+}
+
+final class RoutePlanner {
+    func makePlan(classification: IntentClassification, signal: RouteSignal) -> RoutePlan {
+        switch classification.intent {
+        case .generalChat:
+            return RoutePlan(
+                intent: .generalChat,
+                promptTemplate: .generalChat,
+                memoryScope: .chatThread,
+                output: .chatTimeline,
+                contextPolicy: RouteContextPolicy(
+                    includeDocumentContext: false,
+                    includeNotificationContext: false,
+                    includeClipboardContext: false,
+                    includeKnowledgeContext: false,
+                    includeMacroContext: false
+                ),
+                allowedTools: [.calculate, .summarize],
+                fallback: .askClarification,
+                enableStreaming: true
+            )
+        case .searchQuery:
+            return RoutePlan(
+                intent: .searchQuery,
+                promptTemplate: .searchAssistant,
+                memoryScope: .searchTransient,
+                output: .chatTimeline,
+                contextPolicy: RouteContextPolicy(
+                    includeDocumentContext: false,
+                    includeNotificationContext: false,
+                    includeClipboardContext: false,
+                    includeKnowledgeContext: true,
+                    includeMacroContext: false
+                ),
+                allowedTools: [.searchLocalDocs],
+                fallback: .askClarification,
+                enableStreaming: true
+            )
+        case .documentTransform:
+            return RoutePlan(
+                intent: .documentTransform,
+                promptTemplate: .documentRewrite,
+                memoryScope: .documentTask,
+                output: .chatTimeline,
+                contextPolicy: RouteContextPolicy(
+                    includeDocumentContext: true,
+                    includeNotificationContext: false,
+                    includeClipboardContext: false,
+                    includeKnowledgeContext: false,
+                    includeMacroContext: false
+                ),
+                allowedTools: [],
+                fallback: .askClarification,
+                enableStreaming: true
+            )
+        case .ocrExtract:
+            return RoutePlan(
+                intent: .ocrExtract,
+                promptTemplate: .ocrInterpreter,
+                memoryScope: .ocrTask,
+                output: .chatTimeline,
+                contextPolicy: RouteContextPolicy(
+                    includeDocumentContext: false,
+                    includeNotificationContext: false,
+                    includeClipboardContext: true,
+                    includeKnowledgeContext: false,
+                    includeMacroContext: false
+                ),
+                allowedTools: [.ocrCurrentWindow, .summarize],
+                fallback: .askClarification,
+                enableStreaming: true
+            )
+        case .mailDraft:
+            return RoutePlan(
+                intent: .mailDraft,
+                promptTemplate: .mailDraft,
+                memoryScope: .mailSession,
+                output: .chatTimeline,
+                contextPolicy: RouteContextPolicy(
+                    includeDocumentContext: false,
+                    includeNotificationContext: false,
+                    includeClipboardContext: true,
+                    includeKnowledgeContext: false,
+                    includeMacroContext: false
+                ),
+                allowedTools: [.summarize],
+                fallback: .fallbackToGeneralChat,
+                enableStreaming: true
+            )
+        case .diagnosticsQuery:
+            return RoutePlan(
+                intent: .diagnosticsQuery,
+                promptTemplate: .diagnostics,
+                memoryScope: .diagnosticsTask,
+                output: .chatTimeline,
+                contextPolicy: RouteContextPolicy(
+                    includeDocumentContext: false,
+                    includeNotificationContext: true,
+                    includeClipboardContext: false,
+                    includeKnowledgeContext: false,
+                    includeMacroContext: false
+                ),
+                allowedTools: [.listNotifications],
+                fallback: .askClarification,
+                enableStreaming: true
+            )
+        case .macroExecution:
+            return RoutePlan(
+                intent: .macroExecution,
+                promptTemplate: .quickAction,
+                memoryScope: .macroTask,
+                output: .chatTimeline,
+                contextPolicy: RouteContextPolicy(
+                    includeDocumentContext: false,
+                    includeNotificationContext: false,
+                    includeClipboardContext: false,
+                    includeKnowledgeContext: false,
+                    includeMacroContext: true
+                ),
+                allowedTools: [],
+                fallback: .fallbackToGeneralChat,
+                enableStreaming: true
+            )
+        case .reflectiveMode:
+            return RoutePlan(
+                intent: .reflectiveMode,
+                promptTemplate: .reflective,
+                memoryScope: .reflectiveScratch,
+                output: .chatTimeline,
+                contextPolicy: RouteContextPolicy(
+                    includeDocumentContext: false,
+                    includeNotificationContext: false,
+                    includeClipboardContext: false,
+                    includeKnowledgeContext: false,
+                    includeMacroContext: false
+                ),
+                allowedTools: [],
+                fallback: .askClarification,
+                enableStreaming: true
+            )
+        case .explanationMode:
+            return RoutePlan(
+                intent: .explanationMode,
+                promptTemplate: .explanation,
+                memoryScope: .explanationScratch,
+                output: .chatTimeline,
+                contextPolicy: RouteContextPolicy(
+                    includeDocumentContext: false,
+                    includeNotificationContext: signal.selectedSurface == .why,
+                    includeClipboardContext: false,
+                    includeKnowledgeContext: false,
+                    includeMacroContext: false
+                ),
+                allowedTools: [.summarize],
+                fallback: .askClarification,
+                enableStreaming: true
+            )
+        case .quickActionCommand:
+            return RoutePlan(
+                intent: .quickActionCommand,
+                promptTemplate: .quickAction,
+                memoryScope: .quickActionTransient,
+                output: .chatTimeline,
+                contextPolicy: RouteContextPolicy(
+                    includeDocumentContext: signal.hasImportedDocument,
+                    includeNotificationContext: signal.selectedSurface == .notifications,
+                    includeClipboardContext: signal.hasClipboardText,
+                    includeKnowledgeContext: signal.hasIndexedFolders || signal.selectedSurface == .fileSearch,
+                    includeMacroContext: signal.selectedSurface == .macros
+                ),
+                allowedTools: [.calculate, .summarize, .searchLocalDocs],
+                fallback: .fallbackToGeneralChat,
+                enableStreaming: true
+            )
+        }
+    }
+}
+
+struct StreamOwnershipController {
+    private(set) var activeRequest: StreamRequest?
+
+    mutating func begin(conversationID: UUID, routePlan: RoutePlan) -> StreamRequest {
+        let request = StreamRequest(
+            requestID: UUID(),
+            conversationID: conversationID,
+            routePlan: routePlan,
+            startedAt: Date()
+        )
+        activeRequest = request
+        return request
+    }
+
+    mutating func cancelActive() -> StreamRequest? {
+        let active = activeRequest
+        activeRequest = nil
+        return active
+    }
+
+    mutating func complete(requestID: UUID) {
+        guard activeRequest?.requestID == requestID else { return }
+        activeRequest = nil
+    }
+
+    func owns(_ requestID: UUID) -> Bool {
+        activeRequest?.requestID == requestID
     }
 }

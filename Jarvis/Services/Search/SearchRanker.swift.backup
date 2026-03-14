@@ -1,0 +1,238 @@
+import Foundation
+
+final class SearchRanker {
+    func rank(
+        candidates: [SearchChunkCandidate],
+        analysis: SearchQueryAnalysis,
+        queryEmbedding: [Double]?,
+        limit: Int
+    ) -> [SearchRankedFileResult] {
+        guard !candidates.isEmpty else { return [] }
+
+        var scored: [(candidate: SearchChunkCandidate, score: Double, trace: SearchDebugTrace)] = []
+        for candidate in candidates {
+            let lexicalScore = max(0, min(1, candidate.lexicalScore))
+            let semanticScore = semanticSimilarity(queryEmbedding: queryEmbedding, chunkEmbedding: candidate.chunk.embedding)
+            let filenameScore = filenameRelevance(queryTerms: analysis.terms, filename: candidate.file.filename, path: candidate.file.path)
+            let metadataScore = metadataRelevance(analysis: analysis, file: candidate.file)
+            let recencyScore = recencyRelevance(file: candidate.file)
+            let ocrScore = ocrRelevance(analysis: analysis, file: candidate.file)
+            let duplicatePenalty = 0.0
+
+            let strategy = analysis.strategy
+            var finalScore = (lexicalScore * strategy.lexicalWeight)
+                + (semanticScore * strategy.semanticWeight)
+                + (filenameScore * strategy.filenameWeight)
+                + (metadataScore * strategy.metadataWeight)
+                + (recencyScore * strategy.recencyWeight)
+                + (ocrScore * strategy.ocrWeight)
+
+            if strategy.requirePhrase, let phrase = analysis.phrase {
+                let containsPhrase = candidate.chunk.normalizedText.localizedCaseInsensitiveContains(phrase)
+                    || candidate.file.title.localizedCaseInsensitiveContains(phrase)
+                if !containsPhrase {
+                    finalScore *= 0.1
+                }
+            }
+
+            let trace = SearchDebugTrace(
+                intent: analysis.intent,
+                strategy: strategy.description,
+                lexicalScore: lexicalScore,
+                semanticScore: semanticScore,
+                filenameScore: filenameScore,
+                metadataScore: metadataScore,
+                recencyScore: recencyScore,
+                ocrScore: ocrScore,
+                duplicatePenalty: duplicatePenalty,
+                finalScore: max(0, min(1, finalScore))
+            )
+            scored.append((candidate, trace.finalScore, trace))
+        }
+
+        scored.sort { $0.score > $1.score }
+
+        var bestPerFile: [UUID: (candidate: SearchChunkCandidate, score: Double, trace: SearchDebugTrace)] = [:]
+        var chunkCountPerFile: [UUID: Int] = [:]
+        for item in scored {
+            let fileID = item.candidate.file.id
+            let count = chunkCountPerFile[fileID, default: 0]
+            if count >= analysis.strategy.maxChunksPerFile { continue }
+            chunkCountPerFile[fileID] = count + 1
+
+            if let existing = bestPerFile[fileID] {
+                if item.score > existing.score {
+                    bestPerFile[fileID] = item
+                }
+            } else {
+                bestPerFile[fileID] = item
+            }
+        }
+
+        let fileBest = bestPerFile.values.sorted { lhs, rhs in
+            if lhs.score != rhs.score { return lhs.score > rhs.score }
+            let lhsModified = lhs.candidate.file.modifiedAt?.timeIntervalSince1970 ?? 0
+            let rhsModified = rhs.candidate.file.modifiedAt?.timeIntervalSince1970 ?? 0
+            if lhsModified != rhsModified { return lhsModified > rhsModified }
+            return lhs.candidate.file.path.localizedCaseInsensitiveCompare(rhs.candidate.file.path) == .orderedAscending
+        }
+
+        var dedupPenaltyTracker: [String: Int] = [:]
+        var collapsed: [SearchRankedFileResult] = []
+        for item in fileBest {
+            var adjustedScore = item.score
+            if !item.candidate.file.contentHash.isEmpty {
+                let seen = dedupPenaltyTracker[item.candidate.file.contentHash, default: 0]
+                if seen > 0 {
+                    // Keep one canonical result per duplicate content unless this is explicitly a filename lookup.
+                    if analysis.intent != .filenameLookup {
+                        continue
+                    }
+                    adjustedScore *= 0.7
+                }
+                dedupPenaltyTracker[item.candidate.file.contentHash] = seen + 1
+            }
+
+            var trace = item.trace
+            trace.duplicatePenalty = adjustedScore - item.score
+            trace.finalScore = adjustedScore
+
+            let reasons = reasons(for: item.candidate, trace: trace)
+            collapsed.append(
+                SearchRankedFileResult(
+                    file: item.candidate.file,
+                    chunk: item.candidate.chunk,
+                    score: adjustedScore,
+                    reasons: reasons,
+                    debugTrace: trace
+                )
+            )
+        }
+
+        collapsed.sort { $0.score > $1.score }
+        return Array(collapsed.prefix(limit))
+    }
+
+    private func semanticSimilarity(queryEmbedding: [Double]?, chunkEmbedding: [Double]?) -> Double {
+        guard let queryEmbedding, let chunkEmbedding,
+              !queryEmbedding.isEmpty, !chunkEmbedding.isEmpty,
+              queryEmbedding.count == chunkEmbedding.count else {
+            return 0
+        }
+        var dot: Double = 0
+        var qNorm: Double = 0
+        var cNorm: Double = 0
+        for i in 0..<queryEmbedding.count {
+            dot += queryEmbedding[i] * chunkEmbedding[i]
+            qNorm += queryEmbedding[i] * queryEmbedding[i]
+            cNorm += chunkEmbedding[i] * chunkEmbedding[i]
+        }
+        guard qNorm > 0, cNorm > 0 else { return 0 }
+        return max(0, min(1, dot / (sqrt(qNorm) * sqrt(cNorm))) )
+    }
+
+    private func filenameRelevance(queryTerms: [String], filename: String, path: String) -> Double {
+        guard !queryTerms.isEmpty else { return 0 }
+        let hay = "\(filename.lowercased()) \(path.lowercased())"
+        
+        // Exact matches in filename get higher score
+        let filenameLower = filename.lowercased()
+        var exactHits = 0
+        var partialHits = 0
+        
+        for term in queryTerms {
+            if filenameLower.contains(term) {
+                exactHits += 1
+            } else if hay.contains(term) {
+                partialHits += 1
+            }
+        }
+        
+        // Boost exact filename matches significantly
+        let score = (Double(exactHits) * 1.5 + Double(partialHits) * 0.5) / Double(queryTerms.count)
+        return min(1.0, score)
+    }
+
+    private func metadataRelevance(analysis: SearchQueryAnalysis, file: IndexedFileRecord) -> Double {
+        var score = 0.0
+        if analysis.prefersDocumentFiles {
+            if ["pdf", "docx", "txt", "md", "markdown", "rtf"].contains(file.fileExtension) {
+                score += 0.55
+            }
+            if file.sourceType == "image" {
+                score -= 0.2
+            }
+        }
+        if analysis.prefersImageFiles {
+            if file.sourceType == "image" || file.category == "screenshot" {
+                score += 0.55
+            } else {
+                score -= 0.1
+            }
+        }
+        if analysis.intent == .filenameLookup {
+            score += 0.15
+        }
+        if let target = analysis.targetedCategory {
+            if file.category == target {
+                // Strong boost for matching category
+                score += 0.6
+            } else if target == "screenshot" && file.sourceType == "image" {
+                score += 0.35
+            } else if target == "invoice", ["pdf", "docx", "txt"].contains(file.fileExtension) {
+                score += 0.15
+            } else if target == "resume", ["pdf", "docx", "txt", "md"].contains(file.fileExtension) {
+                // Boost document files when searching for resumes
+                score += 0.1
+            } else {
+                // Small penalty for non-matching categories
+                score -= 0.05
+            }
+        }
+        return max(0, min(1, score))
+    }
+
+    private func recencyRelevance(file: IndexedFileRecord) -> Double {
+        guard let modified = file.modifiedAt else { return 0.2 }
+        let days = Date().timeIntervalSince(modified) / 86_400
+        if days <= 1 { return 1.0 }
+        if days <= 7 { return 0.8 }
+        if days <= 30 { return 0.5 }
+        if days <= 180 { return 0.25 }
+        return 0.1
+    }
+
+    private func ocrRelevance(analysis: SearchQueryAnalysis, file: IndexedFileRecord) -> Double {
+        let confidence = file.ocrConfidence ?? 0.6
+        if analysis.intent == .ocrLookup {
+            return min(1.0, max(0.0, confidence))
+        }
+        if file.sourceType == "image" || file.category == "screenshot" {
+            return min(0.5, confidence * 0.5)
+        }
+        return 0.1
+    }
+
+    private func reasons(for candidate: SearchChunkCandidate, trace: SearchDebugTrace) -> [SearchResultReason] {
+        var reasons: [SearchResultReason] = []
+        if trace.lexicalScore > 0.2 {
+            reasons.append(.init(label: "Lexical match", value: String(format: "%.2f", trace.lexicalScore)))
+        }
+        if trace.filenameScore > 0.2 {
+            reasons.append(.init(label: "Filename/path match", value: String(format: "%.2f", trace.filenameScore)))
+        }
+        if trace.metadataScore > 0.2 {
+            reasons.append(.init(label: "Type/category fit", value: String(format: "%.2f", trace.metadataScore)))
+        }
+        if trace.recencyScore > 0.5 {
+            reasons.append(.init(label: "Recency", value: "recently modified"))
+        }
+        if candidate.file.sourceType == "image", let confidence = candidate.file.ocrConfidence {
+            reasons.append(.init(label: "OCR confidence", value: String(format: "%.2f", confidence)))
+        }
+        if reasons.isEmpty {
+            reasons.append(.init(label: "General relevance", value: String(format: "%.2f", trace.finalScore)))
+        }
+        return reasons
+    }
+}

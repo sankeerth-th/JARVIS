@@ -1,5 +1,99 @@
 import SwiftUI
 import AppKit
+import ScreenCaptureKit
+
+// MARK: - Apple-Native Design System
+
+private enum JarvisColors {
+    static let background = Color(nsColor: .windowBackgroundColor)
+    static let secondaryBackground = Color(nsColor: .controlBackgroundColor)
+    static let tertiaryBackground = Color(nsColor: .underPageBackgroundColor)
+    static let label = Color(nsColor: .labelColor)
+    static let secondaryLabel = Color(nsColor: .secondaryLabelColor)
+    static let tertiaryLabel = Color(nsColor: .tertiaryLabelColor)
+    static let separator = Color(nsColor: .separatorColor)
+    static let accent = Color.accentColor
+}
+
+private enum JarvisLayout {
+    static let small: CGFloat = 8
+    static let medium: CGFloat = 12
+    static let large: CGFloat = 16
+    static let cornerSmall: CGFloat = 6
+    static let cornerMedium: CGFloat = 10
+}
+
+private struct JarvisPrimaryButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .semibold))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: JarvisLayout.cornerSmall, style: .continuous)
+                    .fill(JarvisColors.accent)
+            )
+            .foregroundStyle(.white)
+            .opacity(configuration.isPressed ? 0.8 : 1.0)
+    }
+}
+
+private struct JarvisSecondaryButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .medium))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: JarvisLayout.cornerSmall, style: .continuous)
+                    .fill(JarvisColors.secondaryBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: JarvisLayout.cornerSmall, style: .continuous)
+                    .stroke(JarvisColors.separator, lineWidth: 0.5)
+            )
+            .foregroundStyle(JarvisColors.label)
+            .opacity(configuration.isPressed ? 0.7 : 1.0)
+    }
+}
+
+// MARK: - App Sections
+
+enum JarvisSection: String, CaseIterable, Identifiable {
+    case chat, notifications, documents, email, search, diagnostics, privacy, macros, thinking
+    
+    var id: String { rawValue }
+    
+    var title: String {
+        switch self {
+        case .chat: return "Chat"
+        case .notifications: return "Notifications"
+        case .documents: return "Documents"
+        case .email: return "Email"
+        case .search: return "Search"
+        case .diagnostics: return "Diagnostics"
+        case .privacy: return "Privacy"
+        case .macros: return "Macros"
+        case .thinking: return "Thinking"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .chat: return "bubble.left.and.bubble.right"
+        case .notifications: return "bell"
+        case .documents: return "doc.text"
+        case .email: return "envelope"
+        case .search: return "magnifyingglass"
+        case .diagnostics: return "stethoscope"
+        case .privacy: return "hand.raised"
+        case .macros: return "bolt.badge.clock"
+        case .thinking: return "brain"
+        }
+    }
+}
+
+// MARK: - Redesigned Command Palette
 
 struct CommandPaletteView: View {
     @EnvironmentObject private var commandVM: CommandPaletteViewModel
@@ -7,1354 +101,1002 @@ struct CommandPaletteView: View {
     @EnvironmentObject private var emailVM: EmailDraftViewModel
     @EnvironmentObject private var diagnosticsVM: DiagnosticsViewModel
     @EnvironmentObject private var settingsVM: SettingsViewModel
-    @State private var selectedModel: String = ""
-    @State private var loggingDisabled: Bool = false
-    @State private var isCompactMode: Bool = true
-
+    
+    @State private var selectedSection: JarvisSection = .chat
+    @State private var searchText: String = ""
+    @State private var showDiagnosticsPanel: Bool = false
+    
     var body: some View {
-        ZStack {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.08, green: 0.09, blue: 0.14),
-                    Color(red: 0.05, green: 0.06, blue: 0.09)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+        NavigationSplitView {
+            SidebarView(
+                selectedSection: $selectedSection,
+                ollamaReachable: commandVM.ollamaReachable
             )
-            .overlay(
-                RadialGradient(
-                    colors: [Color.cyan.opacity(0.12), .clear],
-                    center: .topLeading,
-                    startRadius: 20,
-                    endRadius: 520
-                )
+            .frame(minWidth: 200, idealWidth: 220)
+        } detail: {
+            DetailView(
+                section: selectedSection,
+                showDiagnostics: $showDiagnosticsPanel
             )
-
-            VStack(spacing: 12) {
-                header
-                if !commandVM.ollamaReachable {
-                    offlineBanner
-                }
-                if let status = commandVM.statusMessage {
-                    Text(status)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 10)
-                }
-                if commandVM.toolRequiresConfirmation, let pendingTool = commandVM.pendingTool {
-                    pendingToolBanner(invocation: pendingTool)
-                }
-                if let suggestion = commandVM.topSuggestion {
-                    topSuggestionCard(suggestion)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-                if isCompactMode {
-                    compactIdleBody
-                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                } else {
-                    tabRail
-                    tabContent
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(.top, 4)
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
-            .padding(.top, 28)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .animation(.easeInOut(duration: 0.20), value: isCompactMode)
-            .animation(.easeInOut(duration: 0.18), value: commandVM.selectedTab)
-        }
-        .frame(minWidth: isCompactMode ? 640 : 980, minHeight: isCompactMode ? 260 : 700)
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.white.opacity(0.16), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.28), radius: 32, x: 0, y: 18)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .background(.ultraThinMaterial)
-        .onAppear {
-            syncFromSettings()
-            commandVM.loadModels()
-            diagnosticsVM.refresh()
-            ensureWindowSize(forCompactMode: isCompactMode)
-        }
-        .onChange(of: commandVM.selectedTab) { _, selected in
-            if selected != .chat, isCompactMode {
-                isCompactMode = false
+            .inspector(isPresented: $showDiagnosticsPanel) {
+                DiagnosticsInspector()
+                    .inspectorColumnWidth(min: 280, ideal: 320)
             }
         }
-        .onChange(of: settingsVM.settings.selectedModel) { _, model in
-            if selectedModel != model {
-                selectedModel = model
-            }
-        }
-        .onChange(of: settingsVM.settings.disableLogging) { _, disabled in
-            if loggingDisabled != disabled {
-                loggingDisabled = disabled
-            }
-        }
-        .onChange(of: selectedModel) { _, model in
-            guard !model.isEmpty, settingsVM.settings.selectedModel != model else { return }
-            settingsVM.setModel(model)
-        }
-        .onChange(of: loggingDisabled) { _, disabled in
-            guard settingsVM.settings.disableLogging != disabled else { return }
-            settingsVM.setLoggingDisabled(disabled)
-        }
-        .onChange(of: isCompactMode) { _, compact in
-            ensureWindowSize(forCompactMode: compact)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSWorkspace.didActivateApplicationNotification)) { _ in
-            commandVM.refreshSuggestionContext()
-        }
-    }
-
-    private var header: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 12) {
-                AssistantOrbView()
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Jarvis")
-                        .font(.system(size: 20, weight: .semibold))
-                    Text("Offline assistant")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                AssistantStatusChip(
-                    title: commandVM.privacyStatus.description,
-                    icon: commandVM.privacyStatus == .offline ? "lock.shield" : "wifi",
-                    tint: commandVM.privacyStatus == .offline ? .green : .orange
-                )
-
-                Button(action: commandVM.clearHistory) {
-                    Label("Clear", systemImage: "trash")
-                }
-                .buttonStyle(AssistantPillButtonStyle(tint: .red.opacity(0.24)))
-
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        isCompactMode.toggle()
-                        if isCompactMode {
-                            commandVM.selectTab(.chat)
-                        }
-                    }
-                } label: {
-                    Label(isCompactMode ? "Expand" : "Compact", systemImage: isCompactMode ? "arrow.up.left.and.arrow.down.right" : "arrow.down.right.and.arrow.up.left")
-                }
-                .buttonStyle(AssistantPillButtonStyle(tint: Color.white.opacity(0.10)))
-            }
-
-            HStack(spacing: 10) {
-                Text("Model")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Picker("Model", selection: $selectedModel) {
-                    ForEach(modelOptions, id: \.self) { model in
-                        Text(model).tag(model)
-                    }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .frame(width: 210)
-                .disabled(modelOptions.isEmpty)
-
-                Spacer()
-
-                Toggle("", isOn: $loggingDisabled)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                Text("No logs")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(12)
-        .assistantCard()
-    }
-
-    private var compactIdleBody: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text("Quick ask")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Chat") {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        isCompactMode = false
-                        commandVM.selectTab(.chat)
-                    }
-                }
-                .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.16)))
-                Button("Docs") {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        isCompactMode = false
-                        commandVM.selectTab(.documents)
-                    }
-                }
-                .buttonStyle(AssistantPillButtonStyle(tint: Color.white.opacity(0.10)))
-                Button("Email") {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        isCompactMode = false
-                        commandVM.selectTab(.email)
-                    }
-                }
-                .buttonStyle(AssistantPillButtonStyle(tint: Color.white.opacity(0.10)))
-            }
-
-            HStack(spacing: 10) {
-                TextField("Ask Jarvis...", text: $commandVM.inputText, axis: .vertical)
-                    .lineLimit(1...2)
-                    .textFieldStyle(.plain)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                    )
-                    .onSubmit {
-                        performCompactSend()
-                    }
-                Button {
-                    performCompactSend()
-                } label: {
-                    Image(systemName: "paperplane.fill")
-                        .padding(10)
-                }
-                .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.25)))
-                .keyboardShortcut(.return, modifiers: .command)
-            }
-        }
-        .padding(12)
-        .assistantCard(fill: Color.white.opacity(0.035), border: Color.white.opacity(0.1))
-    }
-
-    private func performCompactSend() {
-        let text = commandVM.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        commandVM.inputText = ""
-        withAnimation(.easeInOut(duration: 0.2)) {
-            isCompactMode = false
-            commandVM.selectTab(.chat)
-        }
-        commandVM.send(prompt: text)
-    }
-
-    private var offlineBanner: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "bolt.horizontal.circle")
-                .foregroundStyle(.yellow)
-            Text("Ollama is not reachable. Start it with `ollama serve`.")
-                .font(.footnote)
-            Spacer()
-            Button("Retry", action: commandVM.loadModels)
-                .buttonStyle(AssistantPillButtonStyle(tint: .blue.opacity(0.26)))
-        }
-        .padding(10)
-        .assistantCard(fill: Color.red.opacity(0.1), border: Color.red.opacity(0.25))
-    }
-
-    private var tabRail: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(CommandPaletteViewModel.PaletteTab.allCases, id: \.self) { tab in
-                    Button {
-                        commandVM.selectTab(tab)
-                    } label: {
-                        Label(tab.rawValue, systemImage: icon(for: tab))
-                            .font(.system(size: 13, weight: .medium))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(commandVM.selectedTab == tab ? Color.cyan.opacity(0.14) : Color.white.opacity(0.05))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(commandVM.selectedTab == tab ? Color.cyan.opacity(0.45) : Color.white.opacity(0.10), lineWidth: 1)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(2)
-        }
-        .padding(8)
-        .assistantCard()
-    }
-
-    private func icon(for tab: CommandPaletteViewModel.PaletteTab) -> String {
-        switch tab {
-        case .chat: return "message"
-        case .notifications: return "bell"
-        case .documents: return "doc.text"
-        case .email: return "envelope"
-        case .why: return "questionmark.circle"
-        case .fileSearch: return "folder"
-        case .thinking: return "brain.head.profile"
-        case .privacy: return "lock.shield"
-        case .macros: return "bolt"
-        case .diagnostics: return "stethoscope"
-        }
-    }
-
-    private var modelOptions: [String] {
-        var options = commandVM.availableModels
-        if !selectedModel.isEmpty && !options.contains(selectedModel) {
-            options.insert(selectedModel, at: 0)
-        }
-        return options
-    }
-
-    private func syncFromSettings() {
-        selectedModel = settingsVM.settings.selectedModel
-        loggingDisabled = settingsVM.settings.disableLogging
-    }
-
-    private func ensureWindowSize(forCompactMode compact: Bool) {
-        guard let window = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible }) else { return }
-        let minWidth: CGFloat = compact ? 700 : 1080
-        let minHeight: CGFloat = compact ? 320 : 760
-        let visible = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-        let targetWidth = visible.isEmpty ? minWidth : min(minWidth, max(640, visible.width - 48))
-        let targetHeight = visible.isEmpty ? minHeight : min(minHeight, max(360, visible.height - 48))
-        var frame = window.frame
-        var changed = false
-        if frame.width < targetWidth {
-            frame.origin.x -= (targetWidth - frame.width) / 2
-            frame.size.width = targetWidth
-            changed = true
-        }
-        if frame.height < targetHeight {
-            frame.origin.y -= (targetHeight - frame.height) / 2
-            frame.size.height = targetHeight
-            changed = true
-        }
-        if changed {
-            window.setFrame(frame, display: true, animate: true)
-        }
-    }
-
-    @ViewBuilder
-    private var tabContent: some View {
-        switch commandVM.selectedTab {
-        case .chat:
-            ChatTabView()
-                .environmentObject(commandVM)
-        case .notifications:
-            NotificationsView()
-                .environmentObject(notificationVM)
-                .environmentObject(settingsVM)
-        case .documents:
-            DocumentWorkspaceView()
-                .environmentObject(commandVM)
-        case .email:
-            EmailWorkspaceView()
-                .environmentObject(emailVM)
-        case .why:
-            WhyModeView()
-                .environmentObject(commandVM)
-        case .fileSearch:
-            FileSearchView()
-                .environmentObject(commandVM)
-        case .thinking:
-            ThinkingCompanionView()
-                .environmentObject(commandVM)
-        case .privacy:
-            PrivacyGuardianView()
-                .environmentObject(commandVM)
-        case .macros:
-            MacroListView()
-                .environmentObject(commandVM)
-                .environmentObject(settingsVM)
-        case .diagnostics:
-            DiagnosticsView()
-                .environmentObject(diagnosticsVM)
-        }
-    }
-
-    private func pendingToolBanner(invocation: ToolInvocation) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.shield")
-                .foregroundStyle(.yellow)
-            Text("Allow tool \(invocation.name.rawValue)?")
-            Spacer()
-            Button("Approve", action: commandVM.approvePendingTool)
-                .buttonStyle(AssistantPillButtonStyle(tint: .green.opacity(0.25)))
-            Button("Reject", role: .cancel, action: commandVM.rejectPendingTool)
-                .buttonStyle(AssistantPillButtonStyle(tint: .red.opacity(0.25)))
-        }
-        .padding(10)
-        .assistantCard(fill: Color.yellow.opacity(0.10), border: Color.yellow.opacity(0.24))
-    }
-
-    private func topSuggestionCard(_ suggestion: CommandPaletteViewModel.TopSuggestion) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Text("Suggested")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    KeyHintView(key: "Enter", meaning: "run")
-                }
-                Text(suggestion.title)
-                    .font(.headline)
-                Text(suggestion.subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                ForEach(suggestion.reasons.prefix(2), id: \.self) { reason in
-                    Text("• \(reason)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                ConfidenceBar(value: Double(suggestion.confidence) / 100.0)
-                    .frame(maxWidth: 220)
-            }
-            Spacer()
-            Button("Run suggestion") {
-                commandVM.executeTopSuggestion()
-            }
-            .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.20)))
-        }
-        .padding(10)
-        .assistantCard(fill: Color.cyan.opacity(0.07), border: Color.cyan.opacity(0.20))
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 900, minHeight: 600)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 
-private struct ChatTabView: View {
-    @EnvironmentObject private var commandVM: CommandPaletteViewModel
-    @FocusState private var inputFocused: Bool
-    @State private var streamingMessageID = UUID()
-    private let bottomAnchorID = "chat-scroll-bottom"
+// MARK: - Sidebar
 
+struct SidebarView: View {
+    @Binding var selectedSection: JarvisSection
+    let ollamaReachable: Bool
+    
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(spacing: 10) {
-                conversationScroll
-                inputArea
-                    .fixedSize(horizontal: false, vertical: true)
-                    .layoutPriority(2)
-            }
-            .layoutPriority(1)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 10) {
-                    quickActionPanel
-                    historyPanel
-                }
-            }
-            .frame(width: 332)
-            .frame(maxHeight: .infinity)
-        }
-        .frame(maxHeight: .infinity, alignment: .top)
-    }
-
-    private var quickActionPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Quick Actions")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
-            ScrollView(showsIndicators: false) {
-                LazyVGrid(columns: columns, spacing: 8) {
-                    ForEach(commandVM.quickActions) { action in
-                        Button(action: { commandVM.performQuickAction(action) }) {
-                            HStack(alignment: .top, spacing: 8) {
-                                Image(systemName: action.icon)
-                                    .frame(width: 14)
-                                Text(action.title)
-                                    .font(.system(size: 12, weight: .medium))
-                                    .lineLimit(2)
-                                    .multilineTextAlignment(.leading)
-                                Spacer(minLength: 0)
-                            }
-                            .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                        }
-                        .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.18)))
-                    }
-                }
-            }
-            .frame(maxHeight: 420)
-            if let clipboard = commandVM.clipboardBanner {
-                ClipboardBannerView(text: clipboard, clearAction: commandVM.clearClipboardBanner)
-            }
-        }
-        .padding(10)
-        .assistantCard()
-    }
-
-    private var historyPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("History")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if commandVM.history.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("No recent commands yet")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("Try: Search files, Draft email, Explain screen")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(8)
-            } else {
-                LazyVStack(spacing: 8) {
-                    ForEach(commandVM.history.prefix(12)) { convo in
-                        Button {
-                            commandVM.selectConversation(convo)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(convo.title)
-                                    .font(.system(size: 13, weight: .medium))
-                                    .lineLimit(2)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                Text(convo.updatedAt.formatted(date: .abbreviated, time: .shortened))
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(8)
-                            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-        }
-        .frame(maxHeight: 260, alignment: .top)
-        .padding(10)
-        .assistantCard()
-    }
-
-    private var conversationScroll: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    if commandVM.conversation.messages.isEmpty && !commandVM.isStreaming {
-                        EmptyStateCardView(
-                            title: "No messages yet",
-                            subtitle: "Try: Search files, Draft email, Explain screen."
-                        )
-                    }
-                    ForEach(commandVM.conversation.messages) { message in
-                        ConversationRow(message: message)
-                    }
-                    if commandVM.isStreaming {
-                        if !commandVM.thinkingStatus.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            ThinkingStatusRow(text: commandVM.thinkingStatus)
-                        }
-                        if commandVM.streamingBuffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            StreamingSkeletonView()
-                        } else {
-                            ConversationRow(message: ChatMessage(
-                                id: streamingMessageID,
-                                role: .assistant,
-                                text: commandVM.streamingBuffer,
-                                isStreaming: true
-                            ))
-                        }
-                    }
-                    Color.clear
-                        .frame(height: 1)
-                        .id(bottomAnchorID)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
-                .onAppear {
-                    proxy.scrollTo(bottomAnchorID, anchor: .bottom)
-                }
-                .onChange(of: commandVM.conversation.messages.count) { _, _ in
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        proxy.scrollTo(bottomAnchorID, anchor: .bottom)
-                    }
-                }
-                .onChange(of: commandVM.streamingBuffer.count) { _, _ in
-                    guard commandVM.isStreaming else { return }
-                    withAnimation(.easeOut(duration: 0.12)) {
-                        proxy.scrollTo(bottomAnchorID, anchor: .bottom)
-                    }
-                }
-                .onChange(of: commandVM.isStreaming) { _, streaming in
-                    if streaming {
-                        streamingMessageID = UUID()
-                    }
-                    proxy.scrollTo(bottomAnchorID, anchor: .bottom)
-                }
-            }
-        }
-        .frame(maxHeight: .infinity)
-        .assistantCard()
-    }
-
-    private var inputArea: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                TextField("Ask Jarvis...", text: $commandVM.inputText, axis: .vertical)
-                    .lineLimit(1...3)
-                    .textFieldStyle(.plain)
-                    .focused($inputFocused)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(inputFocused ? Color.cyan.opacity(0.55) : Color.white.opacity(0.12), lineWidth: 1)
-                    )
-                    .shadow(color: inputFocused ? Color.cyan.opacity(0.25) : .clear, radius: 10)
-                    .animation(.easeInOut(duration: 0.18), value: inputFocused)
-                    .onSubmit { commandVM.sendCurrentPrompt() }
-
-                Button(action: commandVM.sendCurrentPrompt) {
-                    Image(systemName: "paperplane.fill")
-                        .padding(10)
-                }
-                .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.25)))
-                .keyboardShortcut(.return, modifiers: .command)
-            }
-            HStack(spacing: 8) {
-                KeyHintView(key: "⌘↩", meaning: "run")
-                KeyHintView(key: "⌘C", meaning: "copy")
-                KeyHintView(key: "⌘R", meaning: "repeat")
-                KeyHintView(key: "↑↓", meaning: "navigate")
-                Spacer()
-                Button("Repeat") { commandVM.repeatLastPrompt() }
-                    .font(.caption2)
-                    .buttonStyle(.plain)
-                    .keyboardShortcut("r", modifiers: .command)
-                Button("Copy") { commandVM.copyLatestAssistantMessage() }
-                    .font(.caption2)
-                    .buttonStyle(.plain)
-            }
-            .foregroundStyle(.secondary)
-        }
-        .padding(10)
-        .assistantCard()
-        .onMoveCommand { direction in
-            switch direction {
-            case .up:
-                commandVM.recallPrompt(up: true)
-            case .down:
-                commandVM.recallPrompt(up: false)
-            default:
-                break
-            }
-        }
-        .onAppear {
-            inputFocused = true
-        }
-    }
-}
-
-private struct ConversationRow: View {
-    let message: ChatMessage
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(message.text)
-                .font(.body)
-                .textSelection(.enabled)
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    message.role == .user ? Color.cyan.opacity(0.16) : Color.white.opacity(0.06),
-                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(message.role == .user ? Color.cyan.opacity(0.35) : Color.white.opacity(0.12), lineWidth: 1)
-                )
-        }
-        .id(message.id)
-    }
-
-    private var label: String {
-        switch message.role {
-        case .user: return "You"
-        case .assistant: return "Jarvis"
-        case .system: return "System"
-        case .tool: return "Tool"
-        }
-    }
-}
-
-private struct DocumentWorkspaceView: View {
-    @EnvironmentObject private var commandVM: CommandPaletteViewModel
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Documents")
-                        .font(.headline)
-                    Spacer()
-                    Button("Import", action: commandVM.selectDocumentUsingPanel)
-                        .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.24)))
-                    if commandVM.importedDocument != nil {
-                        Button("Clear", action: commandVM.clearDocument)
-                            .buttonStyle(AssistantPillButtonStyle(tint: Color.white.opacity(0.10)))
-                    }
-                }
-
-                if let document = commandVM.importedDocument {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(document.title)
-                            .font(.subheadline.weight(.semibold))
-                        ScrollView {
-                            Text(document.content)
-                                .font(.body.monospaced())
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(4)
-                        }
-                        .frame(height: 220)
-                    }
-                    .padding(10)
-                    .assistantCard()
-
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(DocumentAction.allCases) { action in
-                                Button(action.rawValue) { commandVM.summarizeDocument(action: action) }
-                                    .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.18)))
-                            }
-                        }
-                    }
-
-                    if commandVM.isDocumentActionRunning {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                            Text("Processing document...")
-                                .font(.caption)
-                        }
-                        .padding(10)
-                        .assistantCard()
-                    }
-
-                    if !commandVM.documentActionOutput.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Output")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(commandVM.documentActionOutput)
-                                .textSelection(.enabled)
-                                .padding(10)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            HStack {
-                                Button("Copy output", action: commandVM.copyDocumentOutput)
-                                    .buttonStyle(AssistantPillButtonStyle(tint: Color.white.opacity(0.10)))
-                                Spacer()
-                            }
-                        }
-                        .padding(10)
-                        .assistantCard()
-                    }
-                } else {
-                    Text("Import a text, markdown, PDF, or DOCX document to start.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .padding(10)
-                        .assistantCard()
-                }
-
-                Divider().opacity(0.25)
-
-                Button("Extract table", action: commandVM.runTableExtraction)
-                    .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.20)))
-
-                if let table = commandVM.tableResult {
-                    TableExtractionView(result: table)
-                        .padding(10)
-                        .assistantCard()
-                }
-            }
-        }
-        .assistantCard()
-    }
-}
-
-private struct EmailWorkspaceView: View {
-    @EnvironmentObject private var emailVM: EmailDraftViewModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Email Drafting")
-                    .font(.headline)
-                Spacer()
-                Button("Capture window", action: emailVM.captureActiveWindow)
-                    .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.22)))
-                Button("Capture screen", action: emailVM.captureFullScreen)
-                    .buttonStyle(AssistantPillButtonStyle(tint: Color.white.opacity(0.12)))
-                Button("Draft") { emailVM.draftReply() }
-                    .buttonStyle(AssistantPillButtonStyle(tint: Color.green.opacity(0.22)))
-                    .disabled(emailVM.extractedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-
-            EmailDraftView()
-                .environmentObject(emailVM)
-                .assistantCard()
-        }
-        .padding(10)
-        .assistantCard()
-    }
-}
-
-private struct WhyModeView: View {
-    @EnvironmentObject private var commandVM: CommandPaletteViewModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Picker("Symptom", selection: $commandVM.whySymptom) {
-                    ForEach(WhySymptom.allCases) { symptom in
-                        Text(symptom.rawValue).tag(symptom)
-                    }
-                }
-                .frame(width: 220)
-                Spacer()
-                Button("Analyze", action: commandVM.runWhyAnalysis)
-                    .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.22)))
-                Button("Copy report", action: commandVM.copyWhyReport)
-                    .buttonStyle(AssistantPillButtonStyle(tint: Color.white.opacity(0.12)))
-                    .disabled(commandVM.whyReport.isEmpty)
-                Button("Create checklist", action: commandVM.createChecklistFromWhyReport)
-                    .buttonStyle(AssistantPillButtonStyle(tint: Color.green.opacity(0.20)))
-                    .disabled(commandVM.whyReport.isEmpty)
-            }
-            TextField("Optional notes (1-2 lines)", text: $commandVM.whyAdditionalNotes, axis: .vertical)
-                .lineLimit(1...2)
-                .textFieldStyle(.roundedBorder)
-            if commandVM.isWhyRunning {
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text("Analyzing local signals...")
-                        .font(.caption)
-                }
-            }
-            ScrollView {
-                Text(commandVM.whyReport.isEmpty ? "Run analysis to generate a local root-cause report." : commandVM.whyReport)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-                    .padding(10)
-            }
-            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        }
-        .padding(10)
-        .assistantCard()
-    }
-}
-
-private struct FileSearchView: View {
-    @EnvironmentObject private var commandVM: CommandPaletteViewModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                TextField("Find that invoice where they overcharged...", text: $commandVM.fileSearchQuery)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { commandVM.runFileSearch() }
-                Button("Search", action: commandVM.runFileSearch)
-                    .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.22)))
-            }
-            HStack(spacing: 8) {
-                Picker("Scope", selection: $commandVM.fileSearchScope) {
-                    ForEach(CommandPaletteViewModel.FileSearchScope.allCases) { scope in
-                        Text(scope.rawValue).tag(scope)
-                    }
-                }
-                .frame(width: 180)
-                if commandVM.fileSearchScope == .selectedFolder {
-                    Picker("Folder", selection: $commandVM.fileSearchSelectedFolder) {
-                        ForEach(commandVM.fileSearchFolderOptions, id: \.self) { folder in
-                            Text(folder).tag(folder)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                Button("Add folder", action: commandVM.addFolderForSearchIndex)
-                    .buttonStyle(.bordered)
-                Menu("Quick add") {
-                    ForEach(CommandPaletteViewModel.IndexPresetFolder.allCases) { preset in
-                        Button(preset.rawValue) {
-                            commandVM.indexPresetFolder(preset)
-                        }
-                    }
-                }
-                .menuStyle(.borderlessButton)
-                Button("Re-index", action: commandVM.reindexSearchFolders)
-                    .buttonStyle(.bordered)
-            }
-            if commandVM.isIndexingSearchFolders {
-                HStack(spacing: 8) {
-                    ActivityPulse(label: "Indexing")
-                    Text("Extracting local text (including OCR for images/scanned PDFs).")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            if !commandVM.fileSearchStatus.isEmpty {
-                HStack(spacing: 8) {
-                    if commandVM.fileSearchStatus.localizedCaseInsensitiveContains("searching") {
-                        ActivityPulse(label: "Searching")
-                    }
-                    Text(commandVM.fileSearchStatus)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            if commandVM.fileSearchResults.isEmpty {
-                EmptyStateCardView(
-                    title: "No file results yet",
-                    subtitle: "Try: \"invoice\", \"permissions hotkey\", \"meeting notes\"."
-                )
-            } else {
-                List(commandVM.fileSearchResults) { result in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text(result.document.title)
-                                .font(.subheadline.weight(.semibold))
-                            Spacer()
-                            Text(String(format: "%.2f", result.score))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        ConfidenceBar(value: max(0.0, min(1.0, result.score)))
-                        Text(result.document.path)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Text(result.snippet)
-                            .font(.caption)
-                            .lineLimit(2)
-                        HStack {
-                            Button("Open") { commandVM.openSearchResult(result) }
-                                .buttonStyle(.bordered)
-                            Button("Summarize this file") { commandVM.summarizeSearchResult(result) }
-                                .buttonStyle(.borderedProminent)
-                        }
-                    }
+        List(JarvisSection.allCases, selection: $selectedSection) { section in
+            NavigationLink(value: section) {
+                Label(section.title, systemImage: section.icon)
+                    .font(.system(size: 13))
+                    .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
                     .padding(.vertical, 4)
-                    .listRowBackground(Color.clear)
-                }
-                .scrollContentBackground(.hidden)
-            }
-            if !commandVM.fileSearchSummary.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Summary")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(commandVM.fileSearchSummary)
-                        .textSelection(.enabled)
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                }
             }
         }
-        .padding(10)
-        .assistantCard()
-        .onAppear {
-            commandVM.ensureFileSearchFolderSelection()
+        .listStyle(.sidebar)
+        .navigationTitle("Jarvis")
+        .toolbar {
+            ToolbarItem {
+                ConnectionStatusIndicator(isConnected: ollamaReachable)
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            SidebarFooter()
         }
     }
 }
 
-private struct PrivacyGuardianView: View {
-    @EnvironmentObject private var commandVM: CommandPaletteViewModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Button("Privacy Report", action: commandVM.buildPrivacyReport)
-                    .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.22)))
-                Spacer()
-                Button("Clear clipboard now", action: commandVM.clearClipboardNow)
-                    .buttonStyle(AssistantPillButtonStyle(tint: Color.red.opacity(0.20)))
-            }
-            if let warning = commandVM.privacyWarning {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.yellow)
-                    Text(warning)
-                        .font(.caption)
-                    Spacer()
-                }
-                .padding(8)
-                .background(Color.orange.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
-            if !commandVM.privacyReport.isEmpty {
-                Text(commandVM.privacyReport)
-                    .textSelection(.enabled)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            }
-            List(commandVM.privacyEvents) { event in
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("[\(event.type)] \(event.summary)")
-                            .font(.caption)
-                        Text(event.createdAt.formatted(date: .abbreviated, time: .shortened))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                }
-                .listRowBackground(Color.clear)
-            }
-            .scrollContentBackground(.hidden)
-        }
-        .padding(10)
-        .assistantCard()
-    }
-}
-
-private struct ThinkingCompanionView: View {
-    @EnvironmentObject private var commandVM: CommandPaletteViewModel
-    @State private var selectedOption: String = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            TextField("Problem statement", text: $commandVM.thinkProblemStatement, axis: .vertical)
-                .lineLimit(1...2)
-                .textFieldStyle(.roundedBorder)
-            TextField("Constraints (budget, time, must-haves)", text: $commandVM.thinkConstraints, axis: .vertical)
-                .lineLimit(1...2)
-                .textFieldStyle(.roundedBorder)
-            TextField("Options (one per line)", text: $commandVM.thinkOptionsInput, axis: .vertical)
-                .lineLimit(2...4)
-                .textFieldStyle(.roundedBorder)
-
-            HStack {
-                Button("Next question", action: commandVM.nextThinkingQuestion)
-                    .buttonStyle(AssistantPillButtonStyle(tint: Color.cyan.opacity(0.22)))
-                Button("Build options", action: commandVM.buildThinkingRecommendation)
-                    .buttonStyle(AssistantPillButtonStyle(tint: Color.white.opacity(0.12)))
-                Button("Save session", action: commandVM.saveThinkingSession)
-                    .buttonStyle(AssistantPillButtonStyle(tint: Color.green.opacity(0.2)))
-            }
-
-            List(commandVM.thinkEntries) { entry in
-                HStack(alignment: .top) {
-                    Text(entry.role == .assistant ? "Jarvis" : "You")
-                        .font(.caption.weight(.semibold))
-                        .frame(width: 48, alignment: .leading)
-                    Text(entry.text)
-                        .font(.caption)
-                }
-                .listRowBackground(Color.clear)
-            }
-            .scrollContentBackground(.hidden)
-
-            HStack {
-                TextField("Your answer...", text: $commandVM.thinkAnswerDraft)
-                    .textFieldStyle(.roundedBorder)
-                Button("Submit", action: commandVM.submitThinkingAnswer)
-                    .buttonStyle(.borderedProminent)
-            }
-
-            if !commandVM.thinkRecommendation.isEmpty {
-                Text(commandVM.thinkRecommendation)
-                    .textSelection(.enabled)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            }
-
-            HStack {
-                TextField("Option to simulate", text: $selectedOption)
-                    .textFieldStyle(.roundedBorder)
-                Button("Simulate outcomes") { commandVM.simulateThinkingOutcome(option: selectedOption) }
-                    .buttonStyle(.bordered)
-            }
-
-            if !commandVM.thinkSimulation.isEmpty {
-                Text(commandVM.thinkSimulation)
-                    .textSelection(.enabled)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            }
-        }
-        .padding(10)
-        .assistantCard()
-    }
-}
-
-private struct TableExtractionView: View {
-    let result: TableExtractionResult
-    @State private var selectedFormat: TableExtractionResult.OutputFormat = .markdown
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Picker("Format", selection: $selectedFormat) {
-                Text("Markdown").tag(TableExtractionResult.OutputFormat.markdown)
-                Text("CSV").tag(TableExtractionResult.OutputFormat.csv)
-                Text("JSON").tag(TableExtractionResult.OutputFormat.json)
-            }
-            .pickerStyle(.segmented)
-
-            ScrollView {
-                Text(render(format: selectedFormat))
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-            }
-            .frame(minHeight: 120)
-            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
-            )
-        }
-    }
-
-    private func render(format: TableExtractionResult.OutputFormat) -> String {
-        let extractor = TableExtractor()
-        return (try? extractor.render(result, format: format)) ?? ""
-    }
-}
-
-struct ConfidenceBar: View {
-    let value: Double
-
-    var body: some View {
-        GeometryReader { proxy in
-            let width = max(0, min(1, value)) * proxy.size.width
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.white.opacity(0.09))
-                Capsule()
-                    .fill(Color.cyan.opacity(0.7))
-                    .frame(width: width)
-            }
-        }
-        .frame(height: 6)
-        .accessibilityLabel("Confidence")
-        .accessibilityValue("\(Int(max(0, min(1, value)) * 100)) percent")
-    }
-}
-
-struct LatencyPill: View {
-    let milliseconds: Double
-
-    var body: some View {
-        Label("\(Int(milliseconds)) ms", systemImage: "speedometer")
-            .font(.caption)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(Color.white.opacity(0.08), in: Capsule())
-            .overlay(
-                Capsule()
-                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
-            )
-    }
-}
-
-struct ActivityPulse: View {
-    let label: String
-    @State private var animate = false
-
-    var body: some View {
-        HStack(spacing: 6) {
-            HStack(spacing: 3) {
-                ForEach(0..<3, id: \.self) { index in
-                    Circle()
-                        .fill(Color.cyan.opacity(0.8))
-                        .frame(width: 5, height: 5)
-                        .scaleEffect(animate ? 1.0 : 0.6)
-                        .opacity(animate ? 1.0 : 0.35)
-                        .animation(.easeInOut(duration: 0.7).repeatForever().delay(Double(index) * 0.1), value: animate)
-                }
-            }
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .onAppear { animate = true }
-    }
-}
-
-private struct KeyHintView: View {
-    let key: String
-    let meaning: String
-
+struct ConnectionStatusIndicator: View {
+    let isConnected: Bool
+    
     var body: some View {
         HStack(spacing: 4) {
-            Text(key)
-                .font(.caption2.monospaced())
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            Text(meaning)
-                .font(.caption2)
-        }
-    }
-}
-
-private struct EmptyStateCardView: View {
-    let title: String
-    let subtitle: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-            Text(subtitle)
-                .font(.caption2)
+            Circle()
+                .fill(isConnected ? Color.green : Color.orange)
+                .frame(width: 6, height: 6)
+            
+            Text(isConnected ? "Ready" : "Offline")
+                .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(Color.secondary.opacity(0.1))
         )
     }
 }
 
-private struct StreamingSkeletonView: View {
+struct SidebarFooter: View {
+    @State private var showSettings = false
+    
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Jarvis")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white.opacity(0.10))
-                .frame(height: 14)
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white.opacity(0.08))
-                .frame(height: 14)
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white.opacity(0.06))
-                .frame(width: 160, height: 14)
+        VStack(spacing: 0) {
+            Divider()
+            
+            HStack(spacing: 8) {
+                Button(action: { showSettings = true }) {
+                    Image(systemName: "gear")
+                        .font(.system(size: 14))
+                }
+                .buttonStyle(.borderless)
+                .help("Settings")
+                
+                Spacer()
+                
+                Button(action: openHelp) {
+                    Image(systemName: "questionmark.circle")
+                        .font(.system(size: 14))
+                }
+                .buttonStyle(.borderless)
+                .help("Help")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(Color(nsColor: .controlBackgroundColor))
         }
-        .padding(10)
-        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .redacted(reason: .placeholder)
+        .sheet(isPresented: $showSettings) {
+            SettingsSheet()
+        }
+    }
+    
+    private func openHelp() {
+        if let url = URL(string: "https://github.com/openclaw/openclaw") {
+            NSWorkspace.shared.open(url)
+        }
     }
 }
 
-private struct ThinkingStatusRow: View {
-    let text: String
-
+struct SettingsSheet: View {
+    @EnvironmentObject private var settingsVM: SettingsViewModel
+    @EnvironmentObject private var notificationVM: NotificationViewModel
+    @Environment(\.dismiss) private var dismiss
+    
     var body: some View {
-        HStack(spacing: 8) {
-            ActivityPulse(label: "Thinking")
-            Text(text)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            Spacer(minLength: 0)
+        NavigationStack {
+            SettingsView()
+                .navigationTitle("Settings")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Done") {
+                            dismiss()
+                        }
+                    }
+                }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(Color.cyan.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.cyan.opacity(0.20), lineWidth: 1)
-        )
+        .frame(minWidth: 500, minHeight: 400)
     }
 }
 
-private struct AssistantOrbView: View {
-    @State private var glow: Bool = false
+// MARK: - Detail View
 
+struct DetailView: View {
+    let section: JarvisSection
+    @Binding var showDiagnostics: Bool
+    
+    @EnvironmentObject private var commandVM: CommandPaletteViewModel
+    @EnvironmentObject private var notificationVM: NotificationViewModel
+    @EnvironmentObject private var emailVM: EmailDraftViewModel
+    @EnvironmentObject private var diagnosticsVM: DiagnosticsViewModel
+    @EnvironmentObject private var settingsVM: SettingsViewModel
+    
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(Color.cyan.opacity(0.28))
-                .frame(width: glow ? 24 : 20, height: glow ? 24 : 20)
-                .blur(radius: 4)
-            Circle()
-                .fill(
-                    LinearGradient(colors: [Color.cyan.opacity(0.95), Color.blue.opacity(0.55)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                )
-                .frame(width: 12, height: 12)
+        Group {
+            switch section {
+            case .chat:
+                ChatSection()
+            case .notifications:
+                NotificationsSection()
+            case .documents:
+                DocumentsSection()
+            case .email:
+                EmailSection()
+            case .search:
+                SearchSection()
+            case .diagnostics:
+                DiagnosticsSection(showPanel: $showDiagnostics)
+            case .privacy:
+                PrivacySection()
+            case .macros:
+                MacrosSection()
+            case .thinking:
+                ThinkingSection()
+            }
         }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 2.3).repeatForever(autoreverses: true)) {
-                glow = true
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button(action: { showDiagnostics.toggle() }) {
+                    Image(systemName: "sidebar.right")
+                        .font(.system(size: 14))
+                }
+                .buttonStyle(.borderless)
+                .help("Toggle Inspector")
             }
         }
     }
 }
 
-private struct AssistantStatusChip: View {
-    let title: String
-    let icon: String
-    let tint: Color
+// MARK: - Section Views
 
+struct ChatSection: View {
+    @EnvironmentObject private var commandVM: CommandPaletteViewModel
+    @FocusState private var isInputFocused: Bool
+    
     var body: some View {
-        Label(title, systemImage: icon)
-            .font(.caption)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(tint.opacity(0.18), in: Capsule())
-            .overlay(
-                Capsule()
-                    .stroke(tint.opacity(0.45), lineWidth: 1)
-            )
+        VStack(spacing: 0) {
+            // Messages area
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 16) {
+                        ForEach(commandVM.conversation.messages) { message in
+                            MessageBubble(message: message)
+                                .id(message.id)
+                        }
+                        if commandVM.isStreaming {
+                            TypingIndicator()
+                                .id("typing")
+                        }
+                    }
+                    .padding(24)
+                }
+                .onChange(of: commandVM.conversation.messages.count) { _ in
+                    if let last = commandVM.conversation.messages.last {
+                        withAnimation {
+                            proxy.scrollTo(last.id, anchor: .bottom)
+                        }
+                    }
+                }
+                .onChange(of: commandVM.streamingBuffer) { _ in
+                    withAnimation {
+                        proxy.scrollTo("typing", anchor: .bottom)
+                    }
+                }
+            }
+            
+            Divider()
+            
+            // Input area
+            VStack(spacing: 12) {
+                HStack(spacing: 12) {
+                    Button(action: { isInputFocused = false }) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 14, weight: .medium))
+                    }
+                    .buttonStyle(.borderless)
+                    
+                    TextField("Message Jarvis...", text: $commandVM.inputText, axis: .vertical)
+                        .font(.system(size: 13))
+                        .textFieldStyle(.plain)
+                        .lineLimit(1...5)
+                        .focused($isInputFocused)
+                        .onSubmit {
+                            sendMessage()
+                        }
+                    
+                    Button(action: sendMessage) {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 14, weight: .semibold))
+                            .frame(width: 28, height: 28)
+                            .background(
+                                Circle()
+                                    .fill(commandVM.inputText.isEmpty ? Color.secondary.opacity(0.2) : JarvisColors.accent)
+                            )
+                            .foregroundStyle(commandVM.inputText.isEmpty ? Color.secondary : Color.white)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(commandVM.inputText.isEmpty || commandVM.isStreaming)
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+                )
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+            }
+            .background(Color(nsColor: .controlBackgroundColor))
+        }
+    }
+    
+    private func sendMessage() {
+        guard !commandVM.inputText.isEmpty else { return }
+        commandVM.sendCurrentPrompt()
     }
 }
 
-private struct AssistantPillButtonStyle: ButtonStyle {
-    let tint: Color
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .medium))
-            .padding(.horizontal, 11)
-            .padding(.vertical, 7)
-            .background(tint, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.white.opacity(configuration.isPressed ? 0.28 : 0.14), lineWidth: 1)
-            )
-            .opacity(configuration.isPressed ? 0.82 : 1)
-            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
-    }
-}
-
-private struct AssistantCardModifier: ViewModifier {
-    let fill: Color
-    let border: Color
-
-    func body(content: Content) -> some View {
-        content
+struct TypingIndicator: View {
+    @State private var dotCount = 0
+    
+    var body: some View {
+        HStack {
+            Spacer(minLength: 60)
+            HStack(spacing: 4) {
+                ForEach(0..<3) { i in
+                    Circle()
+                        .fill(Color.secondary)
+                        .frame(width: 6, height: 6)
+                        .opacity(dotCount == i ? 1.0 : 0.3)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(fill)
+                    .fill(Color(nsColor: .controlBackgroundColor))
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(border, lineWidth: 1)
-            )
-            .shadow(color: Color.black.opacity(0.16), radius: 12, x: 0, y: 6)
+            Spacer(minLength: 60)
+        }
+        .onAppear {
+            Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { _ in
+                dotCount = (dotCount + 1) % 3
+            }
+        }
     }
 }
 
-private extension View {
-    func assistantCard(fill: Color = Color.white.opacity(0.045), border: Color = Color.white.opacity(0.11)) -> some View {
-        modifier(AssistantCardModifier(fill: fill, border: border))
+struct MessageBubble: View {
+    let message: ChatMessage
+    
+    var body: some View {
+        HStack {
+            if message.role == .assistant {
+                Spacer(minLength: 60)
+            }
+            
+            VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 4) {
+                Text(message.text)
+                    .font(.system(size: 13))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(message.role == .user ? JarvisColors.accent.opacity(0.9) : Color(nsColor: .controlBackgroundColor))
+                    )
+                    .foregroundStyle(message.role == .user ? Color.white : JarvisColors.label)
+            }
+            
+            if message.role == .user {
+                Spacer(minLength: 60)
+            }
+        }
     }
+}
+
+struct NotificationsSection: View {
+    @EnvironmentObject private var notificationVM: NotificationViewModel
+    
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 0, pinnedViews: .sectionHeaders) {
+                Section {
+                    ForEach(notificationVM.notifications) { notification in
+                        NotificationListRow(notification: notification)
+                        Divider()
+                    }
+                } header: {
+                    HStack {
+                        Text("Recent")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .textCase(.uppercase)
+                        
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(Color(nsColor: .windowBackgroundColor))
+                }
+            }
+        }
+    }
+}
+
+struct NotificationListRow: View {
+    let notification: NotificationItem
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: iconForPriority(notification.priority))
+                .font(.system(size: 18))
+                .foregroundStyle(colorForPriority(notification.priority))
+                .frame(width: 32, height: 32)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(notification.title)
+                    .font(.system(size: 13, weight: .medium))
+                
+                Text(notification.body)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            
+            Spacer()
+            
+            Text(notification.date, style: .time)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .contentShape(Rectangle())
+    }
+    
+    private func iconForPriority(_ priority: NotificationItem.Priority) -> String {
+        switch priority {
+        case .urgent: return "exclamationmark.circle.fill"
+        case .needsReply: return "bell.badge.fill"
+        case .fyi: return "bell.fill"
+        case .low: return "bell"
+        }
+    }
+    
+    private func colorForPriority(_ priority: NotificationItem.Priority) -> Color {
+        switch priority {
+        case .urgent: return .red
+        case .needsReply: return .orange
+        case .fyi: return .blue
+        case .low: return .gray
+        }
+    }
+}
+
+struct DocumentsSection: View {
+    var body: some View {
+        ModernSearchView()
+    }
+}
+
+struct EmailSection: View {
+    @EnvironmentObject private var emailVM: EmailDraftViewModel
+    @State private var captureError: String?
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Toolbar
+            HStack(spacing: 12) {
+                Button(action: { emailVM.captureActiveWindow() }) {
+                    Label("Capture Window", systemImage: "macwindow")
+                }
+                .buttonStyle(JarvisSecondaryButton())
+                
+                Button(action: captureFullScreen) {
+                    Label("Capture Screen", systemImage: "display")
+                }
+                .buttonStyle(JarvisSecondaryButton())
+                
+                Spacer()
+                
+                if emailVM.isCapturing {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            .padding(16)
+            
+            Divider()
+            
+            // Error message
+            if let error = captureError {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text(error)
+                        .font(.caption)
+                    Spacer()
+                    Button("Dismiss") {
+                        captureError = nil
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(Color.orange.opacity(0.1))
+            }
+            
+            // Content
+            ScrollView {
+                VStack(spacing: 20) {
+                    // OCR Result
+                    if !emailVM.extractedText.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Extracted Text")
+                                    .font(.system(size: 13, weight: .semibold))
+                                
+                                Spacer()
+                                
+                                Button("Copy") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(emailVM.extractedText, forType: .string)
+                                }
+                                .buttonStyle(.borderless)
+                                .font(.caption)
+                            }
+                            
+                            Text(emailVM.extractedText)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .padding(12)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(Color(nsColor: .controlBackgroundColor))
+                                )
+                        }
+                        .padding(.horizontal, 16)
+                    }
+                    
+                    // Draft
+                    if !emailVM.draft.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Draft Reply")
+                                    .font(.system(size: 13, weight: .semibold))
+                                
+                                Spacer()
+                                
+                                Button("Copy") {
+                                    emailVM.copyDraft()
+                                }
+                                .buttonStyle(.borderless)
+                                .font(.caption)
+                            }
+                            
+                            Text(emailVM.draft)
+                                .font(.system(size: 12))
+                                .padding(12)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(Color(nsColor: .controlBackgroundColor))
+                                )
+                        }
+                        .padding(.horizontal, 16)
+                    }
+                }
+                .padding(.vertical, 16)
+            }
+        }
+    }
+    
+    private func captureFullScreen() {
+        emailVM.captureFullScreen()
+    }
+}
+
+struct SearchSection: View {
+    var body: some View {
+        ModernSearchView()
+    }
+}
+
+struct DiagnosticsSection: View {
+    @Binding var showPanel: Bool
+    @EnvironmentObject private var diagnosticsVM: DiagnosticsViewModel
+    
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                // Quick stats
+                HStack(spacing: 16) {
+                    StatCard(title: "Latency", value: String(format: "%.0f ms", diagnosticsVM.latency * 1000), isGood: diagnosticsVM.latency < 1.0)
+                    StatCard(title: "Modules", value: "\(diagnosticsVM.moduleHealth.count)", isGood: true)
+                    StatCard(title: "Events", value: "\(diagnosticsVM.routingEvents.count)", isGood: true)
+                }
+                .padding(.horizontal, 16)
+                
+                // Statuses
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("System Status")
+                        .font(.system(size: 13, weight: .semibold))
+                        .padding(.horizontal, 16)
+                    
+                    if diagnosticsVM.statuses.isEmpty {
+                        Text("No status data available")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 16)
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(diagnosticsVM.statuses) { status in
+                                StatusRow(status: status)
+                                if status.id != diagnosticsVM.statuses.last?.id {
+                                    Divider()
+                                }
+                            }
+                        }
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Color(nsColor: .controlBackgroundColor))
+                        )
+                        .padding(.horizontal, 16)
+                    }
+                }
+                
+                // Module Health
+                if !diagnosticsVM.moduleHealth.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Module Health")
+                            .font(.system(size: 13, weight: .semibold))
+                            .padding(.horizontal, 16)
+                        
+                        VStack(spacing: 0) {
+                            ForEach(diagnosticsVM.moduleHealth) { module in
+                                ModuleHealthRow(module: module)
+                                if module.id != diagnosticsVM.moduleHealth.last?.id {
+                                    Divider()
+                                }
+                            }
+                        }
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Color(nsColor: .controlBackgroundColor))
+                        )
+                        .padding(.horizontal, 16)
+                    }
+                }
+            }
+            .padding(.vertical, 16)
+        }
+        .toolbar {
+            ToolbarItem {
+                Button(action: { diagnosticsVM.refresh() }) {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+            }
+            ToolbarItem {
+                Button(action: { showPanel.toggle() }) {
+                    Image(systemName: "sidebar.right")
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .onAppear {
+            diagnosticsVM.refresh()
+        }
+    }
+}
+
+struct StatCard: View {
+    let title: String
+    let value: String
+    let isGood: Bool
+    
+    var body: some View {
+        VStack(spacing: 4) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            
+            Text(value)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(isGood ? Color.primary : Color.red)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+    }
+}
+
+struct StatusRow: View {
+    let status: DiagnosticStatus
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: status.isHealthy ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .font(.system(size: 16))
+                .foregroundStyle(status.isHealthy ? .green : .orange)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(status.name)
+                    .font(.system(size: 13))
+                
+                Text(status.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+    }
+}
+
+struct ModuleHealthRow: View {
+    let module: ModuleHealthStatus
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: module.enabled && module.permissionsOK ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .font(.system(size: 16))
+                .foregroundStyle(module.enabled && module.permissionsOK ? .green : .orange)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(module.module)
+                    .font(.system(size: 13))
+                
+                if let lastRun = module.lastRun {
+                    Text("Last run: \(lastRun.formatted(date: .omitted, time: .shortened))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(module.enabled ? "Enabled" : "Disabled")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+    }
+}
+
+struct PrivacySection: View {
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                PrivacyCard(
+                    title: "Screen Recording",
+                    description: "Jarvis needs screen recording access to capture windows and screens for OCR.",
+                    icon: "display",
+                    status: "Granted"
+                )
+                
+                PrivacyCard(
+                    title: "Accessibility",
+                    description: "Required for detecting the active window and global hotkeys.",
+                    icon: "accessibility",
+                    status: "Granted"
+                )
+                
+                PrivacyCard(
+                    title: "Local Processing",
+                    description: "All AI processing happens on your device. No data leaves your Mac.",
+                    icon: "lock.shield",
+                    status: "Enabled"
+                )
+            }
+            .padding(16)
+        }
+    }
+}
+
+struct PrivacyCard: View {
+    let title: String
+    let description: String
+    let icon: String
+    let status: String
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            Image(systemName: icon)
+                .font(.system(size: 24))
+                .foregroundStyle(.secondary)
+                .frame(width: 40)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                
+                Text(description)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            
+            Spacer()
+            
+            Text(status)
+                .font(.caption.weight(.medium))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(Color.green.opacity(0.15))
+                )
+                .foregroundStyle(.green)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+    }
+}
+
+struct MacrosSection: View {
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Macros")
+                    .font(.title3.weight(.semibold))
+                
+                Spacer()
+                
+                Button(action: {}) {
+                    Image(systemName: "plus")
+                    Text("New Macro")
+                }
+                .buttonStyle(JarvisPrimaryButton())
+            }
+            .padding(16)
+            
+            Divider()
+            
+            List {
+                Section("Recent") {
+                    MacroRow(name: "Morning Routine", icon: "sunrise", lastRun: "2 hours ago")
+                    MacroRow(name: "Email Summary", icon: "envelope", lastRun: "Yesterday")
+                }
+                
+                Section("All Macros") {
+                    MacroRow(name: "Screenshot to Notes", icon: "camera", lastRun: "3 days ago")
+                    MacroRow(name: "Daily Report", icon: "chart.bar", lastRun: "1 week ago")
+                }
+            }
+            .listStyle(.plain)
+        }
+    }
+}
+
+struct MacroRow: View {
+    let name: String
+    let icon: String
+    let lastRun: String
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 16))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.secondary.opacity(0.1))
+                )
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .font(.system(size: 13))
+                
+                Text(lastRun)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            
+            Spacer()
+            
+            Button(action: {}) {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 12))
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+struct ThinkingSection: View {
+    @EnvironmentObject private var commandVM: CommandPaletteViewModel
+    @State private var problemStatement: String = ""
+    @State private var showThinkingResult: Bool = false
+    
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                // Header
+                VStack(spacing: 8) {
+                    Image(systemName: "brain.head.profile")
+                        .font(.system(size: 32))
+                        .foregroundStyle(JarvisColors.accent)
+                    
+                    Text("Thinking Mode")
+                        .font(.title3.weight(.semibold))
+                    
+                    Text("Break down complex problems step by step")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 20)
+                
+                // Input
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("What would you like to think through?")
+                        .font(.system(size: 13, weight: .medium))
+                    
+                    TextEditor(text: $problemStatement)
+                        .font(.system(size: 13))
+                        .frame(minHeight: 100)
+                        .padding(8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color(nsColor: .controlBackgroundColor))
+                        )
+                    
+                    HStack {
+                        Spacer()
+                        Button(action: startThinking) {
+                            Label("Start Thinking", systemImage: "brain")
+                        }
+                        .buttonStyle(JarvisPrimaryButton())
+                        .disabled(problemStatement.isEmpty || commandVM.isWhyRunning)
+                    }
+                }
+                .padding(.horizontal, 16)
+                
+                // Results
+                if commandVM.isWhyRunning {
+                    ProgressView("Analyzing...")
+                        .padding()
+                } else if !commandVM.whyReport.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Analysis")
+                                .font(.system(size: 13, weight: .semibold))
+                            Spacer()
+                            Button("Copy") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(commandVM.whyReport, forType: .string)
+                            }
+                            .buttonStyle(.borderless)
+                            .font(.caption)
+                        }
+                        
+                        Text(commandVM.whyReport)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .padding(12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color(nsColor: .controlBackgroundColor))
+                            )
+                    }
+                    .padding(.horizontal, 16)
+                }
+            }
+            .padding(.vertical, 16)
+        }
+    }
+    
+    private func startThinking() {
+        commandVM.thinkProblemStatement = problemStatement
+        // Trigger thinking analysis via the command system
+        commandVM.inputText = "/think \(problemStatement)"
+        commandVM.sendCurrentPrompt()
+    }
+}
+
+// MARK: - Inspector
+
+struct DiagnosticsInspector: View {
+    @EnvironmentObject private var diagnosticsVM: DiagnosticsViewModel
+    
+    var body: some View {
+        List {
+            Section("Performance") {
+                HStack {
+                    Text("Latency")
+                    Spacer()
+                    Text(String(format: "%.0f ms", diagnosticsVM.latency * 1000))
+                }
+            }
+            
+            Section("Statuses") {
+                ForEach(diagnosticsVM.statuses) { status in
+                    HStack {
+                        Image(systemName: status.isHealthy ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(status.isHealthy ? .green : .orange)
+                        Text(status.name)
+                        Spacer()
+                    }
+                }
+            }
+            
+            Section("Modules") {
+                ForEach(diagnosticsVM.moduleHealth) { module in
+                    HStack {
+                        Image(systemName: module.enabled && module.permissionsOK ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(module.enabled && module.permissionsOK ? .green : .orange)
+                        Text(module.module)
+                        Spacer()
+                    }
+                }
+            }
+        }
+        .listStyle(.sidebar)
+        .navigationTitle("Diagnostics")
+    }
+}
+
+// MARK: - Preview
+
+#Preview {
+    CommandPaletteView()
+        .frame(width: 1000, height: 700)
 }

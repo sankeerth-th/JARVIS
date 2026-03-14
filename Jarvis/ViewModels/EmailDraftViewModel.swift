@@ -29,13 +29,13 @@ final class EmailDraftViewModel: ObservableObject {
 
     func captureActiveWindow() {
         runCapture {
-            try self.screenshotService.captureActiveWindow()
+            try await self.screenshotService.captureActiveWindow()
         }
     }
 
     func captureFullScreen() {
         runCapture {
-            try self.screenshotService.captureFullScreen()
+            try await self.screenshotService.captureFullScreen()
         }
     }
 
@@ -155,7 +155,7 @@ final class EmailDraftViewModel: ObservableObject {
         statusMessage = "Loaded context from Mail extension"
     }
 
-    private func runCapture(_ capture: @escaping () throws -> NSImage) {
+    private func runCapture(_ capture: @escaping () async throws -> NSImage) {
         Task {
             isCapturing = true
             defer { isCapturing = false }
@@ -165,7 +165,7 @@ final class EmailDraftViewModel: ObservableObject {
                     NSApp.hide(nil)
                     try await Task.sleep(nanoseconds: 350_000_000)
                 }
-                let image = try capture()
+                let image = try await capture()
                 let text = try ocrService.recognizeText(from: image)
                 if shouldTemporarilyHide {
                     NSApp.unhide(nil)
