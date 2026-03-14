@@ -1,36 +1,120 @@
-//
-//  JarvisIOSTests.swift
-//  JarvisIOSTests
-//
-//  Created by Sai Sankeerth Thallapally on 3/8/26.
-//
-
 import XCTest
 @testable import JarvisIOS
 
 final class JarvisIOSTests: XCTestCase {
+    @MainActor
+    func testRuntimeTransitionsFromColdToReady() async throws {
+        let engine = TestGGUFEngine()
+        let runtime = JarvisLocalModelRuntime(engine: engine)
+        let modelURL = try temporaryGGUFURL(named: "runtime-ready")
 
-    override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
+        runtime.setSelectedModel(
+            JarvisRuntimeModelSelection(displayName: "Test Model", path: modelURL.path)
+        )
+        XCTAssertEqual(runtime.state, .cold(modelName: "Test Model"))
+
+        try await runtime.prepareIfNeeded()
+        XCTAssertEqual(runtime.state, .ready(modelName: "Test Model"))
+        XCTAssertEqual(engine.loadCount, 1)
     }
 
-    override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
+    func testSettingsStoreRoundTripsMeaningfulPreferences() throws {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let store = JarvisAssistantSettingsStore(defaults: defaults)
+        let settings = JarvisAssistantSettings(
+            startupRoute: .assistant,
+            autoWarmOnLaunch: true,
+            performanceProfile: .quality,
+            contextWindow: .extended,
+            responseStyle: .detailed,
+            creativity: 0.9,
+            unloadModelOnBackground: true,
+            batterySaverMode: false,
+            autoScrollConversation: false,
+            showRuntimeDiagnostics: true,
+            hapticsEnabled: false
+        )
+
+        store.save(settings)
+        XCTAssertEqual(store.load(), settings)
     }
 
-    func testExample() throws {
-        // This is an example of a functional test case.
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
-        // Any test you write for XCTest can be annotated as throws and async.
-        // Mark your test throws to produce an unexpected failure when your test encounters an uncaught error.
-        // Mark your test async to allow awaiting for asynchronous code to complete. Check the results with assertions afterwards.
+    func testLaunchRouteParsesModelLibraryRoute() throws {
+        let route = try XCTUnwrap(JarvisLaunchRoute.parse(url: XCTUnwrap(URL(string: "jarvis://models?source=test"))))
+        XCTAssertEqual(route.action, .modelLibrary)
+        XCTAssertEqual(route.source, "test")
     }
 
-    func testPerformanceExample() throws {
-        // This is an example of a performance test case.
-        self.measure {
-            // Put the code you want to measure the time of here.
-        }
+    @MainActor
+    func testAskRouteWithoutModelShowsSetupInsteadOfDeadEnd() {
+        let appModel = makeAppModel()
+
+        appModel.apply(route: JarvisLaunchRoute(action: .ask, source: "test"))
+
+        XCTAssertTrue(appModel.showSetupFlow)
+        XCTAssertEqual(appModel.selectedTab, .home)
+        XCTAssertEqual(appModel.statusText, "Import a GGUF model to continue")
     }
 
+    @MainActor
+    func testModelLibraryRoutePresentsLibraryFromSettings() {
+        let appModel = makeAppModel()
+
+        appModel.apply(route: JarvisLaunchRoute(action: .modelLibrary, source: "test"))
+
+        XCTAssertEqual(appModel.selectedTab, .settings)
+        XCTAssertTrue(appModel.isModelLibraryPresented)
+    }
+
+    @MainActor
+    private func makeAppModel() -> JarvisPhoneAppModel {
+        let suffix = UUID().uuidString
+        let defaults = UserDefaults(suiteName: "JarvisIOSTests.\(suffix)")!
+        defaults.removePersistentDomain(forName: "JarvisIOSTests.\(suffix)")
+
+        return JarvisPhoneAppModel(
+            store: JarvisConversationStore(filename: "JarvisPhoneStore-\(suffix).json"),
+            modelLibrary: JarvisModelLibrary(payloadFilename: "JarvisModelLibrary-\(suffix).json"),
+            launchStore: JarvisLaunchRouteStore(defaults: defaults),
+            settingsStore: JarvisAssistantSettingsStore(defaults: defaults)
+        )
+    }
+
+    private func temporaryGGUFURL(named name: String) throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(name).gguf")
+        try Data("test".utf8).write(to: url, options: [.atomic])
+        return url
+    }
+}
+
+private final class TestGGUFEngine: JarvisGGUFEngine {
+    var name: String { "test-engine" }
+    var isInstalled: Bool { true }
+    var capability: JarvisGGUFEngineCapability { .fullInference }
+
+    private(set) var loadCount = 0
+    private(set) var loadedPath: String?
+    private var configuration = JarvisRuntimeConfiguration()
+
+    func updateConfiguration(_ configuration: JarvisRuntimeConfiguration) {
+        self.configuration = configuration
+    }
+
+    func loadModel(at path: String) async throws {
+        loadCount += 1
+        loadedPath = path
+    }
+
+    func unloadModel() async {
+        loadedPath = nil
+    }
+
+    func generate(prompt: String, history: [JarvisChatMessage], onToken: @escaping @Sendable (String) -> Void) async throws {
+        _ = prompt
+        _ = history
+        _ = configuration
+        onToken("ok")
+    }
+
+    func cancelGeneration() {}
 }

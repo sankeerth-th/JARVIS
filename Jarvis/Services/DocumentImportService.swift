@@ -110,31 +110,69 @@ final class DocumentImportService {
         guard let pdf = PDFDocument(url: url) else {
             throw NSError(domain: "Jarvis", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unable to load PDF"])
         }
+        
         var pageChunks: [String] = []
         var pageTexts: [String] = []
-        var confidenceValues: [Double] = []
+        var ocrConfidenceValues: [Double] = []
+        var pagesNeedingOCR: [(index: Int, page: PDFPage)] = []
+        
+        // First pass: extract embedded text from all pages
         for pageIndex in 0..<pdf.pageCount {
             guard let page = pdf.page(at: pageIndex) else { continue }
             let pageText = page.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if pageText.count >= 40 {
+            
+            // If page has substantial embedded text, use it directly
+            if pageText.count >= 100 {
                 pageChunks.append(pageText)
                 pageTexts.append(pageText)
-                continue
-            }
-            if let image = pageImage(page),
-               let ocr = try? ocrService.recognize(from: image, applyPreprocessing: true),
-               !ocr.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                let ocrText = ocr.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                pageChunks.append(ocrText)
-                pageTexts.append(ocrText)
-                confidenceValues.append(ocr.averageConfidence)
-            } else if !pageText.isEmpty {
+            } else if pageText.count >= 40 {
+                // Moderate text - include but also flag for potential OCR enhancement
                 pageChunks.append(pageText)
                 pageTexts.append(pageText)
+                pagesNeedingOCR.append((index: pageIndex, page: page))
+            } else {
+                // Very little or no text - likely a scanned/image page
+                pagesNeedingOCR.append((index: pageIndex, page: page))
             }
         }
+        
+        // Second pass: OCR only pages that need it
+        for (pageIndex, page) in pagesNeedingOCR {
+            guard let image = pageImage(page) else { continue }
+            
+            do {
+                let ocr = try ocrService.recognize(from: image, applyPreprocessing: true)
+                let ocrText = ocr.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                guard !ocrText.isEmpty else { continue }
+                
+                // If we already have some embedded text for this page, check if OCR adds value
+                if pageIndex < pageTexts.count {
+                    let existingText = pageTexts[pageIndex]
+                    // Use OCR if it found significantly more text
+                    if ocrText.count > existingText.count * 2 {
+                        pageTexts[pageIndex] = ocrText
+                        // Replace in chunks if present
+                        if let chunkIndex = pageChunks.firstIndex(where: { $0 == existingText }) {
+                            pageChunks[chunkIndex] = ocrText
+                        }
+                        ocrConfidenceValues.append(ocr.averageConfidence)
+                    }
+                } else {
+                    // No existing text, use OCR
+                    pageChunks.append(ocrText)
+                    pageTexts.append(ocrText)
+                    ocrConfidenceValues.append(ocr.averageConfidence)
+                }
+            } catch {
+                // OCR failed - keep any embedded text we have
+                continue
+            }
+        }
+        
         let merged = pageChunks.joined(separator: "\n")
-        let confidence = confidenceValues.isEmpty ? nil : confidenceValues.reduce(0, +) / Double(confidenceValues.count)
+        let confidence = ocrConfidenceValues.isEmpty ? nil : ocrConfidenceValues.reduce(0, +) / Double(ocrConfidenceValues.count)
+        
         return ExtractionResult(
             content: merged.trimmingCharacters(in: .whitespacesAndNewlines),
             pageTexts: pageTexts,

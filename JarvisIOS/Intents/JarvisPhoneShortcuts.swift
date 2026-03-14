@@ -3,11 +3,14 @@ import Foundation
 
 struct OpenJarvisIntent: AppIntent {
     static var title: LocalizedStringResource = "Open Jarvis"
-    static var description = IntentDescription("Open Jarvis Home immediately.")
+    static var description = IntentDescription("Open Jarvis using your configured startup destination.")
     static var openAppWhenRun: Bool = true
 
     func perform() async throws -> some IntentResult {
-        JarvisLaunchRouteStore.shared.save(JarvisLaunchRoute(action: .home, source: "intent.open"))
+        let startupRoute = JarvisAssistantSettingsStore().load().startupRoute
+        JarvisLaunchRouteStore.shared.save(
+            JarvisLaunchRoute(action: startupRoute.launchAction, source: "intent.open")
+        )
         return .result()
     }
 }
@@ -28,6 +31,28 @@ struct AskJarvisIntent: AppIntent {
         JarvisLaunchRouteStore.shared.save(
             JarvisLaunchRoute(action: .ask, payload: prompt.isEmpty ? nil : prompt, source: "intent.ask")
         )
+        return .result()
+    }
+}
+
+struct VoiceJarvisIntent: AppIntent {
+    static var title: LocalizedStringResource = "Voice Jarvis"
+    static var description = IntentDescription("Open Jarvis directly in listening mode.")
+    static var openAppWhenRun: Bool = true
+
+    func perform() async throws -> some IntentResult {
+        JarvisLaunchRouteStore.shared.save(JarvisLaunchRoute(action: .voice, source: "intent.voice"))
+        return .result()
+    }
+}
+
+struct VisualIntelligenceIntent: AppIntent {
+    static var title: LocalizedStringResource = "Visual Intelligence"
+    static var description = IntentDescription("Open Jarvis visual intelligence workspace.")
+    static var openAppWhenRun: Bool = true
+
+    func perform() async throws -> some IntentResult {
+        JarvisLaunchRouteStore.shared.save(JarvisLaunchRoute(action: .visualIntelligence, source: "intent.visual"))
         return .result()
     }
 }
@@ -110,6 +135,24 @@ struct JarvisPhoneShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Ask Jarvis",
             systemImageName: "sparkles"
+        )
+        AppShortcut(
+            intent: VoiceJarvisIntent(),
+            phrases: [
+                "Talk to \(.applicationName)",
+                "Voice mode in \(.applicationName)"
+            ],
+            shortTitle: "Voice Jarvis",
+            systemImageName: "waveform"
+        )
+        AppShortcut(
+            intent: VisualIntelligenceIntent(),
+            phrases: [
+                "Visual intelligence in \(.applicationName)",
+                "Open visual mode in \(.applicationName)"
+            ],
+            shortTitle: "Visual Mode",
+            systemImageName: "viewfinder"
         )
         AppShortcut(
             intent: QuickCaptureIntent(),

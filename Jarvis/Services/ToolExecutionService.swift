@@ -27,9 +27,10 @@ final class ToolExecutionService {
 
     func requiresConfirmation(for tool: ToolInvocation.ToolName) -> Bool {
         switch tool {
-        case .ocrCurrentWindow, .listNotifications, .searchLocalDocs:
+        case .ocrCurrentWindow, .listNotifications:
             return true
-        case .calculate, .summarize:
+        case .searchLocalDocs, .calculate, .summarize:
+            // Search no longer requires confirmation - it's a read-only operation
             return false
         }
     }
@@ -56,11 +57,16 @@ final class ToolExecutionService {
             return ToolResult(content: content, metadata: ["count": "\(notifications.count)"])
         case .searchLocalDocs:
             let query = invocation.arguments["query"] ?? ""
-            let topK = Int(invocation.arguments["topK"] ?? "3") ?? 3
-            let matches = try await localIndexService.search(query: query, limit: topK)
-            let content = matches.map { match in
-                "\(match.title)\nPath: \(match.path)"
-            }.joined(separator: "\n---\n")
+            let topK = Int(invocation.arguments["topK"] ?? "5") ?? 5
+            let matches = try await localIndexService.searchFiles(query: query, limit: topK, queryExpansionModel: nil, rootFolders: nil)
+            let content = matches.enumerated().map { index, match in
+                """
+                [Result \(index + 1)] \(match.document.title)
+                Path: \(match.document.path)
+                Relevance: \(String(format: "%.2f", match.score))
+                Excerpt: \(match.snippet)
+                """
+            }.joined(separator: "\n\n")
             return ToolResult(content: content, metadata: ["query": query, "count": "\(matches.count)"])
         case .summarize:
             let text = invocation.arguments["text"] ?? ""

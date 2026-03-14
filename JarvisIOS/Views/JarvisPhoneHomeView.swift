@@ -152,7 +152,12 @@ struct JarvisPhoneHomeView: View {
     @ViewBuilder
     private var runtimeDetail: some View {
         switch appModel.runtimeState {
-        case .unavailable(let reason):
+        case .noModel:
+            Text("Import a GGUF model to start.")
+                .font(.system(.footnote, design: .rounded, weight: .medium))
+                .foregroundStyle(.orange)
+                .transition(.opacity)
+        case .runtimeUnavailable(let reason):
             Text(reason)
                 .font(.system(.footnote, design: .rounded, weight: .medium))
                 .foregroundStyle(.orange)
@@ -161,7 +166,7 @@ struct JarvisPhoneHomeView: View {
             Text("\(modelName) is cold. First request will warm it.")
                 .font(.system(.footnote, design: .rounded, weight: .medium))
                 .foregroundStyle(.white.opacity(0.85))
-        case .loading(let progress, let detail):
+        case .warming(_, let progress, let detail):
             VStack(alignment: .leading, spacing: 8) {
                 ProgressView(value: progress)
                     .tint(Color(red: 0.14, green: 0.74, blue: 0.88))
@@ -174,20 +179,20 @@ struct JarvisPhoneHomeView: View {
             Text("Using local model: \(modelName)")
                 .font(.system(.footnote, design: .rounded, weight: .medium))
                 .foregroundStyle(.green.opacity(0.95))
-        case .generating(let modelName):
+        case .busy(let modelName, let detail):
             HStack(spacing: 8) {
                 ProgressView()
                     .controlSize(.small)
                     .tint(.white)
-                Text("Generating with \(modelName)")
+                Text("\(modelName): \(detail)")
                     .font(.system(.footnote, design: .rounded, weight: .medium))
                     .foregroundStyle(.white.opacity(0.9))
             }
-        case .paused(let modelName):
-            Text("\(modelName ?? "Runtime") paused in background or due to thermal pressure.")
+        case .paused(let modelName, let detail):
+            Text("\(modelName ?? "Runtime"): \(detail)")
                 .font(.system(.footnote, design: .rounded, weight: .medium))
                 .foregroundStyle(.yellow)
-        case .failed(let message):
+        case .failed(_, let message):
             Text(message)
                 .font(.system(.footnote, design: .rounded, weight: .medium))
                 .foregroundStyle(.red.opacity(0.9))
@@ -351,11 +356,12 @@ struct JarvisPhoneHomeView: View {
 
     private var runtimeIcon: String {
         switch appModel.runtimeState {
-        case .unavailable: return "exclamationmark.triangle"
+        case .noModel: return "exclamationmark.triangle"
+        case .runtimeUnavailable: return "exclamationmark.triangle"
         case .cold: return "snowflake"
-        case .loading: return "hourglass"
+        case .warming: return "hourglass"
         case .ready: return "checkmark.seal"
-        case .generating: return "waveform.path.ecg"
+        case .busy: return "waveform.path.ecg"
         case .paused: return "pause.circle"
         case .failed: return "xmark.octagon"
         }

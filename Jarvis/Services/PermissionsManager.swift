@@ -6,17 +6,20 @@ final class PermissionsManager {
     static let shared = PermissionsManager()
     static let screenCapturePermissionDidChangeNotification = Notification.Name("PermissionsManager.screenCapturePermissionDidChange")
 
-    private enum ScreenCaptureCacheKey {
-        static let granted = "permissions.screenCapture.granted"
-        static let checkedAt = "permissions.screenCapture.checkedAt"
+    private enum Keys {
+        static let screenCaptureGranted = "permissions.screenCapture.granted"
+        static let screenCaptureCheckedAt = "permissions.screenCapture.checkedAt"
+        static let screenCaptureUserGuided = "permissions.screenCapture.userGuided"
     }
 
     private let userDefaults: UserDefaults
-    private let screenCaptureCacheTTL: TimeInterval = 5 * 60
     private let notificationCenter: NotificationCenter
     private var workspaceObservers: [Any] = []
     private var permissionChangeObservers: [Any] = []
-    private(set) var hasPromptedForScreenRecordingThisSession = false
+    
+    // In-memory cache only - avoid disk staleness issues
+    private var lastPermissionCheck: (granted: Bool, timestamp: Date)?
+    private let permissionCheckTTL: TimeInterval = 30 // 30 seconds in-memory cache
 
     private init(
         userDefaults: UserDefaults = .standard,
@@ -30,6 +33,7 @@ final class PermissionsManager {
 
     func prepare() {
         _ = AXIsProcessTrusted()
+        // Pre-check permission without prompting
         _ = checkScreenCapturePermission(forceRefresh: true)
     }
 
@@ -38,19 +42,32 @@ final class PermissionsManager {
         AXIsProcessTrustedWithOptions(option)
     }
 
+    /// Request screen recording permission only if not already granted.
+    /// Uses CGPreflightScreenCaptureAccess to check first, avoiding unnecessary prompts.
     func requestScreenRecording() {
-        if checkScreenCapturePermission() {
-            hasPromptedForScreenRecordingThisSession = true
+        // First check if already granted - use system API directly
+        let isGranted = CGPreflightScreenCaptureAccess()
+        
+        if isGranted {
+            // Permission already granted - update cache and return
+            updatePermissionState(granted: true)
             return
         }
-
-        if hasPromptedForScreenRecordingThisSession {
+        
+        // Check if user was already guided to Settings
+        let wasGuided = userDefaults.bool(forKey: Keys.screenCaptureUserGuided)
+        
+        if wasGuided {
+            // User was already guided once - just open Settings, don't request again
             openScreenRecordingSettings()
             return
         }
-        hasPromptedForScreenRecordingThisSession = true
+        
+        // First time requesting - mark as guided and request access
+        userDefaults.set(true, forKey: Keys.screenCaptureUserGuided)
         let granted = CGRequestScreenCaptureAccess()
-        updateScreenCaptureCache(granted: granted, checkedAt: Date())
+        updatePermissionState(granted: granted)
+        
         if !granted {
             openScreenRecordingSettings()
         }
@@ -60,19 +77,25 @@ final class PermissionsManager {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
+    /// Check screen capture permission status.
+    /// Uses in-memory cache with short TTL to avoid repeated system calls.
     func checkScreenCapturePermission(forceRefresh: Bool = false) -> Bool {
-        if !forceRefresh, let cached = cachedScreenCapturePermission, !isScreenCaptureCacheStale {
-            return cached
+        if !forceRefresh, let cached = lastPermissionCheck {
+            let age = Date().timeIntervalSince(cached.timestamp)
+            if age < permissionCheckTTL {
+                return cached.granted
+            }
         }
 
         let granted = CGPreflightScreenCaptureAccess()
-        updateScreenCaptureCache(granted: granted, checkedAt: Date())
+        updatePermissionState(granted: granted)
         return granted
     }
 
     func invalidatePermissionCache() {
-        userDefaults.removeObject(forKey: ScreenCaptureCacheKey.granted)
-        userDefaults.removeObject(forKey: ScreenCaptureCacheKey.checkedAt)
+        lastPermissionCheck = nil
+        userDefaults.removeObject(forKey: Keys.screenCaptureGranted)
+        userDefaults.removeObject(forKey: Keys.screenCaptureCheckedAt)
         notificationCenter.post(name: Self.screenCapturePermissionDidChangeNotification, object: nil)
     }
 
@@ -94,24 +117,13 @@ final class PermissionsManager {
         NSWorkspace.shared.open(url)
     }
 
-    private var cachedScreenCapturePermission: Bool? {
-        guard userDefaults.object(forKey: ScreenCaptureCacheKey.granted) != nil else {
-            return nil
-        }
-        return userDefaults.bool(forKey: ScreenCaptureCacheKey.granted)
-    }
-
-    private var isScreenCaptureCacheStale: Bool {
-        guard let checkedAt = userDefaults.object(forKey: ScreenCaptureCacheKey.checkedAt) as? Date else {
-            return true
-        }
-        return Date().timeIntervalSince(checkedAt) > screenCaptureCacheTTL
-    }
-
-    private func updateScreenCaptureCache(granted: Bool, checkedAt: Date) {
-        let previous = cachedScreenCapturePermission
-        userDefaults.set(granted, forKey: ScreenCaptureCacheKey.granted)
-        userDefaults.set(checkedAt, forKey: ScreenCaptureCacheKey.checkedAt)
+    private func updatePermissionState(granted: Bool) {
+        let previous = lastPermissionCheck?.granted
+        lastPermissionCheck = (granted: granted, timestamp: Date())
+        
+        // Persist to UserDefaults for cross-session awareness
+        userDefaults.set(granted, forKey: Keys.screenCaptureGranted)
+        userDefaults.set(Date(), forKey: Keys.screenCaptureCheckedAt)
 
         if previous != granted {
             notificationCenter.post(name: Self.screenCapturePermissionDidChangeNotification, object: nil)
@@ -131,14 +143,21 @@ final class PermissionsManager {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                self?.refreshScreenCapturePermissionIfNeeded()
+                // Refresh permission in background without triggering UI
+                self?.refreshPermissionInBackground()
             }
             workspaceObservers.append(observer)
         }
     }
 
-    private func refreshScreenCapturePermissionIfNeeded() {
-        guard isScreenCaptureCacheStale else { return }
+    private func refreshPermissionInBackground() {
+        // Use longer TTL for background refreshes to avoid system call overhead
+        if let cached = lastPermissionCheck {
+            let age = Date().timeIntervalSince(cached.timestamp)
+            if age < 60 { // 1 minute for background
+                return
+            }
+        }
         _ = checkScreenCapturePermission(forceRefresh: true)
     }
 
@@ -147,8 +166,8 @@ final class PermissionsManager {
             forName: Self.screenCapturePermissionDidChangeNotification,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
-            self?.hasPromptedForScreenRecordingThisSession = self?.cachedScreenCapturePermission == true
+        ) { _ in
+            // Permission changed - no action needed, next check will pick it up
         }
         permissionChangeObservers.append(observer)
     }

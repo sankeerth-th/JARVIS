@@ -856,6 +856,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleURLTypes = "{\n    CFBundleTypeRole = Editor;\n    CFBundleURLName = \"com.offline.Jarvis.phone.url\";\n    CFBundleURLSchemes =     (\n        jarvis\n    );\n}";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Jarvis uses the microphone to capture voice prompts for local assistant input.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Jarvis uses speech recognition to transcribe voice prompts into chat input on your iPhone.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -917,6 +919,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleURLTypes = "{\n    CFBundleTypeRole = Editor;\n    CFBundleURLName = \"com.offline.Jarvis.phone.url\";\n    CFBundleURLSchemes =     (\n        jarvis\n    );\n}";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Jarvis uses the microphone to capture voice prompts for local assistant input.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Jarvis uses speech recognition to transcribe voice prompts into chat input on your iPhone.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

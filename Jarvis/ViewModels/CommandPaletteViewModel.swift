@@ -115,7 +115,7 @@ final class CommandPaletteViewModel: ObservableObject {
     private var hasReceivedStreamingToken = false
     private var streamOwnership = StreamOwnershipController()
     private var pendingToolRequestID: UUID?
-    private var knowledgeContextResults: [IndexedDocument] = []
+    private var knowledgeContextResults: [KnowledgeSearchResult] = []
 
     init(settingsStore: SettingsStore,
          conversationService: ConversationService,
@@ -444,20 +444,41 @@ final class CommandPaletteViewModel: ObservableObject {
             knowledgeContextResults = []
             return
         }
-        guard promptContainsAny(normalized, keywords: ["search", "find", "file", "pdf", "photo", "image", "document"]) else {
+        
+        // Broader auto-trigger: check if query likely refers to local knowledge
+        let shouldSearch = promptContainsAny(normalized, keywords: [
+            "search", "find", "file", "pdf", "photo", "image", "document",
+            "my resume", "my cv", "my notes", "what did i write", "where did i save",
+            "summarize my", "what's in my", "the report", "the invoice"
+        ]) || shouldAutoTriggerKnowledgeSearch(normalized)
+        
+        guard shouldSearch else {
             knowledgeContextResults = []
             return
         }
+        
         do {
             let roots = settingsStore.current.indexedFolders
             let results = try await localIndexService.searchFiles(
                 query: prompt,
-                limit: 6,
+                limit: 8,
                 queryExpansionModel: settingsStore.current.selectedModel,
                 rootFolders: roots.isEmpty ? nil : roots
             )
+            
+            // Map to enriched KnowledgeSearchResult with excerpts
+            let enrichedResults = results.map { result -> KnowledgeSearchResult in
+                KnowledgeSearchResult(
+                    title: result.document.title,
+                    path: result.document.path,
+                    excerpt: result.snippet,
+                    score: result.score,
+                    sourceType: inferSourceType(from: result.document.path)
+                )
+            }
+            
             await MainActor.run {
-                self.knowledgeContextResults = results.map { $0.document }
+                self.knowledgeContextResults = enrichedResults
             }
         } catch {
             await MainActor.run {
@@ -466,9 +487,31 @@ final class CommandPaletteViewModel: ObservableObject {
             // Keep chat responsive even if semantic preload fails.
         }
     }
+    
+    private func shouldAutoTriggerKnowledgeSearch(_ normalized: String) -> Bool {
+        // Detect likely knowledge-seeking questions
+        let patterns = [
+            "what does my", "where is my", "content of my", "text from my",
+            "explain the", "summarize the", "what's in the", "information about the"
+        ]
+        return patterns.contains { normalized.contains($0) }
+    }
+    
+    private func inferSourceType(from path: String) -> String? {
+        let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
+        switch ext {
+        case "pdf": return "PDF"
+        case "txt", "md", "markdown", "text", "rtf": return "Text"
+        case "docx": return "Word"
+        case "png", "jpg", "jpeg", "heic", "tif", "tiff": return "Image"
+        default: return nil
+        }
+    }
 
     private func buildContext(routePlan: RoutePlan, requestedAction: QuickAction?) -> ConversationContext {
-        let knowledgeSnippets: [String] = routePlan.contextPolicy.includeKnowledgeContext
+        // Use enriched knowledge results if available, fallback to legacy snippets
+        let hasEnrichedResults = !knowledgeContextResults.isEmpty
+        let knowledgeSnippets: [String] = routePlan.contextPolicy.includeKnowledgeContext && !hasEnrichedResults
             ? knowledgeContextResults.map { "\($0.title): \($0.path)" }
             : []
         let digest = routePlan.contextPolicy.includeNotificationContext ? notificationViewModel.summary(limit: 5) : nil
@@ -478,6 +521,7 @@ final class CommandPaletteViewModel: ObservableObject {
             notificationDigest: digest,
             clipboardPreview: routePlan.contextPolicy.includeClipboardContext ? clipboardBanner : nil,
             knowledgeBaseSnippets: knowledgeSnippets,
+            knowledgeSearchResults: routePlan.contextPolicy.includeKnowledgeContext ? knowledgeContextResults : [],
             macroSummary: routePlan.contextPolicy.includeMacroContext ? macroLogs.map { $0.message }.joined(separator: "\n") : nil,
             requestedAction: requestedAction
         )

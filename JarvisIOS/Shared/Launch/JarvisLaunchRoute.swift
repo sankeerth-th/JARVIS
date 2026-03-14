@@ -3,10 +3,14 @@ import Foundation
 public enum JarvisLaunchAction: String, Codable, CaseIterable {
     case home
     case ask
+    case voice
+    case visualIntelligence
     case quickCapture
     case summarize
     case search
     case continueConversation
+    case settings
+    case modelLibrary = "models"
 }
 
 public struct JarvisLaunchRoute: Codable, Equatable {

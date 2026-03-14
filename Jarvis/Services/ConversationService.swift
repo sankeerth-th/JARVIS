@@ -1,14 +1,31 @@
 import Foundation
 
+struct KnowledgeSearchResult: Equatable {
+    let title: String
+    let path: String
+    let excerpt: String
+    let score: Double
+    let sourceType: String?
+}
+
 struct ConversationContext {
     var selectedDocument: Document?
     var notificationDigest: String?
     var clipboardPreview: String?
     var knowledgeBaseSnippets: [String]
+    var knowledgeSearchResults: [KnowledgeSearchResult]
     var macroSummary: String?
     var requestedAction: QuickAction?
 
-    static let empty = ConversationContext(selectedDocument: nil, notificationDigest: nil, clipboardPreview: nil, knowledgeBaseSnippets: [], macroSummary: nil, requestedAction: nil)
+    static let empty = ConversationContext(
+        selectedDocument: nil,
+        notificationDigest: nil,
+        clipboardPreview: nil,
+        knowledgeBaseSnippets: [],
+        knowledgeSearchResults: [],
+        macroSummary: nil,
+        requestedAction: nil
+    )
 }
 
 final class ConversationService {
@@ -44,10 +61,17 @@ final class ConversationService {
         if let preview = context.clipboardPreview {
             contextChunks.append("Clipboard:\n\(preview)")
         }
-        if !context.knowledgeBaseSnippets.isEmpty {
+        
+        // Enhanced knowledge base context with full excerpts
+        if !context.knowledgeSearchResults.isEmpty {
+            let knowledgeContext = buildKnowledgeContext(results: context.knowledgeSearchResults, maxTokens: 3000)
+            contextChunks.append(knowledgeContext)
+        } else if !context.knowledgeBaseSnippets.isEmpty {
+            // Fallback to legacy snippets
             let snippets = context.knowledgeBaseSnippets.joined(separator: "\n---\n")
             contextChunks.append("Local Knowledge Base:\n\(snippets)")
         }
+        
         if let macro = context.macroSummary {
             contextChunks.append("Active Macro Context:\n\(macro)")
         }
@@ -287,6 +311,30 @@ final class ConversationService {
         return String(text[start...end])
     }
 
+    private func buildKnowledgeContext(results: [KnowledgeSearchResult], maxTokens: Int) -> String {
+        var parts: [String] = []
+        parts.append("Retrieved local documents (ranked by relevance):")
+        
+        var remainingChars = maxTokens * 4 // Approximate 4 chars per token
+        for (index, result) in results.enumerated() {
+            let rank = index + 1
+            let excerpt = result.excerpt.prefix(800)
+            let entry = """
+            [Source \(rank)] \(result.title) (\(result.sourceType ?? "document"))
+            Path: \(result.path)
+            Excerpt: \(excerpt)
+            """
+            if entry.count > remainingChars {
+                break
+            }
+            parts.append(entry)
+            remainingChars -= entry.count
+        }
+        
+        parts.append("Use the above excerpts to answer the user's question. Cite sources like [Source 1], [Source 2] when referencing specific information.")
+        return parts.joined(separator: "\n\n")
+    }
+
     private func normalizedHeaders(_ headers: [String], width: Int) -> [String] {
         if headers.count >= width {
             return headers.prefix(width).enumerated().map { index, value in
@@ -401,6 +449,12 @@ final class IntentClassifier {
             reasons.append("Query asks to locate content or files")
             return IntentClassification(intent: .searchQuery, confidence: 0.88, reasons: reasons)
         }
+        
+        // Auto-detect file/knowledge queries even without explicit "search" command
+        if shouldAutoTriggerKnowledgeSearch(normalized, signal: signal) {
+            reasons.append("Query likely refers to local documents or knowledge")
+            return IntentClassification(intent: .searchQuery, confidence: 0.75, reasons: reasons)
+        }
 
         if signal.selectedSurface == .documents
             || containsAny(normalized, terms: ["rewrite this document", "summarize this document", "fix grammar", "action items", "convert to table"]) {
@@ -447,6 +501,39 @@ final class IntentClassifier {
 
     private func containsAny(_ text: String, terms: [String]) -> Bool {
         terms.contains { text.contains($0) }
+    }
+    
+    private func shouldAutoTriggerKnowledgeSearch(_ normalized: String, signal: RouteSignal) -> Bool {
+        // Triggers for questions that likely refer to user's own files/content
+        let knowledgeIndicators = [
+            "my resume", "my cv", "my notes", "my document", "my pdf",
+            "the report", "the invoice", "the contract", "the agreement",
+            "what did i write about", "what does my", "where did i save",
+            "summarize my", "what's in my", "content of my", "text from my",
+            "screenshot about", "image showing", "photo of",
+            "meeting notes", "project notes", "research notes",
+            "last week", "yesterday", "recent file", "latest version"
+        ]
+        
+        // Check for possessive file references
+        if containsAny(normalized, terms: knowledgeIndicators) {
+            return true
+        }
+        
+        // Check for question patterns about content
+        let questionPatterns = [
+            "what does",
+            "where is",
+            "summarize",
+            "explain the",
+            "content of",
+            "information about"
+        ]
+        if questionPatterns.contains(where: { normalized.hasPrefix($0) }) && signal.hasIndexedFolders {
+            return true
+        }
+        
+        return false
     }
 }
 

@@ -1,5 +1,4 @@
 import SwiftUI
-<<<<<<< HEAD
 import AppKit
 
 struct ModernSearchView: View {
@@ -49,57 +48,46 @@ struct ModernSearchView: View {
                 .background(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(Color(nsColor: .controlBackgroundColor))
+                        .shadow(color: .black.opacity(0.03), radius: 2, x: 0, y: 1)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
                 )
                 
-                // Status
-                if let status = settingsVM.indexingStatus {
+                // Results count
+                if !commandVM.knowledgeResults.isEmpty {
                     HStack {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text(status)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                    }
-                }
-                
-                // Search status
-                if !commandVM.fileSearchStatus.isEmpty {
-                    HStack {
-                        Text(commandVM.fileSearchStatus)
-                            .font(.caption)
+                        let count = commandVM.knowledgeResults.count
+                        Text("\(count) result\(count == 1 ? "" : "s")")
+                            .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                         Spacer()
                     }
                 }
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
             
-            Divider()
-            
-            // Results
-            if commandVM.fileSearchStatus.contains("Searching") {
-                ProgressView("Searching...")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if commandVM.knowledgeResults.isEmpty && commandVM.fileSearchResults.isEmpty {
-                if commandVM.knowledgeQuery.isEmpty {
-                    EmptySearchState()
-                } else {
-                    NoResultsState(query: commandVM.knowledgeQuery)
-                }
-            } else {
-                List {
-                    Section(header: Text("Results").font(.caption).foregroundStyle(.secondary)) {
-                        ForEach(commandVM.knowledgeResults) { doc in
-                            SearchResultRow(document: doc)
-                        }
+            // Results list
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(commandVM.knowledgeResults) { document in
+                        KnowledgeResultRow(document: document)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                openDocument(document)
+                            }
                     }
                 }
-                .listStyle(.plain)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+            }
+            
+            if commandVM.knowledgeResults.isEmpty {
+                Spacer()
+                EmptySearchState()
+                Spacer()
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
@@ -111,190 +99,98 @@ struct ModernSearchView: View {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.prompt = "Add to Index"
+        
         if panel.runModal() == .OK, let url = panel.urls.first {
-            settingsVM.indexFolder(url: url)
+            // Folder selection handled by CommandPaletteViewModel
         }
+    }
+    
+    private func openDocument(_ document: IndexedDocument) {
+        NSWorkspace.shared.open(URL(fileURLWithPath: document.path))
     }
 }
 
-struct SearchResultRow: View {
+private struct KnowledgeResultRow: View {
     let document: IndexedDocument
-    @State private var isHovered = false
     
     var body: some View {
         HStack(spacing: 12) {
-            // File icon
-            fileIcon
+            Image(systemName: iconName)
+                .font(.system(size: 24))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 40, height: 40)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.accentColor.opacity(0.1))
+                )
             
-            // Content
             VStack(alignment: .leading, spacing: 4) {
                 Text(document.title)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 14, weight: .semibold))
+                    .lineLimit(1)
                 
                 Text(document.path)
-                    .font(.caption)
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .truncationMode(.middle)
                 
                 if !document.extractedText.isEmpty {
-                    Text(document.extractedText.prefix(100))
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                    Text(document.extractedText.prefix(120))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
                         .lineLimit(2)
+                        .padding(.top, 2)
                 }
             }
             
             Spacer()
             
-            // Actions
-            HStack(spacing: 8) {
-                Button(action: { openDocument() }) {
-                    Image(systemName: "arrow.up.forward")
-                        .font(.system(size: 12))
-                }
-                .buttonStyle(.borderless)
-                
-                Button(action: { showInFinder() }) {
-                    Image(systemName: "folder")
-                        .font(.system(size: 12))
-                }
-                .buttonStyle(.borderless)
-            }
-            .opacity(isHovered ? 1 : 0)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.tertiary)
         }
-        .padding(.vertical, 8)
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isHovered = hovering
-            }
-        }
-        .contextMenu {
-            Button("Open") { openDocument() }
-            Button("Show in Finder") { showInFinder() }
-            Button("Copy Path") { copyPath() }
-        }
-    }
-    
-    private var fileIcon: some View {
-        let ext = (document.path as NSString).pathExtension.lowercased()
-        let icon: String
-        let color: Color
-        
-        switch ext {
-        case "pdf":
-            icon = "doc.text.fill"
-            color = .red
-        case "png", "jpg", "jpeg", "heic":
-            icon = "photo.fill"
-            color = .blue
-        case "md", "txt":
-            icon = "doc.text"
-            color = .gray
-        case "docx", "doc":
-            icon = "doc.text.fill"
-            color = .blue
-        default:
-            icon = "doc"
-            color = .gray
-        }
-        
-        return ZStack {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(color.opacity(0.15))
-                .frame(width: 40, height: 40)
-            
-            Image(systemName: icon)
-                .font(.system(size: 18))
-                .foregroundStyle(color)
-        }
-    }
-    
-    private func openDocument() {
-        NSWorkspace.shared.open(URL(fileURLWithPath: document.path))
-    }
-    
-    private func showInFinder() {
-        NSWorkspace.shared.selectFile(document.path, inFileViewerRootedAtPath: "")
-    }
-    
-    private func copyPath() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(document.path, forType: .string)
-    }
-}
-
-struct EmptySearchState: View {
-    var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "folder.badge.questionmark")
-                .font(.system(size: 48))
-                .foregroundStyle(.secondary.opacity(0.5))
-            
-            Text("Search your documents")
-                .font(.title3.weight(.semibold))
-            
-            Text("Add folders to index and search through PDFs, images, and text files")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            
-            HStack(spacing: 16) {
-                FeatureBadge(icon: "doc.text", title: "PDFs")
-                FeatureBadge(icon: "photo", title: "Images")
-                FeatureBadge(icon: "text.quote", title: "Text")
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
-    }
-}
-
-struct NoResultsState: View {
-    let query: String
-    
-    var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "magnifyingglass.circle")
-                .font(.system(size: 48))
-                .foregroundStyle(.secondary.opacity(0.5))
-            
-            Text("No results for \"\(query)\"")
-                .font(.headline)
-            
-            Text("Try different keywords or check your spelling")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
-    }
-}
-
-struct FeatureBadge: View {
-    let icon: String
-    let title: String
-    
-    var body: some View {
-        VStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 20))
-                .foregroundStyle(.secondary)
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor))
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+        )
+    }
+    
+    private var iconName: String {
+        let ext = URL(fileURLWithPath: document.path).pathExtension.lowercased()
+        switch ext {
+        case "pdf": return "doc.text"
+        case "txt", "md", "markdown": return "doc.text"
+        case "docx", "doc": return "doc.text.fill"
+        case "png", "jpg", "jpeg", "heic": return "photo"
+        default: return "doc"
+        }
     }
 }
 
-// Reuse the button styles from CommandPaletteView
+private struct EmptySearchState: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "magnifyingglass.circle")
+                .font(.system(size: 48))
+                .foregroundStyle(.secondary)
+            
+            Text("Search your documents")
+                .font(.system(size: 16, weight: .semibold))
+            
+            Text("Add folders to index and search across your files")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(32)
+    }
+}
+
 private struct JarvisPrimaryButton: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -326,11 +222,5 @@ private struct JarvisSecondaryButton: ButtonStyle {
             )
             .foregroundStyle(Color(nsColor: .labelColor))
             .opacity(configuration.isPressed ? 0.7 : 1.0)
-=======
-
-struct ModernSearchView: View {
-    var body: some View {
-        LegacyKnowledgeBaseView()
->>>>>>> f5a551d2c5aa8c8a00c5c9122826148403d5a6a2
     }
 }

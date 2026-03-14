@@ -22,23 +22,33 @@ public struct JarvisRuntimeModelSelection: Equatable {
 }
 
 public enum JarvisModelRuntimeState: Equatable {
-    case unavailable(reason: String)
+    case noModel
+    case runtimeUnavailable(reason: String)
     case cold(modelName: String)
-    case loading(progress: Double, detail: String)
+    case warming(modelName: String, progress: Double, detail: String)
     case ready(modelName: String)
-    case generating(modelName: String)
-    case paused(modelName: String?)
-    case failed(message: String)
+    case busy(modelName: String, detail: String)
+    case paused(modelName: String?, detail: String)
+    case failed(modelName: String?, message: String)
 
     public var title: String {
         switch self {
-        case .unavailable: return "Model Unavailable"
-        case .cold: return "Model Cold"
-        case .loading: return "Loading Model"
-        case .ready: return "Ready"
-        case .generating: return "Generating"
-        case .paused: return "Paused"
-        case .failed: return "Model Error"
+        case .noModel:
+            return "No Model"
+        case .runtimeUnavailable:
+            return "Runtime Unavailable"
+        case .cold:
+            return "Model Cold"
+        case .warming:
+            return "Warming Model"
+        case .ready:
+            return "Ready"
+        case .busy:
+            return "Busy"
+        case .paused:
+            return "Paused"
+        case .failed:
+            return "Model Error"
         }
     }
 }
@@ -50,9 +60,12 @@ public enum JarvisModelError: LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .unavailable(let reason): return reason
-        case .cancelled: return "Generation was cancelled"
-        case .runtimeFailure(let message): return message
+        case .unavailable(let reason):
+            return reason
+        case .cancelled:
+            return "Generation was cancelled"
+        case .runtimeFailure(let message):
+            return message
         }
     }
 }
@@ -62,31 +75,55 @@ public protocol JarvisGGUFEngine {
     var isInstalled: Bool { get }
     var capability: JarvisGGUFEngineCapability { get }
 
+    func updateConfiguration(_ configuration: JarvisRuntimeConfiguration)
     func loadModel(at path: String) async throws
     func unloadModel() async
-    func generate(prompt: String, history: [JarvisChatMessage], onToken: @escaping @Sendable (String) -> Void) async throws
+    func generate(
+        prompt: String,
+        history: [JarvisChatMessage],
+        onToken: @escaping @Sendable (String) -> Void
+    ) async throws
     func cancelGeneration()
 }
 
 public final class StubGGUFEngine: JarvisGGUFEngine {
     public init() {}
 
-    public var name: String { "stub" }
+    public var name: String { "Stub GGUF Engine" }
     public var isInstalled: Bool { true }
     public var capability: JarvisGGUFEngineCapability { .placeholder }
 
+    public func updateConfiguration(_ configuration: JarvisRuntimeConfiguration) {
+        _ = configuration
+    }
+
     public func loadModel(at path: String) async throws {
-        _ = path
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw JarvisModelError.unavailable("Model file not found at: \(path)")
+        }
         try await Task.sleep(nanoseconds: 120_000_000)
     }
 
     public func unloadModel() async {}
 
-    public func generate(prompt: String, history: [JarvisChatMessage], onToken: @escaping @Sendable (String) -> Void) async throws {
+    public func generate(
+        prompt: String,
+        history: [JarvisChatMessage],
+        onToken: @escaping @Sendable (String) -> Void
+    ) async throws {
         _ = prompt
         _ = history
         _ = onToken
-        throw JarvisModelError.runtimeFailure("This build has model import and lifecycle, but no real GGUF inference engine wired yet.")
+
+        #if targetEnvironment(simulator)
+        throw JarvisModelError.runtimeFailure(
+            "GGUF inference is not available in the iOS Simulator. Test on a physical device."
+        )
+        #else
+        throw JarvisModelError.runtimeFailure(
+            "This build does not include a working GGUF inference engine. Ensure LocalLLMClient is linked."
+        )
+        #endif
     }
 
     public func cancelGeneration() {}
@@ -95,12 +132,14 @@ public final class StubGGUFEngine: JarvisGGUFEngine {
 #if canImport(LocalLLMClientLlama)
 @available(iOS 17.0, *)
 public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
-    private static let systemInstruction = "You are Jarvis, a concise and practical on-device iPhone assistant. Keep answers direct and useful."
+    private static let baseSystemInstruction =
+        "You are Jarvis, a concise and practical on-device iPhone assistant. Keep answers direct and useful."
 
     private let lock = NSLock()
     private var session: LLMSession?
     private var loadedModelPath: String?
     private var cancelRequested = false
+    private var configuration = JarvisRuntimeConfiguration()
 
     public init() {}
 
@@ -108,17 +147,31 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
     public var isInstalled: Bool { true }
     public var capability: JarvisGGUFEngineCapability { .fullInference }
 
+    public func updateConfiguration(_ configuration: JarvisRuntimeConfiguration) {
+        withLock {
+            self.configuration = configuration
+        }
+    }
+
     public func loadModel(at path: String) async throws {
         guard FileManager.default.fileExists(atPath: path) else {
-            throw JarvisModelError.unavailable("Selected model file could not be found.")
+            throw JarvisModelError.unavailable("Selected model file could not be found at path: \(path)")
         }
 
         let pathExtension = URL(fileURLWithPath: path).pathExtension.lowercased()
         guard pathExtension == "gguf" else {
-            throw JarvisModelError.runtimeFailure("Unsupported model format. Jarvis iPhone currently supports GGUF only.")
+            throw JarvisModelError.runtimeFailure("Unsupported model format '.\(pathExtension)'. Jarvis iPhone supports GGUF only.")
         }
 
-        if let existingPath = withLock({ loadedModelPath }), existingPath == path, withLock({ session }) != nil {
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
+        guard fileSize > 0 else {
+            throw JarvisModelError.unavailable("Model file appears to be empty (0 bytes).")
+        }
+
+        let currentPath = withLock { loadedModelPath }
+        let currentSession = withLock { session }
+        if currentPath == path, currentSession != nil {
+            print("[JarvisRuntime] Model already loaded at path: \(path)")
             return
         }
 
@@ -126,27 +179,26 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
             cancelRequested = false
         }
 
-        let fileURL = URL(fileURLWithPath: path)
-        let parameters = LlamaClient.Parameter(
-            context: 2048,
-            numberOfThreads: max(1, ProcessInfo.processInfo.activeProcessorCount - 1),
-            batch: 256,
-            temperature: 0.7,
-            topK: 40,
-            topP: 0.9,
-            penaltyLastN: 64,
-            penaltyRepeat: 1.1
-        )
+        let config = withLock { configuration }
+        let parameters = deviceAwareParameters(using: config)
+        print("[JarvisRuntime] Loading model with context=\(parameters.context), threads=\(parameters.numberOfThreads ?? 0)")
 
+        let fileURL = URL(fileURLWithPath: path)
         let model = LLMSession.LocalModel.llama(url: fileURL, parameter: parameters)
         let newSession = LLMSession(model: model)
-        try await newSession.prewarm()
+
+        do {
+            try await newSession.prewarm()
+        } catch {
+            throw JarvisModelError.runtimeFailure("Failed to prewarm model: \(error.localizedDescription)")
+        }
 
         withLock {
-            self.session = newSession
-            self.loadedModelPath = path
-            self.cancelRequested = false
+            session = newSession
+            loadedModelPath = path
+            cancelRequested = false
         }
+        print("[JarvisRuntime] Model loaded successfully: \(path)")
     }
 
     public func unloadModel() async {
@@ -157,16 +209,21 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         }
     }
 
-    public func generate(prompt: String, history: [JarvisChatMessage], onToken: @escaping @Sendable (String) -> Void) async throws {
+    public func generate(
+        prompt: String,
+        history: [JarvisChatMessage],
+        onToken: @escaping @Sendable (String) -> Void
+    ) async throws {
         guard let session = withLock({ session }) else {
-            throw JarvisModelError.unavailable("Model is not loaded yet.")
+            throw JarvisModelError.unavailable("Model is not loaded. Warm the active model and try again.")
         }
 
         withLock {
             cancelRequested = false
         }
 
-        session.messages = mappedMessages(from: history)
+        let config = withLock { configuration }
+        session.messages = mappedMessages(from: history, configuration: config)
 
         do {
             let stream = session.streamResponse(to: prompt)
@@ -186,7 +243,14 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         } catch let modelError as JarvisModelError {
             throw modelError
         } catch {
-            throw JarvisModelError.runtimeFailure(error.localizedDescription)
+            let errorMessage = error.localizedDescription.lowercased()
+            if errorMessage.contains("memory") || errorMessage.contains("allocation") {
+                throw JarvisModelError.runtimeFailure("Out of memory while generating. Try a smaller GGUF model.")
+            }
+            if errorMessage.contains("context") {
+                throw JarvisModelError.runtimeFailure("Context length exceeded. Reduce conversation length or use a smaller context preset.")
+            }
+            throw JarvisModelError.runtimeFailure("Generation failed: \(error.localizedDescription)")
         }
     }
 
@@ -196,8 +260,63 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         }
     }
 
-    private func mappedMessages(from history: [JarvisChatMessage]) -> [LLMInput.Message] {
-        var messages: [LLMInput.Message] = [.system(Self.systemInstruction)]
+    private func deviceAwareParameters(using configuration: JarvisRuntimeConfiguration) -> LlamaClient.Parameter {
+        let processorCount = ProcessInfo.processInfo.activeProcessorCount
+        let physicalMemoryMB = Double(ProcessInfo.processInfo.physicalMemory) / 1_000_000
+
+        let autoContext: Int
+        if physicalMemoryMB >= 8000 {
+            autoContext = 4096
+        } else if physicalMemoryMB >= 6000 {
+            autoContext = 2048
+        } else {
+            autoContext = 1024
+        }
+
+        var contextSize = configuration.contextWindow.explicitContextSize ?? autoContext
+        if configuration.batterySaverMode {
+            contextSize = min(contextSize, 1024)
+        }
+
+        let threadCount: Int
+        switch configuration.performanceProfile {
+        case .efficient:
+            threadCount = max(1, processorCount / 2)
+        case .balanced:
+            threadCount = max(1, processorCount - 1)
+        case .quality:
+            threadCount = max(2, processorCount - 1)
+        }
+
+        let batchSize: Int
+        switch configuration.performanceProfile {
+        case .efficient:
+            batchSize = min(128, contextSize / 8)
+        case .balanced:
+            batchSize = min(256, contextSize / 4)
+        case .quality:
+            batchSize = min(384, contextSize / 3)
+        }
+
+        return LlamaClient.Parameter(
+            context: contextSize,
+            numberOfThreads: threadCount,
+            batch: max(64, batchSize),
+            temperature: Float(configuration.temperature),
+            topK: configuration.responseStyle == .detailed ? 50 : 40,
+            topP: configuration.responseStyle == .detailed ? 0.94 : 0.9,
+            penaltyLastN: 64,
+            penaltyRepeat: 1.1
+        )
+    }
+
+    private func mappedMessages(
+        from history: [JarvisChatMessage],
+        configuration: JarvisRuntimeConfiguration
+    ) -> [LLMInput.Message] {
+        var messages: [LLMInput.Message] = [
+            .system("\(Self.baseSystemInstruction) \(configuration.responseStyle.systemInstructionSuffix)")
+        ]
 
         for item in history {
             let text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -226,41 +345,64 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
 
 enum JarvisGGUFEngineFactory {
     static func makeDefault() -> JarvisGGUFEngine {
-<<<<<<< HEAD
-        #if canImport(LocalLLMClientCore) && canImport(LocalLLMClientLlama)
+        #if targetEnvironment(simulator)
+        print("[JarvisRuntime] Simulator detected - GGUF requires Metal/ANE which is not available in Simulator")
+        print("[JarvisRuntime] Use a physical device to test actual model inference")
+        return StubGGUFEngine()
+        #else
+        #if canImport(LocalLLMClientLlama)
         if #available(iOS 17.0, *) {
-            print("[JarvisRuntime] Using LocalLLMClient GGUF engine")
+            print("[JarvisRuntime] Using LocalLLMClient GGUF engine (device)")
             return JarvisLocalLLMClientEngine()
         } else {
-            print("[JarvisRuntime] iOS 17+ required, falling back to stub")
+            print("[JarvisRuntime] iOS 17+ required on device, falling back to stub")
         }
         #else
         print("[JarvisRuntime] LocalLLMClient not available, falling back to stub")
-=======
-        #if canImport(LocalLLMClientLlama)
-        if #available(iOS 17.0, *) {
-            print("[JarvisRuntime] Using LocalLLMClient GGUF engine")
-            return JarvisLocalLLMClientEngine()
-        }
->>>>>>> f5a551d2c5aa8c8a00c5c9122826148403d5a6a2
+        #endif
         #endif
         print("[JarvisRuntime] Falling back to StubGGUFEngine")
         return StubGGUFEngine()
+    }
+
+    static func availabilityDiagnostics() -> String {
+        var reasons: [String] = []
+
+        #if targetEnvironment(simulator)
+        reasons.append("Running in iOS Simulator - Metal/ANE not available")
+        reasons.append("GGUF models require a physical iOS device")
+        #endif
+
+        if #unavailable(iOS 17.0) {
+            reasons.append("iOS 17.0+ required for LocalLLMClient")
+        }
+
+        #if !canImport(LocalLLMClientLlama)
+        reasons.append("LocalLLMClient package not linked")
+        #endif
+
+        return reasons.isEmpty ? "Engine should be available on device" : reasons.joined(separator: "; ")
     }
 }
 
 @MainActor
 public final class JarvisLocalModelRuntime: ObservableObject {
-    @Published public private(set) var state: JarvisModelRuntimeState = .unavailable(reason: "Import a GGUF model to start using Jarvis.")
+    @Published public private(set) var state: JarvisModelRuntimeState = .noModel
 
     private let engine: JarvisGGUFEngine
+    private var configuration: JarvisRuntimeConfiguration
     private var selectedModel: JarvisRuntimeModelSelection?
     private var activeGenerationTask: Task<Void, Never>?
     private var didLoadModel = false
     private var loadedModelPath: String?
 
-    public init(engine: JarvisGGUFEngine? = nil) {
+    public init(
+        engine: JarvisGGUFEngine? = nil,
+        configuration: JarvisRuntimeConfiguration = JarvisRuntimeConfiguration()
+    ) {
         self.engine = engine ?? JarvisGGUFEngineFactory.makeDefault()
+        self.configuration = configuration
+        self.engine.updateConfiguration(configuration)
     }
 
     public var engineName: String { engine.name }
@@ -279,9 +421,31 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         return ""
     }
 
+    public func updateConfiguration(_ configuration: JarvisRuntimeConfiguration) {
+        guard self.configuration != configuration else { return }
+        self.configuration = configuration
+        engine.updateConfiguration(configuration)
+
+        guard let model = selectedModel else {
+            state = .noModel
+            return
+        }
+
+        if didLoadModel {
+            resetLoadedModelState()
+            unloadEngine()
+        }
+
+        guard isInferenceAvailable else {
+            state = .runtimeUnavailable(reason: inferenceUnavailableReason)
+            return
+        }
+
+        state = .cold(modelName: model.displayName)
+    }
+
     public func setSelectedModel(_ model: JarvisRuntimeModelSelection?) {
         let previousPath = selectedModel?.path
-        let previouslyLoadedPath = loadedModelPath
         activeGenerationTask?.cancel()
         selectedModel = model
         print("[JarvisRuntime] setSelectedModel previous=\(previousPath ?? "nil") next=\(model?.path ?? "nil")")
@@ -289,69 +453,55 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         guard let model else {
             resetLoadedModelState()
             unloadEngine()
-            state = .unavailable(reason: "Import a GGUF model to start using Jarvis.")
+            state = .noModel
             return
         }
 
         guard FileManager.default.fileExists(atPath: model.path) else {
             resetLoadedModelState()
             unloadEngine()
-            state = .unavailable(reason: "Selected model file is missing. Re-import \(model.displayName).")
+            state = .failed(modelName: model.displayName, message: "Selected model file is missing. Re-import \(model.displayName).")
             return
         }
 
-        if let previouslyLoadedPath, previouslyLoadedPath != model.path {
+        if let loadedModelPath, loadedModelPath != model.path {
             resetLoadedModelState()
             unloadEngine()
         }
 
         guard isInferenceAvailable else {
-            state = .failed(message: inferenceUnavailableReason)
+            state = .runtimeUnavailable(reason: inferenceUnavailableReason)
             return
         }
 
-        if didLoadModel, loadedModelPath == model.path {
-            state = .ready(modelName: model.displayName)
-            return
-        }
-
-        state = .cold(modelName: model.displayName)
+        state = idleState(for: model)
     }
 
     public func prepareIfNeeded() async throws {
         guard let model = selectedModel else {
-            state = .unavailable(reason: "Import and select a GGUF model first.")
+            state = .noModel
             throw JarvisModelError.unavailable("No active model selected. Import a GGUF model from Files.")
         }
 
         guard FileManager.default.fileExists(atPath: model.path) else {
-            state = .unavailable(reason: "Selected model file is missing. Re-import \(model.displayName).")
+            state = .failed(modelName: model.displayName, message: "Selected model file is missing. Re-import \(model.displayName).")
             throw JarvisModelError.unavailable("The active model file no longer exists.")
         }
 
         guard isInferenceAvailable else {
-            state = .failed(message: inferenceUnavailableReason)
+            state = .runtimeUnavailable(reason: inferenceUnavailableReason)
             throw JarvisModelError.runtimeFailure(inferenceUnavailableReason)
         }
 
-        if case .ready = state, didLoadModel, loadedModelPath == model.path {
-            return
-        }
-        if case .generating = state, didLoadModel, loadedModelPath == model.path {
-            return
-        }
-        if case .paused = state, didLoadModel, loadedModelPath == model.path {
-            state = .ready(modelName: model.displayName)
-            return
-        }
         if didLoadModel, loadedModelPath == model.path {
             state = .ready(modelName: model.displayName)
             return
         }
 
         if ProcessInfo.processInfo.thermalState == .serious || ProcessInfo.processInfo.thermalState == .critical {
-            state = .paused(modelName: model.displayName)
-            throw JarvisModelError.runtimeFailure("Device thermal state is high. Let iPhone cool before running local inference.")
+            let message = "Device thermal state is high. Let iPhone cool before running local inference."
+            state = .paused(modelName: model.displayName, detail: message)
+            throw JarvisModelError.runtimeFailure(message)
         }
 
         print("[JarvisRuntime] prepareIfNeeded model=\(model.displayName) path=\(model.path)")
@@ -363,25 +513,23 @@ public final class JarvisLocalModelRuntime: ObservableObject {
                 resetLoadedModelState()
             }
 
-            state = .loading(progress: 0.15, detail: "Preparing runtime")
+            state = .warming(modelName: model.displayName, progress: 0.15, detail: "Preparing runtime")
             try await Task.sleep(nanoseconds: 80_000_000)
-            state = .loading(progress: 0.45, detail: "Loading \(model.displayName)")
+            state = .warming(modelName: model.displayName, progress: 0.45, detail: "Loading \(model.displayName)")
             try await engine.loadModel(at: model.path)
-            state = .loading(progress: 0.8, detail: "Warming decoder")
+            state = .warming(modelName: model.displayName, progress: 0.82, detail: "Finishing warm-up")
             try await Task.sleep(nanoseconds: 80_000_000)
             didLoadModel = true
             loadedModelPath = model.path
             state = .ready(modelName: model.displayName)
             print("[JarvisRuntime] model ready \(model.displayName)")
         } catch {
+            await engine.unloadModel()
             resetLoadedModelState()
-            if FileManager.default.fileExists(atPath: model.path) {
-                state = .failed(message: error.localizedDescription)
-            } else {
-                state = .unavailable(reason: "Selected model file is missing. Re-import \(model.displayName).")
-            }
-            print("[JarvisRuntime] failed to load model \(model.displayName): \(error.localizedDescription)")
-            throw error
+            let normalizedError = normalized(error, modelName: model.displayName)
+            state = .failed(modelName: model.displayName, message: normalizedError.localizedDescription)
+            print("[JarvisRuntime] failed to load model \(model.displayName): \(normalizedError.localizedDescription)")
+            throw normalizedError
         }
     }
 
@@ -390,10 +538,11 @@ public final class JarvisLocalModelRuntime: ObservableObject {
             activeGenerationTask?.cancel()
             activeGenerationTask = Task { [weak self] in
                 guard let self else { return }
+
                 do {
                     try await self.prepareIfNeeded()
                     let modelName = self.selectedModel?.displayName ?? "model"
-                    self.state = .generating(modelName: modelName)
+                    self.state = .busy(modelName: modelName, detail: "Generating response")
                     try await self.engine.generate(prompt: prompt, history: history) { token in
                         continuation.yield(token)
                     }
@@ -401,24 +550,22 @@ public final class JarvisLocalModelRuntime: ObservableObject {
                     continuation.finish()
                 } catch {
                     if let modelError = error as? JarvisModelError, case .cancelled = modelError {
-                        if let modelName = self.selectedModel?.displayName {
-                            self.state = .ready(modelName: modelName)
-                        }
-                    } else {
-                        self.state = .failed(message: error.localizedDescription)
+                        self.restoreIdleState()
+                    } else if !self.isTerminalState(self.state) {
+                        let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                        self.state = .failed(modelName: self.selectedModel?.displayName, message: message)
                     }
                     continuation.finish(throwing: error)
                 }
             }
 
-            continuation.onTermination = { [weak self] _ in
+            continuation.onTermination = { [weak self] termination in
                 guard let self else { return }
                 Task { @MainActor in
+                    guard case .cancelled = termination else { return }
                     self.engine.cancelGeneration()
                     self.activeGenerationTask?.cancel()
-                    if let modelName = self.selectedModel?.displayName {
-                        self.state = .ready(modelName: modelName)
-                    }
+                    self.restoreIdleState()
                 }
             }
         }
@@ -427,33 +574,31 @@ public final class JarvisLocalModelRuntime: ObservableObject {
     public func cancel() {
         engine.cancelGeneration()
         activeGenerationTask?.cancel()
-        if let modelName = selectedModel?.displayName {
-            state = .ready(modelName: modelName)
-        }
+        restoreIdleState()
     }
 
     public func pauseForBackground() {
         cancel()
-        state = .paused(modelName: selectedModel?.displayName)
+        state = .paused(modelName: selectedModel?.displayName, detail: "Runtime paused while Jarvis is backgrounded.")
     }
 
     public func resumeFromForeground() {
         guard let model = selectedModel else {
-            state = .unavailable(reason: "Import a GGUF model to start using Jarvis.")
+            state = .noModel
             return
         }
 
         guard FileManager.default.fileExists(atPath: model.path) else {
-            state = .unavailable(reason: "Selected model file is missing. Re-import \(model.displayName).")
+            state = .failed(modelName: model.displayName, message: "Selected model file is missing. Re-import \(model.displayName).")
             return
         }
 
         guard isInferenceAvailable else {
-            state = .failed(message: inferenceUnavailableReason)
+            state = .runtimeUnavailable(reason: inferenceUnavailableReason)
             return
         }
 
-        state = (didLoadModel && loadedModelPath == model.path) ? .ready(modelName: model.displayName) : .cold(modelName: model.displayName)
+        state = idleState(for: model)
     }
 
     public func unload() async {
@@ -461,9 +606,26 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         cancel()
         resetLoadedModelState()
         await engine.unloadModel()
-        if let modelName = selectedModel?.displayName {
-            state = .cold(modelName: modelName)
+        if let model = selectedModel {
+            state = .cold(modelName: model.displayName)
+        } else {
+            state = .noModel
         }
+    }
+
+    private func idleState(for model: JarvisRuntimeModelSelection) -> JarvisModelRuntimeState {
+        if didLoadModel, loadedModelPath == model.path {
+            return .ready(modelName: model.displayName)
+        }
+        return .cold(modelName: model.displayName)
+    }
+
+    private func restoreIdleState() {
+        guard let model = selectedModel else {
+            state = .noModel
+            return
+        }
+        state = idleState(for: model)
     }
 
     private func resetLoadedModelState() {
@@ -475,5 +637,27 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         Task {
             await engine.unloadModel()
         }
+    }
+
+    private func isTerminalState(_ state: JarvisModelRuntimeState) -> Bool {
+        switch state {
+        case .noModel, .runtimeUnavailable, .failed, .paused:
+            return true
+        case .cold, .warming, .ready, .busy:
+            return false
+        }
+    }
+
+    private func normalized(_ error: Error, modelName: String) -> JarvisModelError {
+        if let modelError = error as? JarvisModelError {
+            return modelError
+        }
+
+        let lowered = error.localizedDescription.lowercased()
+        if lowered.contains("memory") || lowered.contains("allocation") {
+            return .runtimeFailure("Out of memory while preparing \(modelName). Try a smaller GGUF model.")
+        }
+
+        return .runtimeFailure("Failed to prepare \(modelName): \(error.localizedDescription)")
     }
 }
