@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct AssistantTabView: View {
     @EnvironmentObject private var appModel: JarvisPhoneAppModel
@@ -24,6 +25,11 @@ struct AssistantTabView: View {
                     }
 
                     messagesPanel
+
+                    if showGroundingContext {
+                        groundingContextPanel
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    }
 
                     if !appModel.assistantSuggestions.isEmpty,
                        appModel.assistantExperienceState == .groundedAnswerReady {
@@ -97,6 +103,12 @@ struct AssistantTabView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
+                Text(voiceStateLabel)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.78))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.white.opacity(0.10), in: Capsule())
                 Button(listeningActive ? "Stop" : "Listen") {
                     if listeningActive {
                         appModel.stopVoicePreview(commit: false)
@@ -118,6 +130,12 @@ struct AssistantTabView: View {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .stroke(Color.white.opacity(0.16), lineWidth: 1)
                 )
+
+            if !appModel.speechPermissions.isGranted {
+                Text("Microphone + Speech access is required for voice mode.")
+                    .font(.caption2)
+                    .foregroundStyle(.orange.opacity(0.95))
+            }
         }
         .padding(12)
         .background(
@@ -136,6 +154,25 @@ struct AssistantTabView: View {
             return true
         default:
             return false
+        }
+    }
+
+    private var voiceStateLabel: String {
+        switch appModel.speechState {
+        case .idle:
+            return "Idle"
+        case .requestingPermission:
+            return "Perms"
+        case .ready:
+            return "Ready"
+        case .listening:
+            return "Listening"
+        case .transcribing:
+            return "Transcribing"
+        case .stopping:
+            return "Stopping"
+        case .failed:
+            return "Blocked"
         }
     }
 
@@ -177,6 +214,67 @@ struct AssistantTabView: View {
         }
     }
 
+    private var showGroundingContext: Bool {
+        switch appModel.assistantExperienceState {
+        case .grounding, .responding, .groundedAnswerReady:
+            return !contextPreviewResults.isEmpty
+        default:
+            return false
+        }
+    }
+
+    private var contextPreviewResults: [JarvisKnowledgeResult] {
+        if !appModel.knowledgeResults.isEmpty {
+            return Array(appModel.knowledgeResults.prefix(3))
+        }
+        return Array(appModel.knowledgeItems.prefix(3)).map {
+            JarvisKnowledgeResult(item: $0, score: 0.5, snippet: String($0.text.prefix(140)))
+        }
+    }
+
+    private var groundingContextPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Local context", systemImage: "books.vertical")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                Spacer()
+                Button("Open Knowledge") {
+                    appModel.apply(route: JarvisLaunchRoute(action: .search, source: "assistant.context"))
+                }
+                .font(.caption2.weight(.semibold))
+                .buttonStyle(.plain)
+                .foregroundStyle(.cyan)
+            }
+
+            ForEach(contextPreviewResults, id: \.item.id) { result in
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(result.item.title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .lineLimit(1)
+                    Text(result.snippet)
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.72))
+                        .lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 5)
+                .padding(.horizontal, 8)
+                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                )
+        )
+    }
+
     private var suggestionStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
@@ -215,6 +313,16 @@ struct AssistantTabView: View {
             } else if case .error(let message) = appModel.assistantExperienceState {
                 stateInfoRow(icon: "xmark.octagon.fill", text: message, tint: .red)
                 recoveryActionsRow
+            } else if appModel.assistantExperienceState == .grounding {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Searching local context for grounded output")
+                        .font(.caption.weight(.medium))
+                    Spacer()
+                }
+                .foregroundStyle(.white.opacity(0.92))
+                .padding(.horizontal, 10)
             } else if appModel.isSending {
                 HStack(spacing: 10) {
                     ProgressView()
@@ -231,11 +339,11 @@ struct AssistantTabView: View {
                 .padding(.horizontal, 10)
             }
 
-            if case .warming(_, let progress, let detail) = appModel.runtimeState {
+            if case .warming(_, let progress, _) = appModel.runtimeState {
                 VStack(alignment: .leading, spacing: 6) {
                     ProgressView(value: progress)
                         .tint(.cyan)
-                    Text(detail)
+                    Text("Preparing assistant engine")
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.82))
                 }
@@ -282,13 +390,19 @@ struct AssistantTabView: View {
     }
 
     private var diagnosticsRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "waveform.path.ecg")
-                .foregroundStyle(.cyan)
-            Text(appModel.runtimeState.title)
-                .font(.caption.weight(.semibold))
-            Spacer()
-            Text(appModel.runtimeEngineName)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Image(systemName: "waveform.path.ecg")
+                    .foregroundStyle(.cyan)
+                Text(appModel.runtimeState.title)
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Text(appModel.runtimeEngineName)
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.72))
+            }
+
+            Text("\(appModel.modelFileAccessState.title): \(appModel.modelFileAccessDetail)")
                 .font(.caption2)
                 .foregroundStyle(.white.opacity(0.72))
         }
@@ -303,6 +417,12 @@ struct AssistantTabView: View {
                     appModel.showSetupFlow = true
                 }
             } else {
+                if !appModel.speechPermissions.isGranted {
+                    Button("Voice Access") {
+                        guard let settingsURL = URL(string: UIApplication.openSettingsURLString) else { return }
+                        UIApplication.shared.open(settingsURL)
+                    }
+                }
                 if appModel.canRunInference {
                     Button("Retry Warm") {
                         appModel.retryRuntimeWarmup()
@@ -396,7 +516,7 @@ private struct AssistantBackdrop: View {
         switch state {
         case .listening, .transcribing:
             return Color.cyan.opacity(0.28)
-        case .thinking, .responding:
+        case .thinking, .grounding, .responding:
             return Color.indigo.opacity(0.30)
         case .error:
             return Color.red.opacity(0.24)
@@ -482,7 +602,9 @@ private struct AssistantPresenceSurface: View {
         case .transcribing:
             return transcript.isEmpty ? "Converting speech into text…" : transcript
         case .thinking:
-            return "Grounding response on-device."
+            return "Reasoning on-device."
+        case .grounding:
+            return "Retrieving local context."
         case .responding:
             return "Streaming answer."
         case .groundedAnswerReady:
@@ -509,7 +631,7 @@ private struct AssistantPresenceSurface: View {
         switch state {
         case .listening, .transcribing:
             return .cyan
-        case .thinking, .responding:
+        case .thinking, .grounding, .responding:
             return .indigo
         case .groundedAnswerReady:
             return .green

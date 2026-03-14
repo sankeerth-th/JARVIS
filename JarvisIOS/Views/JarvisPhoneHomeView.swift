@@ -207,7 +207,7 @@ struct JarvisPhoneHomeView: View {
                     .foregroundStyle(.white)
                 Spacer()
                 Button("Manage") {
-                    appModel.isModelLibraryPresented = true
+                    appModel.presentModelLibrary()
                 }
                 .buttonStyle(.bordered)
                 .tint(.white.opacity(0.85))

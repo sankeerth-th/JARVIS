@@ -11,13 +11,98 @@ public enum JarvisGGUFEngineCapability: Equatable {
     case placeholder
 }
 
-public struct JarvisRuntimeModelSelection: Equatable {
-    public var displayName: String
-    public var path: String
+public enum JarvisModelFileAccessState: Equatable {
+    case noImportedFile
+    case bookmarkCreated(modelName: String, detail: String)
+    case accessPending(modelName: String, detail: String)
+    case accessGranted(modelName: String, detail: String)
+    case accessLost(modelName: String?, reason: String)
+    case bookmarkResolutionFailed(modelName: String?, reason: String)
 
-    public init(displayName: String, path: String) {
+    public var title: String {
+        switch self {
+        case .noImportedFile:
+            return "No Imported File"
+        case .bookmarkCreated:
+            return "Bookmark Stored"
+        case .accessPending:
+            return "Access Pending"
+        case .accessGranted:
+            return "Access Granted"
+        case .accessLost:
+            return "Access Lost"
+        case .bookmarkResolutionFailed:
+            return "Bookmark Failed"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .noImportedFile:
+            return "Import a GGUF model from Files."
+        case .bookmarkCreated(_, let detail),
+                .accessPending(_, let detail),
+                .accessGranted(_, let detail):
+            return detail
+        case .accessLost(_, let reason),
+                .bookmarkResolutionFailed(_, let reason):
+            return reason
+        }
+    }
+}
+
+public final class JarvisRuntimeResolvedModelResources {
+    public let modelURL: URL
+    public let projectorURL: URL?
+
+    private let releaseHandler: () -> Void
+    private var didRelease = false
+
+    public init(modelURL: URL, projectorURL: URL?, releaseHandler: @escaping () -> Void) {
+        self.modelURL = modelURL
+        self.projectorURL = projectorURL
+        self.releaseHandler = releaseHandler
+    }
+
+    public func release() {
+        guard !didRelease else { return }
+        didRelease = true
+        releaseHandler()
+    }
+
+    deinit {
+        release()
+    }
+}
+
+public struct JarvisRuntimeModelSelection {
+    public var id: UUID
+    public var displayName: String
+    public var family: JarvisModelFamily
+    public var modality: JarvisModelModality
+    public var capabilities: JarvisModelCapabilities
+    public var projectorAttached: Bool
+    public var inactiveAccessDetail: String
+    public var acquireResources: () throws -> JarvisRuntimeResolvedModelResources
+
+    public init(
+        id: UUID,
+        displayName: String,
+        family: JarvisModelFamily,
+        modality: JarvisModelModality,
+        capabilities: JarvisModelCapabilities,
+        projectorAttached: Bool,
+        inactiveAccessDetail: String,
+        acquireResources: @escaping () throws -> JarvisRuntimeResolvedModelResources
+    ) {
+        self.id = id
         self.displayName = displayName
-        self.path = path
+        self.family = family
+        self.modality = modality
+        self.capabilities = capabilities
+        self.projectorAttached = projectorAttached
+        self.inactiveAccessDetail = inactiveAccessDetail
+        self.acquireResources = acquireResources
     }
 }
 
@@ -74,9 +159,10 @@ public protocol JarvisGGUFEngine {
     var name: String { get }
     var isInstalled: Bool { get }
     var capability: JarvisGGUFEngineCapability { get }
+    var supportsVisualInputs: Bool { get }
 
     func updateConfiguration(_ configuration: JarvisRuntimeConfiguration)
-    func loadModel(at path: String) async throws
+    func loadModel(at path: String, projectorPath: String?) async throws
     func unloadModel() async
     func generate(
         prompt: String,
@@ -92,12 +178,14 @@ public final class StubGGUFEngine: JarvisGGUFEngine {
     public var name: String { "Stub GGUF Engine" }
     public var isInstalled: Bool { true }
     public var capability: JarvisGGUFEngineCapability { .placeholder }
+    public var supportsVisualInputs: Bool { false }
 
     public func updateConfiguration(_ configuration: JarvisRuntimeConfiguration) {
         _ = configuration
     }
 
-    public func loadModel(at path: String) async throws {
+    public func loadModel(at path: String, projectorPath: String?) async throws {
+        _ = projectorPath
         guard FileManager.default.fileExists(atPath: path) else {
             throw JarvisModelError.unavailable("Model file not found at: \(path)")
         }
@@ -146,6 +234,7 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
     public var name: String { "LocalLLMClient (llama.cpp)" }
     public var isInstalled: Bool { true }
     public var capability: JarvisGGUFEngineCapability { .fullInference }
+    public var supportsVisualInputs: Bool { false }
 
     public func updateConfiguration(_ configuration: JarvisRuntimeConfiguration) {
         withLock {
@@ -153,7 +242,7 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         }
     }
 
-    public func loadModel(at path: String) async throws {
+    public func loadModel(at path: String, projectorPath: String?) async throws {
         guard FileManager.default.fileExists(atPath: path) else {
             throw JarvisModelError.unavailable("Selected model file could not be found at path: \(path)")
         }
@@ -161,6 +250,14 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         let pathExtension = URL(fileURLWithPath: path).pathExtension.lowercased()
         guard pathExtension == "gguf" else {
             throw JarvisModelError.runtimeFailure("Unsupported model format '.\(pathExtension)'. Jarvis iPhone supports GGUF only.")
+        }
+
+        if let projectorPath {
+            if FileManager.default.fileExists(atPath: projectorPath) {
+                print("[JarvisRuntime] Projector attached for future multimodal support: \(projectorPath)")
+            } else {
+                throw JarvisModelError.unavailable("Projector file could not be found at path: \(projectorPath)")
+            }
         }
 
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
@@ -388,13 +485,15 @@ enum JarvisGGUFEngineFactory {
 @MainActor
 public final class JarvisLocalModelRuntime: ObservableObject {
     @Published public private(set) var state: JarvisModelRuntimeState = .noModel
+    @Published public private(set) var fileAccessState: JarvisModelFileAccessState = .noImportedFile
 
     private let engine: JarvisGGUFEngine
     private var configuration: JarvisRuntimeConfiguration
     private var selectedModel: JarvisRuntimeModelSelection?
     private var activeGenerationTask: Task<Void, Never>?
     private var didLoadModel = false
-    private var loadedModelPath: String?
+    private var loadedModelID: UUID?
+    private var loadedResources: JarvisRuntimeResolvedModelResources?
 
     public init(
         engine: JarvisGGUFEngine? = nil,
@@ -411,12 +510,19 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         engine.isInstalled && engine.capability == .fullInference
     }
 
+    public var supportsVisualInputs: Bool {
+        guard let selectedModel else { return false }
+        return engine.supportsVisualInputs &&
+            selectedModel.capabilities.supportsVisionInputs &&
+            selectedModel.projectorAttached
+    }
+
     public var inferenceUnavailableReason: String {
         if !engine.isInstalled {
             return "Local GGUF engine is not installed."
         }
         if engine.capability != .fullInference {
-            return "This build has no real GGUF inference adapter wired yet."
+            return "This environment cannot run local GGUF inference. Use a physical iPhone build."
         }
         return ""
     }
@@ -428,106 +534,120 @@ public final class JarvisLocalModelRuntime: ObservableObject {
 
         guard let model = selectedModel else {
             state = .noModel
+            fileAccessState = .noImportedFile
             return
         }
 
-        if didLoadModel {
-            resetLoadedModelState()
-            unloadEngine()
+        if didLoadModel || loadedResources != nil {
+            teardownLoadedModel()
         }
 
         guard isInferenceAvailable else {
             state = .runtimeUnavailable(reason: inferenceUnavailableReason)
+            fileAccessState = restingFileAccessState(for: model)
             return
         }
 
         state = .cold(modelName: model.displayName)
+        fileAccessState = restingFileAccessState(for: model)
     }
 
     public func setSelectedModel(_ model: JarvisRuntimeModelSelection?) {
-        let previousPath = selectedModel?.path
+        let previousID = selectedModel?.id
         activeGenerationTask?.cancel()
         selectedModel = model
-        print("[JarvisRuntime] setSelectedModel previous=\(previousPath ?? "nil") next=\(model?.path ?? "nil")")
+        print("[JarvisRuntime] setSelectedModel previous=\(previousID?.uuidString ?? "nil") next=\(model?.id.uuidString ?? "nil")")
 
         guard let model else {
-            resetLoadedModelState()
-            unloadEngine()
+            teardownLoadedModel()
             state = .noModel
+            fileAccessState = .noImportedFile
             return
         }
 
-        guard FileManager.default.fileExists(atPath: model.path) else {
-            resetLoadedModelState()
-            unloadEngine()
-            state = .failed(modelName: model.displayName, message: "Selected model file is missing. Re-import \(model.displayName).")
-            return
-        }
-
-        if let loadedModelPath, loadedModelPath != model.path {
-            resetLoadedModelState()
-            unloadEngine()
+        if previousID != model.id {
+            teardownLoadedModel()
         }
 
         guard isInferenceAvailable else {
             state = .runtimeUnavailable(reason: inferenceUnavailableReason)
+            fileAccessState = restingFileAccessState(for: model)
             return
         }
 
         state = idleState(for: model)
+        fileAccessState = restingFileAccessState(for: model)
     }
 
     public func prepareIfNeeded() async throws {
         guard let model = selectedModel else {
             state = .noModel
-            throw JarvisModelError.unavailable("No active model selected. Import a GGUF model from Files.")
-        }
-
-        guard FileManager.default.fileExists(atPath: model.path) else {
-            state = .failed(modelName: model.displayName, message: "Selected model file is missing. Re-import \(model.displayName).")
-            throw JarvisModelError.unavailable("The active model file no longer exists.")
+            fileAccessState = .noImportedFile
+            throw JarvisModelError.unavailable("No active model selected. Import and activate a GGUF model from Files.")
         }
 
         guard isInferenceAvailable else {
             state = .runtimeUnavailable(reason: inferenceUnavailableReason)
+            fileAccessState = restingFileAccessState(for: model)
             throw JarvisModelError.runtimeFailure(inferenceUnavailableReason)
         }
 
-        if didLoadModel, loadedModelPath == model.path {
+        if didLoadModel, loadedModelID == model.id, loadedResources != nil {
             state = .ready(modelName: model.displayName)
+            fileAccessState = accessGrantedState(for: model)
             return
         }
 
         if ProcessInfo.processInfo.thermalState == .serious || ProcessInfo.processInfo.thermalState == .critical {
             let message = "Device thermal state is high. Let iPhone cool before running local inference."
             state = .paused(modelName: model.displayName, detail: message)
+            fileAccessState = restingFileAccessState(for: model)
             throw JarvisModelError.runtimeFailure(message)
         }
 
-        print("[JarvisRuntime] prepareIfNeeded model=\(model.displayName) path=\(model.path)")
-
         do {
-            if let loadedModelPath, loadedModelPath != model.path {
-                print("[JarvisRuntime] unloading previous model before reload")
-                await engine.unloadModel()
-                resetLoadedModelState()
+            let resources: JarvisRuntimeResolvedModelResources
+            if let loadedResources, loadedModelID == model.id {
+                resources = loadedResources
+                fileAccessState = accessGrantedState(for: model)
+            } else {
+                fileAccessState = .accessPending(
+                    modelName: model.displayName,
+                    detail: "Resolving persistent file access for \(model.displayName)."
+                )
+                resources = try model.acquireResources()
+                loadedResources = resources
+                loadedModelID = model.id
+                fileAccessState = accessGrantedState(for: model)
             }
 
             state = .warming(modelName: model.displayName, progress: 0.15, detail: "Preparing runtime")
             try await Task.sleep(nanoseconds: 80_000_000)
-            state = .warming(modelName: model.displayName, progress: 0.45, detail: "Loading \(model.displayName)")
-            try await engine.loadModel(at: model.path)
+            state = .warming(modelName: model.displayName, progress: 0.45, detail: "Opening model file")
+            try await engine.loadModel(
+                at: resources.modelURL.path,
+                projectorPath: resources.projectorURL?.path
+            )
             state = .warming(modelName: model.displayName, progress: 0.82, detail: "Finishing warm-up")
             try await Task.sleep(nanoseconds: 80_000_000)
             didLoadModel = true
-            loadedModelPath = model.path
             state = .ready(modelName: model.displayName)
+            fileAccessState = accessGrantedState(for: model)
             print("[JarvisRuntime] model ready \(model.displayName)")
+        } catch let accessError as JarvisModelFileAccessError {
+            releaseLoadedResources()
+            resetLoadedModelState()
+            state = .failed(modelName: model.displayName, message: accessError.localizedDescription)
+            fileAccessState = mapFileAccessError(accessError, modelName: model.displayName)
+            print("[JarvisRuntime] file access failed for \(model.displayName): \(accessError.localizedDescription)")
+            throw accessError
         } catch {
             await engine.unloadModel()
+            releaseLoadedResources()
             resetLoadedModelState()
             let normalizedError = normalized(error, modelName: model.displayName)
             state = .failed(modelName: model.displayName, message: normalizedError.localizedDescription)
+            fileAccessState = restingFileAccessState(for: model)
             print("[JarvisRuntime] failed to load model \(model.displayName): \(normalizedError.localizedDescription)")
             throw normalizedError
         }
@@ -547,6 +667,9 @@ public final class JarvisLocalModelRuntime: ObservableObject {
                         continuation.yield(token)
                     }
                     self.state = .ready(modelName: modelName)
+                    if let selectedModel = self.selectedModel {
+                        self.fileAccessState = self.accessGrantedState(for: selectedModel)
+                    }
                     continuation.finish()
                 } catch {
                     if let modelError = error as? JarvisModelError, case .cancelled = modelError {
@@ -580,41 +703,53 @@ public final class JarvisLocalModelRuntime: ObservableObject {
     public func pauseForBackground() {
         cancel()
         state = .paused(modelName: selectedModel?.displayName, detail: "Runtime paused while Jarvis is backgrounded.")
+        if let selectedModel, loadedResources != nil {
+            fileAccessState = accessGrantedState(for: selectedModel)
+        }
     }
 
     public func resumeFromForeground() {
         guard let model = selectedModel else {
             state = .noModel
-            return
-        }
-
-        guard FileManager.default.fileExists(atPath: model.path) else {
-            state = .failed(modelName: model.displayName, message: "Selected model file is missing. Re-import \(model.displayName).")
+            fileAccessState = .noImportedFile
             return
         }
 
         guard isInferenceAvailable else {
             state = .runtimeUnavailable(reason: inferenceUnavailableReason)
+            fileAccessState = restingFileAccessState(for: model)
             return
         }
 
         state = idleState(for: model)
+        if didLoadModel, loadedResources != nil {
+            fileAccessState = accessGrantedState(for: model)
+        } else {
+            fileAccessState = restingFileAccessState(for: model)
+        }
     }
 
     public func unload() async {
         print("[JarvisRuntime] unload requested")
         cancel()
         resetLoadedModelState()
+
+        let resources = loadedResources
+        loadedResources = nil
         await engine.unloadModel()
+        resources?.release()
+
         if let model = selectedModel {
             state = .cold(modelName: model.displayName)
+            fileAccessState = restingFileAccessState(for: model)
         } else {
             state = .noModel
+            fileAccessState = .noImportedFile
         }
     }
 
     private func idleState(for model: JarvisRuntimeModelSelection) -> JarvisModelRuntimeState {
-        if didLoadModel, loadedModelPath == model.path {
+        if didLoadModel, loadedModelID == model.id {
             return .ready(modelName: model.displayName)
         }
         return .cold(modelName: model.displayName)
@@ -623,28 +758,37 @@ public final class JarvisLocalModelRuntime: ObservableObject {
     private func restoreIdleState() {
         guard let model = selectedModel else {
             state = .noModel
+            fileAccessState = .noImportedFile
             return
         }
+
         state = idleState(for: model)
+        if didLoadModel, loadedResources != nil {
+            fileAccessState = accessGrantedState(for: model)
+        } else {
+            fileAccessState = restingFileAccessState(for: model)
+        }
     }
 
     private func resetLoadedModelState() {
         didLoadModel = false
-        loadedModelPath = nil
+        loadedModelID = nil
     }
 
-    private func unloadEngine() {
+    private func releaseLoadedResources() {
+        let resources = loadedResources
+        loadedResources = nil
+        resources?.release()
+    }
+
+    private func teardownLoadedModel() {
+        let resources = loadedResources
+        loadedResources = nil
+        resetLoadedModelState()
+
         Task {
             await engine.unloadModel()
-        }
-    }
-
-    private func isTerminalState(_ state: JarvisModelRuntimeState) -> Bool {
-        switch state {
-        case .noModel, .runtimeUnavailable, .failed, .paused:
-            return true
-        case .cold, .warming, .ready, .busy:
-            return false
+            resources?.release()
         }
     }
 
@@ -652,12 +796,54 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         if let modelError = error as? JarvisModelError {
             return modelError
         }
-
-        let lowered = error.localizedDescription.lowercased()
-        if lowered.contains("memory") || lowered.contains("allocation") {
-            return .runtimeFailure("Out of memory while preparing \(modelName). Try a smaller GGUF model.")
+        if let accessError = error as? JarvisModelFileAccessError {
+            return .runtimeFailure(accessError.localizedDescription)
         }
 
-        return .runtimeFailure("Failed to prepare \(modelName): \(error.localizedDescription)")
+        let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        if message.isEmpty {
+            return .runtimeFailure("Failed to load \(modelName).")
+        }
+        return .runtimeFailure(message)
+    }
+
+    private func isTerminalState(_ state: JarvisModelRuntimeState) -> Bool {
+        switch state {
+        case .failed, .runtimeUnavailable:
+            return true
+        case .noModel, .cold, .warming, .ready, .busy, .paused:
+            return false
+        }
+    }
+
+    private func restingFileAccessState(for model: JarvisRuntimeModelSelection) -> JarvisModelFileAccessState {
+        if model.capabilities.supportsVisionInputs && model.capabilities.requiresProjectorForVision && !model.projectorAttached {
+            return .accessPending(
+                modelName: model.displayName,
+                detail: "\(model.inactiveAccessDetail) Projector missing for future visual input."
+            )
+        }
+        return .accessPending(modelName: model.displayName, detail: model.inactiveAccessDetail)
+    }
+
+    private func accessGrantedState(for model: JarvisRuntimeModelSelection) -> JarvisModelFileAccessState {
+        if model.capabilities.supportsVisionInputs && model.projectorAttached {
+            return .accessGranted(
+                modelName: model.displayName,
+                detail: engine.supportsVisualInputs
+                    ? "Model and projector access granted."
+                    : "Model and projector access granted. Current runtime is still text-only."
+            )
+        }
+        return .accessGranted(modelName: model.displayName, detail: "Model file access granted.")
+    }
+
+    private func mapFileAccessError(_ error: JarvisModelFileAccessError, modelName: String) -> JarvisModelFileAccessState {
+        switch error {
+        case .missingBookmark, .bookmarkResolutionFailed:
+            return .bookmarkResolutionFailed(modelName: modelName, reason: error.localizedDescription)
+        case .accessDenied, .fileMissing, .invalidResolvedFile:
+            return .accessLost(modelName: modelName, reason: error.localizedDescription)
+        }
     }
 }

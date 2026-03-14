@@ -79,6 +79,14 @@ struct SettingsTabView: View {
         NavigationStack {
             List {
                 Section("Model") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(appModel.supportedModelDisplayName)
+                            .font(.subheadline.weight(.semibold))
+                        Text(appModel.supportedModelShortDescription)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
                     NavigationLink {
                         JarvisModernModelLibraryView()
                     } label: {
@@ -89,17 +97,24 @@ struct SettingsTabView: View {
                                 if let model = appModel.activeModel {
                                     Text(model.displayName)
                                         .font(.subheadline.weight(.medium))
-                                    Text(model.status.displayName)
+                                    Text(appModel.activeModelSupportStatusText)
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 } else {
                                     Text("No Model")
                                         .font(.subheadline)
-                                    Text("Import a GGUF model")
+                                    Text("Import and activate a bookmark-backed GGUF model")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
                             }
+                        }
+                    }
+
+                    Picker("Recommended Profile", selection: $appModel.settings.preferredModelProfile) {
+                        ForEach(JarvisSupportedModelProfileID.allCases) { profileID in
+                            Text(JarvisSupportedModelCatalog.profile(for: profileID)?.displayName ?? profileID.rawValue)
+                                .tag(profileID)
                         }
                     }
                     
@@ -109,6 +124,7 @@ struct SettingsTabView: View {
                         Label("Import GGUF Model", systemImage: "square.and.arrow.down")
                     }
 
+                    Toggle("Auto-warm On First Send", isOn: $appModel.settings.autoWarmOnFirstSend)
                     Toggle("Warm Active Model On Launch", isOn: $appModel.settings.autoWarmOnLaunch)
                 }
                 
@@ -179,6 +195,8 @@ struct SettingsTabView: View {
                         }
                     }
 
+                    LabeledContent("Recommended Profile", value: appModel.supportedModelDisplayName)
+
                     Picker("Response Style", selection: $appModel.settings.responseStyle) {
                         ForEach(JarvisAssistantResponseStyle.allCases) { style in
                             Text(style.displayName).tag(style)
@@ -231,6 +249,11 @@ struct RuntimeDiagnosticsView: View {
                     LabeledContent("Name", value: model.displayName)
                     LabeledContent("Format", value: model.format.displayName)
                     LabeledContent("Status", value: model.status.displayName)
+                    LabeledContent("Profile", value: appModel.activeModelSupportStatusText)
+                    LabeledContent("Family", value: model.inferredFamily ?? "Unknown")
+                    LabeledContent("Modality", value: model.modality.displayName)
+                    LabeledContent("Visual Readiness", value: appModel.activeModelVisualStatusText)
+                    LabeledContent("Projector", value: model.hasProjectorAttached ? "Attached" : "Not attached")
                     LabeledContent("Size", value: ByteCountFormatter.string(fromByteCount: model.fileSizeBytes, countStyle: .file))
                 } else {
                     Text("No active model")
@@ -240,14 +263,20 @@ struct RuntimeDiagnosticsView: View {
             
             Section("Runtime State") {
                 LabeledContent("State", value: appModel.runtimeState.title)
+                LabeledContent("File Access", value: appModel.modelFileAccessState.title)
+                Text(appModel.modelFileAccessDetail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Configured Behavior") {
                 LabeledContent("Startup", value: appModel.settings.startupRoute.displayName)
+                LabeledContent("Recommended Profile", value: appModel.supportedModelDisplayName)
                 LabeledContent("Performance", value: appModel.settings.performanceProfile.displayName)
                 LabeledContent("Context", value: appModel.settings.contextWindow.displayName)
                 LabeledContent("Response Style", value: appModel.settings.responseStyle.displayName)
                 LabeledContent("Creativity", value: appModel.settings.creativity.formatted(.number.precision(.fractionLength(2))))
+                LabeledContent("Auto-Warm On First Send", value: appModel.settings.autoWarmOnFirstSend ? "On" : "Off")
             }
             
             Section("Availability") {

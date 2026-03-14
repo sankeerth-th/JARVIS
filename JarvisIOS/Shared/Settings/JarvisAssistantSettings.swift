@@ -3,6 +3,8 @@ import Foundation
 public enum JarvisStartupRoute: String, Codable, CaseIterable, Identifiable {
     case home
     case assistant
+    case voice
+    case visual
     case knowledge
 
     public var id: String { rawValue }
@@ -13,6 +15,10 @@ public enum JarvisStartupRoute: String, Codable, CaseIterable, Identifiable {
             return "Home"
         case .assistant:
             return "Assistant"
+        case .voice:
+            return "Voice Assistant"
+        case .visual:
+            return "Visual Intelligence"
         case .knowledge:
             return "Knowledge"
         }
@@ -24,6 +30,10 @@ public enum JarvisStartupRoute: String, Codable, CaseIterable, Identifiable {
             return .home
         case .assistant:
             return .ask
+        case .voice:
+            return .voice
+        case .visual:
+            return .visualIntelligence
         case .knowledge:
             return .search
         }
@@ -151,7 +161,9 @@ public struct JarvisRuntimeConfiguration: Equatable, Codable {
 
 public struct JarvisAssistantSettings: Codable, Equatable {
     public var startupRoute: JarvisStartupRoute
+    public var preferredModelProfile: JarvisSupportedModelProfileID
     public var autoWarmOnLaunch: Bool
+    public var autoWarmOnFirstSend: Bool
     public var performanceProfile: JarvisRuntimePerformanceProfile
     public var contextWindow: JarvisContextWindowPreset
     public var responseStyle: JarvisAssistantResponseStyle
@@ -164,7 +176,9 @@ public struct JarvisAssistantSettings: Codable, Equatable {
 
     public init(
         startupRoute: JarvisStartupRoute = .home,
+        preferredModelProfile: JarvisSupportedModelProfileID = .gemma3_4b_it_q4_0,
         autoWarmOnLaunch: Bool = false,
+        autoWarmOnFirstSend: Bool = true,
         performanceProfile: JarvisRuntimePerformanceProfile = .balanced,
         contextWindow: JarvisContextWindowPreset = .automatic,
         responseStyle: JarvisAssistantResponseStyle = .balanced,
@@ -176,7 +190,9 @@ public struct JarvisAssistantSettings: Codable, Equatable {
         hapticsEnabled: Bool = true
     ) {
         self.startupRoute = startupRoute
+        self.preferredModelProfile = preferredModelProfile
         self.autoWarmOnLaunch = autoWarmOnLaunch
+        self.autoWarmOnFirstSend = autoWarmOnFirstSend
         self.performanceProfile = performanceProfile
         self.contextWindow = contextWindow
         self.responseStyle = responseStyle
@@ -186,6 +202,39 @@ public struct JarvisAssistantSettings: Codable, Equatable {
         self.autoScrollConversation = autoScrollConversation
         self.showRuntimeDiagnostics = showRuntimeDiagnostics
         self.hapticsEnabled = hapticsEnabled
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case startupRoute
+        case preferredModelProfile
+        case autoWarmOnLaunch
+        case autoWarmOnFirstSend
+        case performanceProfile
+        case contextWindow
+        case responseStyle
+        case creativity
+        case unloadModelOnBackground
+        case batterySaverMode
+        case autoScrollConversation
+        case showRuntimeDiagnostics
+        case hapticsEnabled
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        startupRoute = try container.decodeIfPresent(JarvisStartupRoute.self, forKey: .startupRoute) ?? .home
+        preferredModelProfile = try container.decodeIfPresent(JarvisSupportedModelProfileID.self, forKey: .preferredModelProfile) ?? .gemma3_4b_it_q4_0
+        autoWarmOnLaunch = try container.decodeIfPresent(Bool.self, forKey: .autoWarmOnLaunch) ?? false
+        autoWarmOnFirstSend = try container.decodeIfPresent(Bool.self, forKey: .autoWarmOnFirstSend) ?? true
+        performanceProfile = try container.decodeIfPresent(JarvisRuntimePerformanceProfile.self, forKey: .performanceProfile) ?? .balanced
+        contextWindow = try container.decodeIfPresent(JarvisContextWindowPreset.self, forKey: .contextWindow) ?? .automatic
+        responseStyle = try container.decodeIfPresent(JarvisAssistantResponseStyle.self, forKey: .responseStyle) ?? .balanced
+        creativity = try container.decodeIfPresent(Double.self, forKey: .creativity) ?? 0.7
+        unloadModelOnBackground = try container.decodeIfPresent(Bool.self, forKey: .unloadModelOnBackground) ?? false
+        batterySaverMode = try container.decodeIfPresent(Bool.self, forKey: .batterySaverMode) ?? false
+        autoScrollConversation = try container.decodeIfPresent(Bool.self, forKey: .autoScrollConversation) ?? true
+        showRuntimeDiagnostics = try container.decodeIfPresent(Bool.self, forKey: .showRuntimeDiagnostics) ?? false
+        hapticsEnabled = try container.decodeIfPresent(Bool.self, forKey: .hapticsEnabled) ?? true
     }
 
     public static let `default` = JarvisAssistantSettings()

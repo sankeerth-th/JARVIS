@@ -142,9 +142,10 @@ public final class JarvisSpeechCoordinator: ObservableObject {
         activeSessionID = sessionID
 
         do {
-            try await client.startTranscription(localeIdentifier: options.localeIdentifier) { [weak self] result in
-                Task { @MainActor in
-                    self?.handleRecognitionResult(result, for: sessionID)
+            try await client.startTranscription(localeIdentifier: options.localeIdentifier) { [sessionID] result in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.handleRecognitionResult(result, for: sessionID)
                 }
             }
             state = .listening

@@ -42,7 +42,7 @@ struct JarvisPhoneSettingsView: View {
                         }
 
                         Button("Open Model Library") {
-                            appModel.isModelLibraryPresented = true
+                            appModel.presentModelLibrary()
                         }
 
                         Button("Warm Active Model") {

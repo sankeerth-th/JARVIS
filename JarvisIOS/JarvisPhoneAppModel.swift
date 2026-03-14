@@ -60,6 +60,11 @@ final class JarvisPhoneAppModel: ObservableObject {
         case failure(message: String)
     }
 
+    private enum ModelImportRequest: Equatable {
+        case primaryModel
+        case projector(modelID: UUID)
+    }
+
     enum AssistantInputMode: Equatable {
         case text
         case voice
@@ -72,6 +77,7 @@ final class JarvisPhoneAppModel: ObservableObject {
         case listening
         case transcribing
         case thinking
+        case grounding
         case responding
         case groundedAnswerReady
         case error(message: String)
@@ -89,6 +95,8 @@ final class JarvisPhoneAppModel: ObservableObject {
                 return "Transcribing"
             case .thinking:
                 return "Thinking"
+            case .grounding:
+                return "Grounding"
             case .responding:
                 return "Responding"
             case .groundedAnswerReady:
@@ -120,6 +128,7 @@ final class JarvisPhoneAppModel: ObservableObject {
     @Published var isSending = false
     @Published var statusText: String = "Ready"
     @Published var runtimeState: JarvisModelRuntimeState
+    @Published var modelFileAccessState: JarvisModelFileAccessState
     @Published var knowledgeQuery: String = ""
     @Published var knowledgeResults: [JarvisKnowledgeResult] = []
     @Published var knowledgeItems: [JarvisKnowledgeItem] = []
@@ -149,6 +158,11 @@ final class JarvisPhoneAppModel: ObservableObject {
     @Published var assistantExperienceState: AssistantExperienceState = .idle
     @Published var assistantLiveTranscript: String = ""
     @Published var assistantSuggestions: [AssistantSuggestion] = []
+    @Published private(set) var speechState: JarvisSpeechState = .idle
+    @Published private(set) var speechPermissions = JarvisSpeechPermissions(
+        microphoneGranted: false,
+        speechRecognitionGranted: false
+    )
 
     let quickLaunchItems: [QuickLaunchItem]
 
@@ -182,6 +196,43 @@ final class JarvisPhoneAppModel: ObservableObject {
         runtime.inferenceUnavailableReason
     }
 
+    var supportedModelProfile: JarvisSupportedModelProfile {
+        JarvisSupportedModelCatalog.profile(for: settings.preferredModelProfile) ?? JarvisSupportedModelCatalog.goldPath
+    }
+
+    var supportedModelDisplayName: String {
+        supportedModelProfile.displayName
+    }
+
+    var supportedModelShortDescription: String {
+        supportedModelProfile.shortDescription
+    }
+
+    var supportedModelImportGuidance: String {
+        supportedModelProfile.importGuidance
+    }
+
+    var activeModelSupportStatusText: String {
+        guard let activeModel else {
+            return "No active local model selected"
+        }
+        if let profile = JarvisSupportedModelCatalog.profile(for: activeModel.supportedProfileID) {
+            return "Curated profile: \(profile.displayName)"
+        }
+        return activeModel.statusMessage ?? "Bookmark-backed local model ready for activation."
+    }
+
+    var activeModelVisualStatusText: String {
+        guard let activeModel else {
+            return "No active model"
+        }
+        return activeModel.visualReadinessDescription
+    }
+
+    var modelFileAccessDetail: String {
+        modelFileAccessState.detail
+    }
+
     var shouldShowAssistantBackButton: Bool {
         selectedTab == .assistant && assistantReturnTab != nil
     }
@@ -191,11 +242,13 @@ final class JarvisPhoneAppModel: ObservableObject {
     private let launchStore: JarvisLaunchRouteStore
     private let settingsStore: JarvisAssistantSettingsStore
     private let runtime: JarvisLocalModelRuntime
+    private let speechCoordinator: JarvisSpeechCoordinator
     private var streamTask: Task<Void, Never>?
-    private var voicePreviewTask: Task<Void, Never>?
+    private var groundingTransitionTask: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
     private var settingsPersistenceEnabled = false
     private var pendingModelLibraryImport = false
+    private var pendingImportRequest: ModelImportRequest = .primaryModel
 
     init(
         store: JarvisConversationStore = JarvisConversationStore(),
@@ -211,7 +264,9 @@ final class JarvisPhoneAppModel: ObservableObject {
         self.settings = loadedSettings
 
         self.runtime = JarvisLocalModelRuntime(configuration: loadedSettings.runtimeConfiguration)
+        self.speechCoordinator = JarvisSpeechCoordinator()
         self.runtimeState = runtime.state
+        self.modelFileAccessState = runtime.fileAccessState
 
         let loadedConversations = store.loadConversations()
         self.conversations = loadedConversations
@@ -273,6 +328,40 @@ final class JarvisPhoneAppModel: ObservableObject {
             }
             .store(in: &cancellables)
 
+        runtime.$fileAccessState
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in
+                self?.modelFileAccessState = state
+                self?.syncAssistantExperience(withFileAccess: state)
+            }
+            .store(in: &cancellables)
+
+        speechCoordinator.$state
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in
+                guard let self else { return }
+                self.speechState = state
+                self.syncAssistantExperienceWithSpeech(state)
+            }
+            .store(in: &cancellables)
+
+        speechCoordinator.$permissions
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] permissions in
+                self?.speechPermissions = permissions
+            }
+            .store(in: &cancellables)
+
+        speechCoordinator.$transcript
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] transcript in
+                guard let self else { return }
+                if self.assistantInputMode == .voice {
+                    self.assistantLiveTranscript = transcript
+                }
+            }
+            .store(in: &cancellables)
+
         NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -294,7 +383,7 @@ final class JarvisPhoneAppModel: ObservableObject {
         reloadModelLibrary()
         runtimeState = runtime.state
         showSetupFlow = needsModelSetup
-        assistantExperienceState = needsModelSetup ? .unavailable(reason: "Import a local model to begin.") : .idle
+        assistantExperienceState = needsModelSetup ? .unavailable(reason: missingSupportedModelReason()) : .idle
 
         let handledPendingRoute = consumePendingRouteIfNeeded()
         if !handledPendingRoute {
@@ -363,7 +452,7 @@ final class JarvisPhoneAppModel: ObservableObject {
         }
         assistantInputMode = .text
         selectedTab = destination
-        assistantExperienceState = needsModelSetup ? .unavailable(reason: "Import a local model to continue.") : .idle
+        assistantExperienceState = needsModelSetup ? .unavailable(reason: missingSupportedModelReason()) : .idle
         statusText = "Ready"
     }
 
@@ -371,8 +460,8 @@ final class JarvisPhoneAppModel: ObservableObject {
         if routeRequiresModel(route.action), needsModelSetup {
             selectedTab = .home
             showSetupFlow = true
-            statusText = "Import a GGUF model to continue"
-            assistantExperienceState = .unavailable(reason: "Import a local model to continue.")
+            statusText = missingSupportedModelStatusText()
+            assistantExperienceState = .unavailable(reason: missingSupportedModelReason())
             JarvisHaptics.error()
             return
         }
@@ -388,7 +477,7 @@ final class JarvisPhoneAppModel: ObservableObject {
             selectedTab = .home
             assistantReturnTab = nil
             assistantInputMode = .text
-            assistantExperienceState = needsModelSetup ? .unavailable(reason: "Import a local model to begin.") : .idle
+            assistantExperienceState = needsModelSetup ? .unavailable(reason: missingSupportedModelReason()) : .idle
             statusText = "Ready"
         case .ask:
             prepareConversationForFocusedEntry()
@@ -448,6 +537,13 @@ final class JarvisPhoneAppModel: ObservableObject {
     }
 
     func beginModelImport() {
+        pendingImportRequest = .primaryModel
+        modelImportState = .idle
+        isModelImporterPresented = true
+    }
+
+    func beginProjectorImport(for modelID: UUID) {
+        pendingImportRequest = .projector(modelID: modelID)
         modelImportState = .idle
         isModelImporterPresented = true
     }
@@ -478,7 +574,12 @@ final class JarvisPhoneAppModel: ObservableObject {
                 modelImportState = .failure(message: "No file selected.")
                 return
             }
-            importModel(from: source)
+            switch pendingImportRequest {
+            case .primaryModel:
+                importModel(from: source)
+            case .projector(let modelID):
+                attachProjector(from: source, to: modelID)
+            }
         }
     }
 
@@ -493,38 +594,44 @@ final class JarvisPhoneAppModel: ObservableObject {
                 }
 
                 reloadModelLibrary()
-
-                guard imported.status == .ready else {
-                    let successText = "Imported \(imported.displayName). Revalidate the file before activating it."
-                    statusText = successText
-                    modelImportState = .success(message: successText)
-                    showSetupFlow = needsModelSetup
-                    JarvisHaptics.success()
-                    return
-                }
-
-                let importedFileURL = modelLibrary.modelFileURL(for: imported)
-                guard FileManager.default.fileExists(atPath: importedFileURL.path) else {
-                    throw JarvisModelError.unavailable("Imported model file is missing from local storage.")
-                }
-
-                try modelLibrary.setActiveModel(id: imported.id)
-                reloadModelLibrary()
                 showSetupFlow = needsModelSetup
 
-                let successText: String
-                if canRunInference {
-                    successText = "Imported \(imported.displayName). Warm it now or send a message to warm on first use."
-                } else {
-                    successText = "Imported \(imported.displayName). This environment cannot run local inference: \(runtimeBlockedReason)"
-                }
-
+                let successText = importOutcomeMessage(for: imported)
                 statusText = successText
                 modelImportState = .success(message: successText)
-                assistantExperienceState = .armed
+                modelFileAccessState = .bookmarkCreated(
+                    modelName: imported.displayName,
+                    detail: "Security-scoped bookmark stored. Activate the model before warmup."
+                )
+                if !needsModelSetup {
+                    assistantExperienceState = .armed
+                }
                 JarvisHaptics.success()
             } catch {
                 statusText = "Model import failed"
+                modelImportState = .failure(message: error.localizedDescription)
+                JarvisHaptics.error()
+            }
+        }
+    }
+
+    func attachProjector(from sourceURL: URL, to modelID: UUID) {
+        Task {
+            do {
+                modelImportState = .importing(progress: 0.05, message: "Starting projector import")
+                let updatedModel = try modelLibrary.attachProjector(from: sourceURL, to: modelID) { progress, message in
+                    Task { @MainActor in
+                        self.modelImportState = .importing(progress: progress, message: message)
+                    }
+                }
+
+                reloadModelLibrary()
+                let successText = "Attached projector for \(updatedModel.displayName). Text use is ready now; visual readiness metadata is stored for later."
+                statusText = successText
+                modelImportState = .success(message: successText)
+                JarvisHaptics.success()
+            } catch {
+                statusText = "Projector import failed"
                 modelImportState = .failure(message: error.localizedDescription)
                 JarvisHaptics.error()
             }
@@ -539,14 +646,13 @@ final class JarvisPhoneAppModel: ObservableObject {
                 throw JarvisModelError.unavailable("No active model selected.")
             }
 
-            let modelURL = modelLibrary.modelFileURL(for: activeModel)
-            guard FileManager.default.fileExists(atPath: modelURL.path) else {
-                throw JarvisModelError.unavailable("The selected model file is missing. Re-import it.")
-            }
-
             showSetupFlow = needsModelSetup
             modelImportState = .idle
-            statusText = "Using \(activeModel.displayName). Warm it or send a message to start."
+            if let profile = JarvisSupportedModelCatalog.profile(for: activeModel.supportedProfileID) {
+                statusText = "Activated \(activeModel.displayName). \(profile.activationGuidance)"
+            } else {
+                statusText = "Activated \(activeModel.displayName). Warm it now or let Jarvis auto-warm on first send."
+            }
             assistantExperienceState = .armed
             JarvisHaptics.selection()
         } catch {
@@ -563,8 +669,13 @@ final class JarvisPhoneAppModel: ObservableObject {
             if needsModelSetup {
                 selectedTab = .home
                 assistantReturnTab = nil
-                assistantExperienceState = .unavailable(reason: "Import a GGUF model to continue.")
-                statusText = "Import a GGUF model to continue"
+                if hasReadyModel {
+                    assistantExperienceState = .unavailable(reason: "Activate one of your imported models to continue.")
+                    statusText = "Activate an imported model to continue"
+                } else {
+                    assistantExperienceState = .unavailable(reason: missingSupportedModelReason())
+                    statusText = missingSupportedModelStatusText()
+                }
             } else {
                 statusText = "Model removed"
             }
@@ -600,8 +711,8 @@ final class JarvisPhoneAppModel: ObservableObject {
         if needsModelSetup {
             selectedTab = .home
             showSetupFlow = true
-            statusText = "Import a GGUF model to continue"
-            assistantExperienceState = .unavailable(reason: "Import and activate a model first.")
+            statusText = missingSupportedModelStatusText()
+            assistantExperienceState = .unavailable(reason: missingSupportedModelReason())
             JarvisHaptics.error()
             return
         }
@@ -616,7 +727,21 @@ final class JarvisPhoneAppModel: ObservableObject {
         let cleanPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanPrompt.isEmpty else { return }
 
+        if !settings.autoWarmOnFirstSend {
+            switch runtimeState {
+            case .cold, .failed, .paused:
+                let reason = "Warm \(activeModel?.displayName ?? "the active model") before sending. Auto-warm on first send is turned off."
+                statusText = reason
+                assistantExperienceState = .unavailable(reason: reason)
+                JarvisHaptics.error()
+                return
+            default:
+                break
+            }
+        }
+
         streamTask?.cancel()
+        groundingTransitionTask?.cancel()
         runtimeState = runtime.state
 
         let historyForRuntime = conversation.messages
@@ -635,6 +760,13 @@ final class JarvisPhoneAppModel: ObservableObject {
         assistantSuggestions = []
         JarvisHaptics.softImpact()
 
+        groundingTransitionTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 420_000_000)
+            guard let self else { return }
+            guard self.isSending, self.assistantExperienceState == .thinking else { return }
+            self.assistantExperienceState = .grounding
+        }
+
         streamTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -645,6 +777,10 @@ final class JarvisPhoneAppModel: ObservableObject {
                     if !emittedFirstToken {
                         emittedFirstToken = true
                         await MainActor.run {
+                            self.groundingTransitionTask?.cancel()
+                            self.groundingTransitionTask = nil
+                        }
+                        await MainActor.run {
                             self.assistantExperienceState = .responding
                         }
                     }
@@ -653,6 +789,8 @@ final class JarvisPhoneAppModel: ObservableObject {
                 await self.finalizeStreamingMessage(id: streamingID)
                 await MainActor.run {
                     self.isSending = false
+                    self.groundingTransitionTask?.cancel()
+                    self.groundingTransitionTask = nil
                     self.statusText = "Ready"
                     self.runtimeState = self.runtime.state
                     self.assistantExperienceState = .groundedAnswerReady
@@ -664,6 +802,8 @@ final class JarvisPhoneAppModel: ObservableObject {
                 let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                 await MainActor.run {
                     self.isSending = false
+                    self.groundingTransitionTask?.cancel()
+                    self.groundingTransitionTask = nil
                     self.runtimeState = self.runtime.state
                     self.statusText = message
                     self.replaceStreamingMessage(id: streamingID, with: "I couldn't complete that request: \(message)")
@@ -677,15 +817,20 @@ final class JarvisPhoneAppModel: ObservableObject {
 
     func cancelStreaming() {
         streamTask?.cancel()
+        groundingTransitionTask?.cancel()
+        groundingTransitionTask = nil
         runtime.cancel()
         isSending = false
         runtimeState = runtime.state
         statusText = "Cancelled"
-        assistantExperienceState = needsModelSetup ? .unavailable(reason: "Import a local model to continue.") : .armed
+        assistantExperienceState = needsModelSetup ? .unavailable(reason: missingSupportedModelReason()) : .armed
         JarvisHaptics.selection()
     }
 
     func setAssistantInputMode(_ mode: AssistantInputMode) {
+        if assistantInputMode == .voice, mode != .voice {
+            stopVoicePreview(commit: false)
+        }
         assistantInputMode = mode
         switch mode {
         case .text:
@@ -703,7 +848,7 @@ final class JarvisPhoneAppModel: ObservableObject {
 
     func startVoicePreview() {
         guard !needsModelSetup else {
-            assistantExperienceState = .unavailable(reason: "Model setup required before voice responses.")
+            assistantExperienceState = .unavailable(reason: missingSupportedModelReason())
             return
         }
         guard canRunInference else {
@@ -713,28 +858,41 @@ final class JarvisPhoneAppModel: ObservableObject {
 
         assistantInputMode = .voice
         assistantLiveTranscript = ""
-        assistantExperienceState = .listening
-        voicePreviewTask?.cancel()
-        voicePreviewTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 1_100_000_000)
-            guard let self, self.assistantExperienceState == .listening else { return }
-            self.assistantExperienceState = .transcribing
+        assistantExperienceState = .thinking
+        statusText = "Preparing voice input"
+        JarvisHaptics.listeningStart()
+
+        let options = JarvisSpeechSessionOptions(
+            autoSendAfterSilence: true,
+            silenceTimeout: 0.95
+        )
+
+        Task { [weak self] in
+            guard let self else { return }
+            await self.speechCoordinator.start(options: options) { [weak self] committed in
+                Task { @MainActor [weak self] in
+                    self?.handleCommittedSpeechTranscript(committed)
+                }
+            }
         }
-        JarvisHaptics.softImpact()
     }
 
     func stopVoicePreview(commit: Bool) {
-        voicePreviewTask?.cancel()
-        voicePreviewTask = nil
-        if commit, !assistantLiveTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let transcript = assistantLiveTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
-            draft = transcript
+        if commit {
+            statusText = "Finalizing voice input"
+            assistantExperienceState = .transcribing
+            Task { [weak self] in
+                await self?.speechCoordinator.stop(commitIfAvailable: true)
+            }
+        } else {
+            statusText = "Voice cancelled"
             assistantLiveTranscript = ""
-            assistantExperienceState = .thinking
-            send(prompt: transcript)
-            return
+            assistantExperienceState = needsModelSetup ? .unavailable(reason: missingSupportedModelReason()) : .armed
+            Task { [weak self] in
+                await self?.speechCoordinator.cancel()
+            }
         }
-        assistantExperienceState = .armed
+        JarvisHaptics.listeningStop()
     }
 
     func performAssistantSuggestion(_ suggestion: AssistantSuggestion) {
@@ -857,30 +1015,15 @@ final class JarvisPhoneAppModel: ObservableObject {
         models = modelLibrary.loadModels()
         activeModelID = modelLibrary.activeModelID()
 
-        if activeModelID == nil,
-           let firstReady = models.first(where: { $0.status == .ready }) {
-            try? modelLibrary.setActiveModel(id: firstReady.id)
-            models = modelLibrary.loadModels()
-            activeModelID = modelLibrary.activeModelID()
-        }
-
         if let activeModel, activeModel.status == .ready {
-            let modelURL = modelLibrary.modelFileURL(for: activeModel)
-            if FileManager.default.fileExists(atPath: modelURL.path) {
-                let selection = JarvisRuntimeModelSelection(
-                    displayName: activeModel.displayName,
-                    path: modelURL.path
-                )
-                runtime.setSelectedModel(selection)
-            } else {
-                runtime.setSelectedModel(nil)
-                statusText = "Selected model file is missing. Re-import \(activeModel.displayName)."
-            }
+            let selection = modelLibrary.runtimeSelection(for: activeModel)
+            runtime.setSelectedModel(selection)
         } else {
             runtime.setSelectedModel(nil)
         }
 
         runtimeState = runtime.state
+        modelFileAccessState = runtime.fileAccessState
     }
 
     private func warmModelIfPossible(source: String) {
@@ -904,7 +1047,8 @@ final class JarvisPhoneAppModel: ObservableObject {
             return
         }
 
-        statusText = source == "launch" ? "Auto-warming active model" : "Warming active model"
+        let warmTargetName = activeModel?.displayName ?? supportedModelDisplayName
+        statusText = source == "launch" ? "Auto-warming \(warmTargetName)" : "Warming \(warmTargetName)"
         assistantExperienceState = .thinking
 
         Task {
@@ -960,13 +1104,25 @@ final class JarvisPhoneAppModel: ObservableObject {
         }
     }
 
+    private func handleCommittedSpeechTranscript(_ transcript: String) {
+        let clean = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        assistantLiveTranscript = clean
+        assistantExperienceState = .transcribing
+        statusText = "Voice captured"
+        if assistantInputMode == .voice {
+            send(prompt: clean)
+            assistantLiveTranscript = ""
+        }
+    }
+
     private func syncAssistantExperience(with state: JarvisModelRuntimeState) {
         guard selectedTab == .assistant || assistantInputMode == .voice else { return }
 
         switch state {
         case .noModel:
             if needsModelSetup {
-                assistantExperienceState = .unavailable(reason: "Import a local model to continue.")
+                assistantExperienceState = .unavailable(reason: missingSupportedModelReason())
             }
         case .runtimeUnavailable(let reason):
             assistantExperienceState = .unavailable(reason: reason)
@@ -987,6 +1143,62 @@ final class JarvisPhoneAppModel: ObservableObject {
         }
     }
 
+    private func syncAssistantExperience(withFileAccess state: JarvisModelFileAccessState) {
+        guard selectedTab == .assistant || assistantInputMode == .voice else { return }
+        guard !isSending else { return }
+
+        switch state {
+        case .noImportedFile:
+            if needsModelSetup {
+                assistantExperienceState = .unavailable(reason: missingSupportedModelReason())
+            }
+        case .bookmarkCreated(_, let detail), .accessPending(_, let detail):
+            statusText = detail
+            if assistantInputMode == .text, !needsModelSetup {
+                assistantExperienceState = .armed
+            }
+        case .accessGranted:
+            if assistantInputMode == .text, !needsModelSetup {
+                assistantExperienceState = .armed
+            }
+        case .accessLost(_, let reason), .bookmarkResolutionFailed(_, let reason):
+            statusText = reason
+            assistantExperienceState = .error(message: reason)
+        }
+    }
+
+    private func syncAssistantExperienceWithSpeech(_ state: JarvisSpeechState) {
+        guard assistantInputMode == .voice || selectedTab == .assistant else { return }
+        guard !isSending else { return }
+
+        switch state {
+        case .idle:
+            if assistantInputMode == .voice, !needsModelSetup {
+                assistantExperienceState = .armed
+            }
+        case .requestingPermission:
+            assistantExperienceState = .thinking
+            statusText = "Requesting microphone access"
+        case .ready:
+            if assistantInputMode == .voice {
+                assistantExperienceState = .armed
+                statusText = "Voice ready"
+            }
+        case .listening:
+            assistantExperienceState = .listening
+            statusText = "Listening"
+        case .transcribing:
+            assistantExperienceState = .transcribing
+            statusText = "Transcribing"
+        case .stopping:
+            assistantExperienceState = .transcribing
+            statusText = "Finalizing"
+        case .failed(let failure):
+            assistantExperienceState = .error(message: failure.message)
+            statusText = failure.message
+        }
+    }
+
     private func pendingWarmupStatusText() -> String {
         switch runtimeState {
         case .cold(let modelName):
@@ -997,6 +1209,39 @@ final class JarvisPhoneAppModel: ObservableObject {
             return "Retrying \(modelName ?? "model")"
         default:
             return "Thinking locally"
+        }
+    }
+
+    private func missingSupportedModelReason() -> String {
+        if hasReadyModel {
+            return "Activate one of your imported models to continue. Recommended target: \(supportedModelDisplayName)."
+        }
+        return "Import and activate a bookmark-backed local GGUF model to continue. Recommended target: \(supportedModelDisplayName)."
+    }
+
+    private func missingSupportedModelStatusText() -> String {
+        hasReadyModel ? "Activate an imported model to continue" : "Import and activate a local model to continue"
+    }
+
+    private func importOutcomeMessage(for model: JarvisImportedModel) -> String {
+        switch model.status {
+        case .ready:
+            if let profile = JarvisSupportedModelCatalog.profile(for: model.supportedProfileID) {
+                let suffix = model.statusMessage.map { " \($0)" } ?? ""
+                return "Imported \(model.displayName). Security-scoped bookmark stored. It matches the curated iPhone profile: \(profile.displayName). Activate it from Model Library.\(suffix)"
+            }
+            if let message = model.statusMessage, !message.isEmpty {
+                return "Imported \(model.displayName). Security-scoped bookmark stored. \(message)"
+            }
+            return "Imported \(model.displayName). Security-scoped bookmark stored. Activate it from Model Library when ready."
+        case .unsupported:
+            return model.statusMessage ?? "Imported \(model.displayName), but the file is not currently supported."
+        case .invalid:
+            return model.statusMessage ?? "Imported \(model.displayName), but the file is invalid."
+        case .missing:
+            return model.statusMessage ?? "Imported model file is missing."
+        case .failed:
+            return model.statusMessage ?? "Model import failed validation."
         }
     }
 

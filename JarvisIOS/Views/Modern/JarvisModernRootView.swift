@@ -126,7 +126,7 @@ struct ModernHomeStatusCard: View {
             Button {
                 appModel.showSetupFlow = true
             } label: {
-                Label("Set Up Model", systemImage: "arrow.right.circle.fill")
+                Label(appModel.hasReadyModel ? "Choose Model" : "Set Up Model", systemImage: "arrow.right.circle.fill")
                     .font(.subheadline.weight(.semibold))
             }
             .buttonStyle(.borderedProminent)
@@ -225,15 +225,15 @@ struct ModernHomeStatusCard: View {
     private var statusTitle: String {
         switch appModel.runtimeState {
         case .noModel:
-            return "Model Required"
+            return appModel.hasReadyModel ? "Activation Needed" : "Setup Needed"
         case .runtimeUnavailable:
-            return "Runtime Unavailable"
+            return "Assistant Limited"
         case .cold:
-            return "Model Ready To Warm"
+            return "Ready To Start"
         case .warming:
-            return "Warming"
+            return "Preparing Assistant"
         case .ready:
-            return "Ready"
+            return "Assistant Ready"
         case .busy:
             return "Working"
         case .paused:
@@ -246,15 +246,17 @@ struct ModernHomeStatusCard: View {
     private var statusSubtitle: String {
         switch appModel.runtimeState {
         case .noModel:
-            return "Import a GGUF model to start"
+            return appModel.hasReadyModel
+                ? "Activate one of your imported models. Import, activation, and warmup are separate steps now."
+                : "Import a bookmark-backed GGUF model to unlock assistant mode."
         case .runtimeUnavailable(let reason):
             return reason
         case .cold(let modelName):
-            return "\(modelName) is imported and cold. First message will warm it."
+            return "\(modelName) is loaded. First request will start it."
         case .warming(let modelName, _, let detail):
-            return "\(modelName): \(detail)"
+            return "Preparing \(modelName): \(detail)"
         case .ready(let modelName):
-            return "Using \(modelName)"
+            return "Using \(modelName) on-device."
         case .busy(let modelName, let detail):
             return "\(modelName): \(detail)"
         case .paused(let modelName, let detail):
@@ -446,7 +448,7 @@ struct ModernVisualIntelligenceTabView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Visual Intelligence")
                             .font(.title2.weight(.semibold))
-                        Text("The route and tab are wired for future camera and file-aware assistant work, but this foundation thread keeps it as a clean handoff instead of a broken dead-end.")
+                        Text("A premium shell for upcoming camera, screenshot, and file-aware assistant workflows. This mode is intentionally real now so future intelligence features land without another navigation rewrite.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -474,6 +476,17 @@ struct ModernVisualIntelligenceTabView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .buttonStyle(.bordered)
+                    }
+                    .padding()
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("Planned visual actions", systemImage: "sparkles")
+                            .font(.headline)
+                        Text("1. Capture screen context\n2. Ask visual follow-up\n3. Save insight to knowledge")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     .padding()
                     .background(Color(.secondarySystemGroupedBackground))

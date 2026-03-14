@@ -21,6 +21,20 @@ enum JarvisHaptics {
         generator.impactOccurred(intensity: 0.85)
     }
 
+    static func listeningStart() {
+        guard isEnabled else { return }
+        let generator = UIImpactFeedbackGenerator(style: .rigid)
+        generator.prepare()
+        generator.impactOccurred(intensity: 0.92)
+    }
+
+    static func listeningStop() {
+        guard isEnabled else { return }
+        let generator = UISelectionFeedbackGenerator()
+        generator.prepare()
+        generator.selectionChanged()
+    }
+
     static func success() {
         guard isEnabled else { return }
         let generator = UINotificationFeedbackGenerator()
