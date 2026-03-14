@@ -1,4 +1,5 @@
 import SwiftUI
+<<<<<<< HEAD
 import AppKit
 
 struct ModernSearchView: View {
@@ -325,5 +326,11 @@ private struct JarvisSecondaryButton: ButtonStyle {
             )
             .foregroundStyle(Color(nsColor: .labelColor))
             .opacity(configuration.isPressed ? 0.7 : 1.0)
+=======
+
+struct ModernSearchView: View {
+    var body: some View {
+        LegacyKnowledgeBaseView()
+>>>>>>> f5a551d2c5aa8c8a00c5c9122826148403d5a6a2
     }
 }

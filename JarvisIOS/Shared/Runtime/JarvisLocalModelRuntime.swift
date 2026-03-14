@@ -226,6 +226,7 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
 
 enum JarvisGGUFEngineFactory {
     static func makeDefault() -> JarvisGGUFEngine {
+<<<<<<< HEAD
         #if canImport(LocalLLMClientCore) && canImport(LocalLLMClientLlama)
         if #available(iOS 17.0, *) {
             print("[JarvisRuntime] Using LocalLLMClient GGUF engine")
@@ -235,6 +236,13 @@ enum JarvisGGUFEngineFactory {
         }
         #else
         print("[JarvisRuntime] LocalLLMClient not available, falling back to stub")
+=======
+        #if canImport(LocalLLMClientLlama)
+        if #available(iOS 17.0, *) {
+            print("[JarvisRuntime] Using LocalLLMClient GGUF engine")
+            return JarvisLocalLLMClientEngine()
+        }
+>>>>>>> f5a551d2c5aa8c8a00c5c9122826148403d5a6a2
         #endif
         print("[JarvisRuntime] Falling back to StubGGUFEngine")
         return StubGGUFEngine()
