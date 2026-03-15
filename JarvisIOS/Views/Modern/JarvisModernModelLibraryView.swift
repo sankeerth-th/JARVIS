@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// Modern model library view with improved UX
 struct JarvisModernModelLibraryView: View {
@@ -13,7 +12,7 @@ struct JarvisModernModelLibraryView: View {
             } header: {
                 Text("Recommended on iPhone")
             } footer: {
-                Text("Jarvis now imports bookmark-backed GGUF files generally. The curated profile below is the recommended Gemma path for serious on-device use.")
+                Text("Jarvis can import and activate any valid GGUF model. Recommended profiles have stronger sizing and performance guidance for iPhone.")
             }
 
             Section {
@@ -73,12 +72,12 @@ struct JarvisModernModelLibraryView: View {
                 appModel.beginModelImport()
             }
         }
-        .fileImporter(
-            isPresented: $appModel.isModelImporterPresented,
-            allowedContentTypes: [UTType(filenameExtension: "gguf") ?? .data],
-            allowsMultipleSelection: false,
-            onCompletion: appModel.handleModelImportResult
-        )
+        .sheet(isPresented: $appModel.isModelImporterPresented) {
+            JarvisGGUFImportPicker(
+                isPresented: $appModel.isModelImporterPresented,
+                onCompletion: appModel.handleModelImportResult
+            )
+        }
     }
 }
 
@@ -114,10 +113,22 @@ struct ModelRow: View {
                 .foregroundStyle(.secondary)
 
                 if let profile = JarvisSupportedModelCatalog.profile(for: model.supportedProfileID) {
-                    Text("Curated profile: \(profile.displayName)")
+                    Text("\(profile.compatibilityClass.displayName): \(profile.displayName)")
                         .font(.caption)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(profile.compatibilityClass == .primaryRecommended ? .green : .teal)
+                } else {
+                    Text("Generic GGUF: activatable, but not yet profiled for this iPhone path")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 }
+
+                Text("Import: \(model.importState.displayName)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Text("Activation: \(model.activationEligibility.displayName)")
+                    .font(.caption)
+                    .foregroundStyle(model.canActivate ? .green : .orange)
 
                 Text("Access: \(model.primaryAsset.lastFileAccessStatus.displayName)")
                     .font(.caption)
@@ -146,7 +157,7 @@ struct ModelRow: View {
         }
         .padding(.vertical, 4)
         .swipeActions(edge: .trailing) {
-            if model.status == .ready && !isActive {
+            if model.canActivate && !isActive {
                 Button {
                     appModel.setActiveModel(id: model.id)
                 } label: {
@@ -181,20 +192,28 @@ struct ModelRow: View {
     }
     
     private var statusIcon: String {
-        switch model.status {
-        case .ready: return isActive ? "cpu.fill" : "cpu"
-        case .invalid: return "exclamationmark.triangle"
-        case .unsupported: return "xmark.octagon"
-        case .missing: return "questionmark.folder"
-        case .failed: return "xmark.circle"
+        switch (model.importState, model.activationEligibility) {
+        case (.imported, .eligible):
+            return isActive ? "cpu.fill" : "cpu"
+        case (.imported, .unsupportedProfile):
+            return "tray.full"
+        case (.invalid, _):
+            return "exclamationmark.triangle"
+        case (.missing, _):
+            return "questionmark.folder"
+        case (.failed, _), (.imported, .accessLost), (.imported, .validationFailed):
+            return "xmark.circle"
         }
     }
     
     private var statusColor: Color {
-        switch model.status {
-        case .ready: return isActive ? .indigo : .green
-        case .invalid, .unsupported: return .orange
-        case .missing, .failed: return .red
+        switch (model.importState, model.activationEligibility) {
+        case (.imported, .eligible):
+            return isActive ? .indigo : .green
+        case (.imported, .unsupportedProfile), (.invalid, _):
+            return .orange
+        case (.missing, _), (.failed, _), (.imported, .accessLost), (.imported, .validationFailed):
+            return .red
         }
     }
 }
@@ -243,7 +262,7 @@ struct JarvisModernSetupView: View {
                                 .font(.headline)
                             
                             StepRow(number: 1, title: "Download a GGUF model", description: appModel.supportedModelImportGuidance)
-                            StepRow(number: 2, title: "Import and bookmark it", description: "Select the GGUF from Files or iCloud Drive. Jarvis stores a persistent security-scoped bookmark for later access.")
+                            StepRow(number: 2, title: "Import and copy it locally", description: "Select the GGUF from Files or iCloud Drive. Jarvis copies it into local app storage before activation.")
                             StepRow(number: 3, title: "Activate, warm, and chat", description: "Activation is explicit. Warm the model now or let Jarvis auto-warm on the first send.")
                         }
                         .padding()
@@ -272,9 +291,9 @@ struct JarvisModernSetupView: View {
                                                     .font(.caption.weight(.semibold))
                                                     .foregroundStyle(.green)
                                             }
-                                            Text(model.status.displayName)
+                                            Text("\(model.importState.displayName) • \(model.activationEligibility.displayName)")
                                                 .font(.caption)
-                                                .foregroundStyle(model.status == .ready ? .green : .orange)
+                                                .foregroundStyle(model.canActivate ? .green : .orange)
                                         }
                                     }
                                     .padding(.vertical, 4)
@@ -332,12 +351,12 @@ struct JarvisModernSetupView: View {
                 }
             }
         }
-        .fileImporter(
-            isPresented: $appModel.isModelImporterPresented,
-            allowedContentTypes: [UTType(filenameExtension: "gguf") ?? .data],
-            allowsMultipleSelection: false,
-            onCompletion: appModel.handleModelImportResult
-        )
+        .sheet(isPresented: $appModel.isModelImporterPresented) {
+            JarvisGGUFImportPicker(
+                isPresented: $appModel.isModelImporterPresented,
+                onCompletion: appModel.handleModelImportResult
+            )
+        }
     }
 }
 
@@ -358,6 +377,10 @@ private struct SupportedProfileCard: View {
                 .foregroundStyle(.secondary)
 
             Text(appModel.supportedModelImportGuidance)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Text("\(appModel.supportedModelClassificationText) • \(appModel.supportedModelCapabilitySummary)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 

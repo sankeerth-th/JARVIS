@@ -1,10 +1,49 @@
 import Foundation
 
-public enum JarvisSupportedModelProfileID: String, Codable, CaseIterable, Identifiable {
+public enum JarvisSupportedModelProfileID: String, Codable, CaseIterable, Identifiable, Sendable {
     case gemma3_4b_it_q4_0
     case llama32_1b_instruct_4bit
 
     public var id: String { rawValue }
+}
+
+public enum JarvisModelCompatibilityClass: String, Codable, CaseIterable, Sendable {
+    case primaryRecommended
+    case secondarySupported
+    case importOnly
+    case unsupported
+
+    public var displayName: String {
+        switch self {
+        case .primaryRecommended:
+            return "Primary Recommended"
+        case .secondarySupported:
+            return "Secondary Supported"
+        case .importOnly:
+            return "Import Only"
+        case .unsupported:
+            return "Unsupported"
+        }
+    }
+}
+
+public struct JarvisRuntimeCapabilityFlags: Equatable, Sendable {
+    public var supportsTextGeneration: Bool
+    public var supportsVoiceEntry: Bool
+    public var supportsVisionInputs: Bool
+    public var requiresProjectorForVision: Bool
+
+    public init(
+        supportsTextGeneration: Bool = true,
+        supportsVoiceEntry: Bool = true,
+        supportsVisionInputs: Bool = false,
+        requiresProjectorForVision: Bool = false
+    ) {
+        self.supportsTextGeneration = supportsTextGeneration
+        self.supportsVoiceEntry = supportsVoiceEntry
+        self.supportsVisionInputs = supportsVisionInputs
+        self.requiresProjectorForVision = requiresProjectorForVision
+    }
 }
 
 public struct JarvisSupportedModelProfile: Equatable, Sendable, Identifiable {
@@ -18,6 +57,8 @@ public struct JarvisSupportedModelProfile: Equatable, Sendable, Identifiable {
     public var minimumFileSizeBytes: Int64
     public var maximumFileSizeBytes: Int64
     public var supportsVision: Bool
+    public var compatibilityClass: JarvisModelCompatibilityClass
+    public var runtimeCapabilities: JarvisRuntimeCapabilityFlags
     public var recommendedRuntimeConfiguration: JarvisRuntimeConfiguration
 
     public init(
@@ -31,6 +72,8 @@ public struct JarvisSupportedModelProfile: Equatable, Sendable, Identifiable {
         minimumFileSizeBytes: Int64,
         maximumFileSizeBytes: Int64,
         supportsVision: Bool,
+        compatibilityClass: JarvisModelCompatibilityClass,
+        runtimeCapabilities: JarvisRuntimeCapabilityFlags,
         recommendedRuntimeConfiguration: JarvisRuntimeConfiguration
     ) {
         self.id = id
@@ -43,6 +86,8 @@ public struct JarvisSupportedModelProfile: Equatable, Sendable, Identifiable {
         self.minimumFileSizeBytes = minimumFileSizeBytes
         self.maximumFileSizeBytes = maximumFileSizeBytes
         self.supportsVision = supportsVision
+        self.compatibilityClass = compatibilityClass
+        self.runtimeCapabilities = runtimeCapabilities
         self.recommendedRuntimeConfiguration = recommendedRuntimeConfiguration
     }
 
@@ -81,17 +126,20 @@ public struct JarvisSupportedModelProfile: Equatable, Sendable, Identifiable {
 public struct JarvisModelCompatibilityAssessment: Equatable, Sendable {
     public var status: JarvisModelRecordStatus
     public var supportedProfileID: JarvisSupportedModelProfileID?
+    public var compatibilityClass: JarvisModelCompatibilityClass
     public var displayMessage: String
     public var developerNotes: [String]
 
     public init(
         status: JarvisModelRecordStatus,
         supportedProfileID: JarvisSupportedModelProfileID?,
+        compatibilityClass: JarvisModelCompatibilityClass,
         displayMessage: String,
         developerNotes: [String] = []
     ) {
         self.status = status
         self.supportedProfileID = supportedProfileID
+        self.compatibilityClass = compatibilityClass
         self.displayMessage = displayMessage
         self.developerNotes = developerNotes
     }
@@ -101,8 +149,8 @@ public enum JarvisSupportedModelCatalog {
     public static let goldPath = JarvisSupportedModelProfile(
         id: .gemma3_4b_it_q4_0,
         displayName: "Gemma 3 4B IT (Q4_0 GGUF)",
-        shortDescription: "The serious iPhone foundation path: a bookmark-backed 4B Gemma model with future projector-based multimodal support.",
-        importGuidance: "Import gemma-3-4b-it-q4_0.gguf for text use. Attach mmproj-model-f16-4B.gguf later to prepare for future visual input support.",
+        shortDescription: "The recommended iPhone path: a locally copied 4B Gemma model with optional projector-based multimodal support later.",
+        importGuidance: "Import gemma-3-4b-it-q4_0.gguf or gemma-3-4b-it-qat-q4_0.gguf for text use. Attach mmproj-model-f16-4B.gguf later only for future visual input support.",
         activationGuidance: "After import, activate the model explicitly from Model Library. Warm it before the first heavy session or let Jarvis auto-warm on first send.",
         allowedQuantizationTokens: ["q40"],
         requiredFilenameGroups: [
@@ -111,9 +159,16 @@ public enum JarvisSupportedModelCatalog {
             ["4b"],
             ["it", "instruct"]
         ],
-        minimumFileSizeBytes: 2_800_000_000,
+        minimumFileSizeBytes: 2_300_000_000,
         maximumFileSizeBytes: 4_300_000_000,
         supportsVision: true,
+        compatibilityClass: .primaryRecommended,
+        runtimeCapabilities: JarvisRuntimeCapabilityFlags(
+            supportsTextGeneration: true,
+            supportsVoiceEntry: true,
+            supportsVisionInputs: true,
+            requiresProjectorForVision: true
+        ),
         recommendedRuntimeConfiguration: JarvisRuntimeConfiguration(
             performanceProfile: .balanced,
             contextWindow: .compact,
@@ -139,6 +194,13 @@ public enum JarvisSupportedModelCatalog {
         minimumFileSizeBytes: 350_000_000,
         maximumFileSizeBytes: 1_800_000_000,
         supportsVision: false,
+        compatibilityClass: .secondarySupported,
+        runtimeCapabilities: JarvisRuntimeCapabilityFlags(
+            supportsTextGeneration: true,
+            supportsVoiceEntry: true,
+            supportsVisionInputs: false,
+            requiresProjectorForVision: false
+        ),
         recommendedRuntimeConfiguration: JarvisRuntimeConfiguration(
             performanceProfile: .balanced,
             contextWindow: .compact,
@@ -172,6 +234,7 @@ public enum JarvisSupportedModelCatalog {
             return JarvisModelCompatibilityAssessment(
                 status: .unsupported,
                 supportedProfileID: nil,
+                compatibilityClass: .unsupported,
                 displayMessage: "Only GGUF files are supported for the iPhone local model path."
             )
         }
@@ -180,6 +243,7 @@ public enum JarvisSupportedModelCatalog {
             return JarvisModelCompatibilityAssessment(
                 status: .invalid,
                 supportedProfileID: nil,
+                compatibilityClass: .unsupported,
                 displayMessage: "Model file appears empty."
             )
         }
@@ -188,16 +252,18 @@ public enum JarvisSupportedModelCatalog {
             return JarvisModelCompatibilityAssessment(
                 status: .ready,
                 supportedProfileID: matchedProfile.id,
-                displayMessage: "Supported iPhone profile. Safe to activate on a physical device.",
+                compatibilityClass: matchedProfile.compatibilityClass,
+                displayMessage: "\(matchedProfile.compatibilityClass.displayName) iPhone profile. Safe to activate on a physical device.",
                 developerNotes: [matchedProfile.shortDescription]
             )
         }
 
         if let nearMatch = allProfiles.first(where: { $0.almostMatches(filename: filename, fileSizeBytes: fileSizeBytes) }) {
             return JarvisModelCompatibilityAssessment(
-                status: .unsupported,
+                status: .ready,
                 supportedProfileID: nil,
-                displayMessage: "Imported, but not activatable on iPhone in this build. Jarvis currently supports \(nearMatch.displayName) only.",
+                compatibilityClass: .importOnly,
+                displayMessage: "Valid GGUF import. This looks close to \(nearMatch.displayName), but the exact size or quantization differs. Activation is allowed, though performance may vary on iPhone.",
                 developerNotes: [
                     "Expected quantization tokens: \(nearMatch.allowedQuantizationTokens.joined(separator: ", "))",
                     "Expected size range: \(ByteCountFormatter.string(fromByteCount: nearMatch.minimumFileSizeBytes, countStyle: .file)) - \(ByteCountFormatter.string(fromByteCount: nearMatch.maximumFileSizeBytes, countStyle: .file))"
@@ -206,9 +272,10 @@ public enum JarvisSupportedModelCatalog {
         }
 
         return JarvisModelCompatibilityAssessment(
-            status: .unsupported,
+            status: .ready,
             supportedProfileID: nil,
-            displayMessage: "Imported for inspection only. This iPhone build is optimized for \(goldPath.displayName), not generic GGUF activation.",
+            compatibilityClass: .importOnly,
+            displayMessage: "Valid GGUF import. This model does not match a profiled iPhone target yet, but activation is allowed if warmup succeeds.",
             developerNotes: [goldPath.importGuidance]
         )
     }

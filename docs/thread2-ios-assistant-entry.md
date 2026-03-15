@@ -1,36 +1,163 @@
-# Thread 2: iOS Assistant Entry Foundation
+# Thread 2: iOS Assistant Entry, Voice, and Shortcut Architecture
 
-## Current isolated work
-- Added a reusable speech layer in [`JarvisIOS/Shared/Voice/JarvisSpeechCoordinator.swift`](/Users/sanks04/Desktop/JARVIS/JarvisIOS/Shared/Voice/JarvisSpeechCoordinator.swift).
-- Added focused tests in [`JarvisIOSTests/JarvisSpeechCoordinatorTests.swift`](/Users/sanks04/Desktop/JARVIS/JarvisIOSTests/JarvisSpeechCoordinatorTests.swift).
+## Scope
+- Thread 2 owns assistant entry, voice capture, App Intents/App Shortcuts, and iPhone-specific assistant flow.
+- Thread 1 remains the owner of local model import/runtime internals.
+- The iOS assistant layer now treats runtime readiness as a hard gate before it will send or auto-send requests.
 
-## Speech foundation shape
-- `JarvisSpeechCoordinator` is the app-facing state machine for voice capture.
-- `JarvisSpeechRecognitionClient` is the boundary between UI/app state and the live `Speech` + `AVAudioSession` + `AVAudioEngine` stack.
-- The coordinator owns:
-  - permission flow
-  - speech state (`idle`, `requestingPermission`, `ready`, `listening`, `transcribing`, `stopping`, `failed`)
-  - transcript accumulation
-  - silence-based auto-send
-  - stale session suppression
-- The live client owns:
-  - microphone permission
-  - speech recognition permission
-  - audio session activation/deactivation
-  - audio engine tap lifecycle
-  - recognition task lifecycle
+## Assistant Entry Router
+- `JarvisLaunchRoute` is the single serialized handoff contract for:
+  - App Intents / App Shortcuts
+  - deep links
+  - in-app quick actions
+  - legacy bridge calls
+- Supported assistant entry routes:
+  - `assistant`
+  - `chat`
+  - `voice`
+  - `visual`
+  - `knowledge`
+  - `draftReply`
+  - `continueConversation`
+  - `systemAssistant`
+- `JarvisPhoneAppModel` is the sole consumer of launch routes and owns:
+  - selected tab
+  - active assistant route
+  - assistant task
+  - assistant task context
+  - pending model-library presentation
+  - voice auto-start behavior
 
-## Integration points for the next pass
-- Replace the current preview-only voice path in [`JarvisIOS/JarvisPhoneAppModel.swift`](/Users/sanks04/Desktop/JARVIS/JarvisIOS/JarvisPhoneAppModel.swift) with the coordinator.
-- Bind assistant UI in [`JarvisIOS/Views/Modern/AssistantTabView.swift`](/Users/sanks04/Desktop/JARVIS/JarvisIOS/Views/Modern/AssistantTabView.swift) to coordinator state instead of synthetic `startVoicePreview()` / `stopVoicePreview()`.
-- Add target privacy strings for:
-  - microphone usage
-  - speech recognition usage
-- Route `voiceInput` launch actions into:
-  - assistant tab selection
-  - composer focus handling
-  - optional auto-start listening
+## Runtime-First Gate
+- Assistant entry no longer assumes the runtime is usable.
+- The app model derives explicit gate states before sending:
+  - `noModel`
+  - `unsupportedModel`
+  - `fileAccessPending`
+  - `fileAccessLost`
+  - `runtimeCold`
+  - `warming`
+  - `ready`
+  - `failed`
+- Assistant UI uses those states to decide whether to:
+  - allow send
+  - present warmup
+  - show model-library recovery
+  - explain why a route is unavailable
 
-## Current verification status
-- Narrow iOS SDK type-check for `JarvisSpeechCoordinator.swift`: passed.
-- Full iOS target/test build: currently blocked by an existing package issue in `swift-jinja` (`OrderedCollections` module resolution), unrelated to the speech layer.
+## Assistant State Model
+- `AssistantExperienceState` now models the full assistant lifecycle:
+  - `idle`
+  - `armed`
+  - `listening`
+  - `transcribing`
+  - `thinking`
+  - `processing`
+  - `grounding`
+  - `responding`
+  - `answerReady`
+  - `error`
+  - `unavailable`
+- `AssistantEntryStyle` differentiates entry surfaces:
+  - `standard`
+  - `assistant`
+  - `chat`
+  - `quickAsk`
+  - `quickCapture`
+  - `draftReply`
+  - `summarize`
+  - `continueConversation`
+  - `voiceFirst`
+  - `visualPreview`
+  - `systemAssistant`
+- `JarvisAssistantTask` now drives prompt shaping and UI expectations:
+  - `chat`
+  - `summarize`
+  - `reply`
+  - `draftEmail`
+  - `analyzeText`
+  - `visualDescribe`
+  - `prioritizeNotifications`
+  - `quickCapture`
+  - `knowledgeAnswer`
+
+## Voice Pipeline
+- `JarvisSpeechCoordinator` remains the speech engine boundary over:
+  - `Speech`
+  - `AVAudioSession`
+  - `AVAudioEngine`
+  - `SFSpeechRecognizer`
+- The assistant layer maps speech output into assistant state transitions:
+  - route enters voice mode
+  - runtime gate validates availability
+  - coordinator requests permission / starts transcription
+  - live transcript updates assistant transcript state
+  - silence detection commits transcript
+  - committed transcript goes through the normal assistant send path
+  - streamed model output shows in the same conversation surface
+- Voice settings now include:
+  - auto-start listening for voice entry
+  - auto-send after speech pause
+  - speech locale identifier
+
+## Shortcuts and Intents
+- `JarvisPhoneShortcuts.swift` now exposes thin route-writing intents instead of direct navigation logic.
+- Current intents:
+  - `OpenJarvisIntent`
+  - `OpenAssistantIntent`
+  - `AskJarvisIntent`
+  - `VoiceJarvisIntent`
+  - `VisualJarvisIntent`
+  - `DraftReplyIntent`
+  - `QuickCaptureIntent`
+  - `SummarizeTextIntent`
+  - `OpenKnowledgeIntent`
+  - `SearchLocalKnowledgeIntent`
+  - `OpenModelLibraryIntent`
+  - `ContinueConversationIntent`
+- Each intent:
+  - sets `openAppWhenRun = true`
+  - writes one `JarvisLaunchRoute`
+  - lets the app model resolve navigation after launch
+
+## Visual Soft Preview
+- Visual entry remains visible, but the app is explicit that this is a staged preview.
+- The assistant checks model capability flags before presenting it as ready.
+- If visual runtime support is not available, the route stays honest:
+  - preview state only
+  - clear unavailable reason
+  - no fake image-inference claim
+
+## Supported Model Product Shape
+- `JarvisSupportedModelCatalog` now classifies imported models as:
+  - `primaryRecommended`
+  - `secondarySupported`
+  - `importOnly`
+  - `unsupported`
+- Current product messaging:
+  - primary recommendation: `Gemma 3 4B IT Q4_0`
+  - secondary supported fallback: `Llama 3.2 1B Instruct 4-bit`
+  - generic GGUF imports remain bookmarkable but are not presented as equal activation targets on iPhone
+- Model library and assistant recovery UI surface the compatibility class and capability summary.
+
+## Verification
+- iOS app build:
+  - `xcodebuild -project Jarvis.xcodeproj -scheme JarvisIOS -destination 'platform=iOS Simulator,name=iPhone 17' build`
+- The shared `JarvisIOS` scheme now includes `JarvisIOSTests` in its test action.
+- Real local inference validation still requires a physical iPhone:
+  - simulator build success is necessary
+  - runtime import/warmup/streaming must still be confirmed on-device
+
+## Real-Device Validation Checklist
+- Import the primary recommended model on an iPhone.
+- Activate it and warm it successfully.
+- Launch assistant from:
+  - app UI
+  - shortcut
+  - deep link
+  - voice entry
+- Confirm:
+  - route lands in the intended surface
+  - voice auto-send works after pause
+  - warmup and failure states are explicit
+  - visual route stays in preview/unavailable mode when vision support is absent

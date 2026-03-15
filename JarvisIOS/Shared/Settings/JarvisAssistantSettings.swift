@@ -1,6 +1,6 @@
 import Foundation
 
-public enum JarvisStartupRoute: String, Codable, CaseIterable, Identifiable {
+public enum JarvisStartupRoute: String, Codable, CaseIterable, Identifiable, Sendable {
     case home
     case assistant
     case voice
@@ -29,18 +29,18 @@ public enum JarvisStartupRoute: String, Codable, CaseIterable, Identifiable {
         case .home:
             return .home
         case .assistant:
-            return .ask
+            return .assistant
         case .voice:
             return .voice
         case .visual:
             return .visualIntelligence
         case .knowledge:
-            return .search
+            return .knowledge
         }
     }
 }
 
-public enum JarvisRuntimePerformanceProfile: String, Codable, CaseIterable, Identifiable {
+public enum JarvisRuntimePerformanceProfile: String, Codable, CaseIterable, Identifiable, Sendable {
     case efficient
     case balanced
     case quality
@@ -59,7 +59,7 @@ public enum JarvisRuntimePerformanceProfile: String, Codable, CaseIterable, Iden
     }
 }
 
-public enum JarvisContextWindowPreset: String, Codable, CaseIterable, Identifiable {
+public enum JarvisContextWindowPreset: String, Codable, CaseIterable, Identifiable, Sendable {
     case automatic
     case compact
     case standard
@@ -107,7 +107,7 @@ public enum JarvisContextWindowPreset: String, Codable, CaseIterable, Identifiab
     }
 }
 
-public enum JarvisAssistantResponseStyle: String, Codable, CaseIterable, Identifiable {
+public enum JarvisAssistantResponseStyle: String, Codable, CaseIterable, Identifiable, Sendable {
     case concise
     case balanced
     case detailed
@@ -137,7 +137,7 @@ public enum JarvisAssistantResponseStyle: String, Codable, CaseIterable, Identif
     }
 }
 
-public struct JarvisRuntimeConfiguration: Equatable, Codable {
+public struct JarvisRuntimeConfiguration: Equatable, Codable, Sendable {
     public var performanceProfile: JarvisRuntimePerformanceProfile
     public var contextWindow: JarvisContextWindowPreset
     public var responseStyle: JarvisAssistantResponseStyle
@@ -173,6 +173,9 @@ public struct JarvisAssistantSettings: Codable, Equatable {
     public var autoScrollConversation: Bool
     public var showRuntimeDiagnostics: Bool
     public var hapticsEnabled: Bool
+    public var autoStartListeningForVoiceEntry: Bool
+    public var autoSendVoiceAfterPause: Bool
+    public var speechLocaleIdentifier: String?
 
     public init(
         startupRoute: JarvisStartupRoute = .home,
@@ -187,7 +190,10 @@ public struct JarvisAssistantSettings: Codable, Equatable {
         batterySaverMode: Bool = false,
         autoScrollConversation: Bool = true,
         showRuntimeDiagnostics: Bool = false,
-        hapticsEnabled: Bool = true
+        hapticsEnabled: Bool = true,
+        autoStartListeningForVoiceEntry: Bool = true,
+        autoSendVoiceAfterPause: Bool = true,
+        speechLocaleIdentifier: String? = nil
     ) {
         self.startupRoute = startupRoute
         self.preferredModelProfile = preferredModelProfile
@@ -202,6 +208,9 @@ public struct JarvisAssistantSettings: Codable, Equatable {
         self.autoScrollConversation = autoScrollConversation
         self.showRuntimeDiagnostics = showRuntimeDiagnostics
         self.hapticsEnabled = hapticsEnabled
+        self.autoStartListeningForVoiceEntry = autoStartListeningForVoiceEntry
+        self.autoSendVoiceAfterPause = autoSendVoiceAfterPause
+        self.speechLocaleIdentifier = speechLocaleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -218,6 +227,9 @@ public struct JarvisAssistantSettings: Codable, Equatable {
         case autoScrollConversation
         case showRuntimeDiagnostics
         case hapticsEnabled
+        case autoStartListeningForVoiceEntry
+        case autoSendVoiceAfterPause
+        case speechLocaleIdentifier
     }
 
     public init(from decoder: Decoder) throws {
@@ -235,6 +247,9 @@ public struct JarvisAssistantSettings: Codable, Equatable {
         autoScrollConversation = try container.decodeIfPresent(Bool.self, forKey: .autoScrollConversation) ?? true
         showRuntimeDiagnostics = try container.decodeIfPresent(Bool.self, forKey: .showRuntimeDiagnostics) ?? false
         hapticsEnabled = try container.decodeIfPresent(Bool.self, forKey: .hapticsEnabled) ?? true
+        autoStartListeningForVoiceEntry = try container.decodeIfPresent(Bool.self, forKey: .autoStartListeningForVoiceEntry) ?? true
+        autoSendVoiceAfterPause = try container.decodeIfPresent(Bool.self, forKey: .autoSendVoiceAfterPause) ?? true
+        speechLocaleIdentifier = try container.decodeIfPresent(String.self, forKey: .speechLocaleIdentifier)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     public static let `default` = JarvisAssistantSettings()

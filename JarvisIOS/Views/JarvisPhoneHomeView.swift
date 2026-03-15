@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct JarvisPhoneHomeView: View {
     @EnvironmentObject private var appModel: JarvisPhoneAppModel
@@ -22,12 +21,12 @@ struct JarvisPhoneHomeView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
         }
-        .fileImporter(
-            isPresented: $appModel.isModelImporterPresented,
-            allowedContentTypes: [UTType(filenameExtension: "gguf") ?? .data],
-            allowsMultipleSelection: false,
-            onCompletion: appModel.handleModelImportResult
-        )
+        .sheet(isPresented: $appModel.isModelImporterPresented) {
+            JarvisGGUFImportPicker(
+                isPresented: $appModel.isModelImporterPresented,
+                onCompletion: appModel.handleModelImportResult
+            )
+        }
     }
 
     private var heroCard: some View {
@@ -44,7 +43,7 @@ struct JarvisPhoneHomeView: View {
                 if appModel.needsModelSetup {
                     appModel.showSetupFlow = true
                 } else {
-                    appModel.apply(route: JarvisLaunchRoute(action: .ask, source: "home.hero"))
+                    appModel.apply(route: .assistant(.chat, task: .chat, source: .inApp, shouldFocusComposer: true))
                 }
             } label: {
                 HStack(spacing: 8) {
@@ -192,8 +191,8 @@ struct JarvisPhoneHomeView: View {
             Text("\(modelName ?? "Runtime"): \(detail)")
                 .font(.system(.footnote, design: .rounded, weight: .medium))
                 .foregroundStyle(.yellow)
-        case .failed(_, let message):
-            Text(message)
+        case .failed(_, let failure):
+            Text(failure.message)
                 .font(.system(.footnote, design: .rounded, weight: .medium))
                 .foregroundStyle(.red.opacity(0.9))
         }
@@ -223,7 +222,7 @@ struct JarvisPhoneHomeView: View {
                         Text(active.displayName)
                             .font(.system(.subheadline, design: .rounded, weight: .semibold))
                             .foregroundStyle(.white)
-                        Text("\(active.format.displayName) • \(active.status.displayName)")
+                        Text("\(active.format.displayName) • \(active.importState.displayName) • \(active.activationEligibility.displayName)")
                             .font(.system(.caption, design: .rounded, weight: .medium))
                             .foregroundStyle(.white.opacity(0.74))
                         Text("Imported \(active.importedAt.formatted(date: .abbreviated, time: .omitted))")
@@ -327,7 +326,7 @@ struct JarvisPhoneHomeView: View {
 
     private var askNowBar: some View {
         Button {
-            appModel.apply(route: JarvisLaunchRoute(action: .ask, source: "home.bottom"))
+            appModel.apply(route: .assistant(.chat, task: .chat, source: .inApp, shouldFocusComposer: true))
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: appModel.needsModelSetup ? "square.and.arrow.down" : "bolt.fill")

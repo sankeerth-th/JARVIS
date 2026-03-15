@@ -3,7 +3,6 @@ import SwiftUI
 /// Modern knowledge base/search tab
 struct KnowledgeTabView: View {
     @EnvironmentObject private var appModel: JarvisPhoneAppModel
-    @State private var searchText = ""
     
     var body: some View {
         NavigationStack {
@@ -22,7 +21,10 @@ struct KnowledgeTabView: View {
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Knowledge")
-            .searchable(text: $searchText, prompt: "Search saved knowledge...")
+            .searchable(text: $appModel.knowledgeQuery, prompt: "Search saved knowledge...")
+            .onChange(of: appModel.knowledgeQuery) { _, _ in
+                appModel.refreshKnowledgeResults()
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     EditButton()
@@ -41,12 +43,12 @@ struct KnowledgeTabView: View {
     }
     
     private var filteredResults: [JarvisKnowledgeItem] {
-        if searchText.isEmpty {
+        if appModel.knowledgeQuery.isEmpty {
             return appModel.knowledgeItems
         }
         return appModel.knowledgeItems.filter {
-            $0.title.localizedCaseInsensitiveContains(searchText) ||
-            $0.text.localizedCaseInsensitiveContains(searchText)
+            $0.title.localizedCaseInsensitiveContains(appModel.knowledgeQuery) ||
+            $0.text.localizedCaseInsensitiveContains(appModel.knowledgeQuery)
         }
     }
 }
@@ -85,6 +87,9 @@ struct SettingsTabView: View {
                         Text(appModel.supportedModelShortDescription)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        Text("\(appModel.supportedModelClassificationText) • \(appModel.supportedModelCapabilitySummary)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
 
                     NavigationLink {
@@ -103,7 +108,7 @@ struct SettingsTabView: View {
                                 } else {
                                     Text("No Model")
                                         .font(.subheadline)
-                                    Text("Import and activate a bookmark-backed GGUF model")
+                                    Text("Import and activate a local GGUF model")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -202,6 +207,16 @@ struct SettingsTabView: View {
                             Text(style.displayName).tag(style)
                         }
                     }
+
+                    Toggle("Auto-start Voice Entry", isOn: $appModel.settings.autoStartListeningForVoiceEntry)
+                    Toggle("Auto-send After Speech Pause", isOn: $appModel.settings.autoSendVoiceAfterPause)
+
+                    TextField("Speech Locale (optional, e.g. en-US)", text: Binding(
+                        get: { appModel.settings.speechLocaleIdentifier ?? "" },
+                        set: { appModel.settings.speechLocaleIdentifier = $0.isEmpty ? nil : $0 }
+                    ))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
                 }
 
                 Section("Chat & Device") {
@@ -248,7 +263,8 @@ struct RuntimeDiagnosticsView: View {
                 if let model = appModel.activeModel {
                     LabeledContent("Name", value: model.displayName)
                     LabeledContent("Format", value: model.format.displayName)
-                    LabeledContent("Status", value: model.status.displayName)
+                    LabeledContent("Import", value: model.importState.displayName)
+                    LabeledContent("Activation", value: model.activationEligibility.displayName)
                     LabeledContent("Profile", value: appModel.activeModelSupportStatusText)
                     LabeledContent("Family", value: model.inferredFamily ?? "Unknown")
                     LabeledContent("Modality", value: model.modality.displayName)
@@ -267,6 +283,25 @@ struct RuntimeDiagnosticsView: View {
                 Text(appModel.modelFileAccessDetail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            if let diagnostics = appModel.runtimeLoadDiagnostics {
+                Section("Load Path") {
+                    LabeledContent("Model", value: diagnostics.modelName)
+                    LabeledContent("Sandbox Copy", value: diagnostics.usesSandboxCopy ? "Yes" : "No")
+                    LabeledContent("Exists", value: diagnostics.fileExists ? "Yes" : "No")
+                    LabeledContent("Extension", value: diagnostics.pathExtension.uppercased())
+                    LabeledContent("Size", value: ByteCountFormatter.string(fromByteCount: diagnostics.fileSizeBytes, countStyle: .file))
+                    Text(diagnostics.modelPath)
+                        .font(.caption2.monospaced())
+                        .textSelection(.enabled)
+                    if let projectorPath = diagnostics.projectorPath {
+                        Text(projectorPath)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
             }
 
             Section("Configured Behavior") {

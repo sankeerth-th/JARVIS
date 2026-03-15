@@ -42,12 +42,12 @@ struct JarvisModernRootView: View {
         .onChange(of: appModel.isAssistantPresented) { _, isPresented in
             guard isPresented else { return }
             appModel.isAssistantPresented = false
-            appModel.apply(route: JarvisLaunchRoute(action: .ask, source: "legacy.sheet.assistant"))
+            appModel.apply(route: .assistant(.assistant, source: .legacy, shouldFocusComposer: true))
         }
         .onChange(of: appModel.isKnowledgePresented) { _, isPresented in
             guard isPresented else { return }
             appModel.isKnowledgePresented = false
-            appModel.apply(route: JarvisLaunchRoute(action: .search, source: "legacy.sheet.knowledge"))
+            appModel.apply(route: .assistant(.knowledge, source: .legacy))
         }
         .onChange(of: appModel.isSettingsPresented) { _, isPresented in
             guard isPresented else { return }
@@ -57,7 +57,7 @@ struct JarvisModernRootView: View {
         .onChange(of: appModel.isVisualIntelligencePresented) { _, isPresented in
             guard isPresented else { return }
             appModel.isVisualIntelligencePresented = false
-            appModel.apply(route: JarvisLaunchRoute(action: .visualIntelligence, source: "legacy.sheet.visual"))
+            appModel.apply(route: .assistant(.visual, source: .legacy))
         }
         .sheet(isPresented: $appModel.isModelLibraryPresented) {
             NavigationStack {
@@ -144,14 +144,14 @@ struct ModernHomeStatusCard: View {
                 }
 
                 Button {
-                    appModel.apply(route: JarvisLaunchRoute(action: .voice, source: "home.status"))
+                    appModel.apply(route: .assistant(.voice, task: .chat, source: .inApp, shouldStartListening: true))
                 } label: {
                     Label("Voice", systemImage: "waveform")
                 }
                 .buttonStyle(.bordered)
 
                 Button {
-                    appModel.apply(route: JarvisLaunchRoute(action: .visualIntelligence, source: "home.status"))
+                    appModel.apply(route: .assistant(.visual, task: .visualDescribe, source: .inApp))
                 } label: {
                     Label("Visual", systemImage: "viewfinder")
                 }
@@ -248,7 +248,7 @@ struct ModernHomeStatusCard: View {
         case .noModel:
             return appModel.hasReadyModel
                 ? "Activate one of your imported models. Import, activation, and warmup are separate steps now."
-                : "Import a bookmark-backed GGUF model to unlock assistant mode."
+                : "Import a local GGUF model to unlock assistant mode."
         case .runtimeUnavailable(let reason):
             return reason
         case .cold(let modelName):
@@ -261,8 +261,8 @@ struct ModernHomeStatusCard: View {
             return "\(modelName): \(detail)"
         case .paused(let modelName, let detail):
             return "\(modelName ?? "Runtime"): \(detail)"
-        case .failed(_, let message):
-            return message
+        case .failed(_, let failure):
+            return failure.message
         }
     }
 }
@@ -390,7 +390,7 @@ struct ModernModelStatusSection: View {
                     if let model = appModel.activeModel {
                         Text(model.displayName)
                             .font(.subheadline.weight(.medium))
-                        Text("\(model.format.displayName) • \(model.status.displayName)")
+                        Text("\(model.format.displayName) • \(model.importState.displayName) • \(model.activationEligibility.displayName)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else {
@@ -440,62 +440,284 @@ struct ModernConversationsListView: View {
 
 struct ModernVisualIntelligenceTabView: View {
     @EnvironmentObject private var appModel: JarvisPhoneAppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var stage: VisualStage = .ready
+    @State private var selectedSource: VisualSource?
+    @State private var simulatedInsight: String = ""
+    @State private var analysisTask: Task<Void, Never>?
+
+    private enum VisualStage {
+        case ready
+        case analyzing
+        case result
+    }
+
+    private enum VisualSource: String, CaseIterable, Identifiable {
+        case camera = "Live Camera"
+        case photo = "Photo Library"
+        case screenshot = "Screenshot"
+
+        var id: String { rawValue }
+
+        var icon: String {
+            switch self {
+            case .camera: return "camera.viewfinder"
+            case .photo: return "photo.on.rectangle"
+            case .screenshot: return "rectangle.on.rectangle"
+            }
+        }
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Visual Intelligence")
-                            .font(.title2.weight(.semibold))
-                        Text("A premium shell for upcoming camera, screenshot, and file-aware assistant workflows. This mode is intentionally real now so future intelligence features land without another navigation rewrite.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(.secondarySystemGroupedBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    visualHero
+                    stageTimeline
 
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Available now")
-                            .font(.headline)
-                        Button {
-                            appModel.apply(route: JarvisLaunchRoute(action: .ask, source: "visual.placeholder"))
-                        } label: {
-                            Label("Open Assistant", systemImage: "bubble.left")
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.indigo)
-
-                        Button {
-                            appModel.apply(route: JarvisLaunchRoute(action: .search, source: "visual.placeholder"))
-                        } label: {
-                            Label("Search Local Knowledge", systemImage: "magnifyingglass")
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .buttonStyle(.bordered)
+                    if !isVisualRuntimeReady {
+                        unavailableCard
+                    } else {
+                        sourcePickerCard
+                        stageCard
                     }
-                    .padding()
-                    .background(Color(.secondarySystemGroupedBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Label("Planned visual actions", systemImage: "sparkles")
-                            .font(.headline)
-                        Text("1. Capture screen context\n2. Ask visual follow-up\n3. Save insight to knowledge")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding()
-                    .background(Color(.secondarySystemGroupedBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
                 }
                 .padding()
             }
             .navigationTitle("Visual")
             .background(Color(.systemGroupedBackground))
+            .onDisappear {
+                analysisTask?.cancel()
+                analysisTask = nil
+            }
+        }
+    }
+
+    private var isVisualRuntimeReady: Bool {
+        appModel.canRunVisualAssistant
+    }
+
+    private var visualHero: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Visual Intelligence")
+                        .font(.title2.weight(.semibold))
+                    Text("Capture, inspect, and ask follow-up questions on visual inputs. This route is intentionally exposed now, but Jarvis only claims full visual support when the active local runtime can actually execute it.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "viewfinder.circle.fill")
+                    .font(.system(size: 26))
+                    .foregroundStyle(.indigo)
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var stageTimeline: some View {
+        HStack(spacing: 8) {
+            stageChip("Capture", icon: "camera.aperture", active: stageIndex >= 1)
+            timelineConnector(active: stageIndex >= 2)
+            stageChip("Analyze", icon: "sparkles", active: stageIndex >= 2)
+            timelineConnector(active: stageIndex >= 3)
+            stageChip("Result", icon: "text.magnifyingglass", active: stageIndex >= 3)
+        }
+        .padding(.horizontal, 2)
+    }
+
+    private var stageIndex: Int {
+        switch stage {
+        case .ready:
+            return 1
+        case .analyzing:
+            return 2
+        case .result:
+            return 3
+        }
+    }
+
+    private func stageChip(_ title: String, icon: String, active: Bool) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.caption2.weight(.semibold))
+            Text(title)
+                .font(.caption2.weight(.semibold))
+        }
+        .foregroundStyle(active ? .primary : .secondary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(active ? Color.indigo.opacity(0.16) : Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(active ? Color.indigo.opacity(0.35) : Color.secondary.opacity(0.15), lineWidth: 1)
+        )
+    }
+
+    private func timelineConnector(active: Bool) -> some View {
+        Capsule(style: .continuous)
+            .fill(active ? Color.indigo.opacity(0.55) : Color.secondary.opacity(0.2))
+            .frame(width: 18, height: 2)
+    }
+
+    private var unavailableCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Visual assistant is in preview", systemImage: "exclamationmark.triangle.fill")
+                .font(.headline)
+                .foregroundStyle(.orange)
+            Text(appModel.visualAssistantStatusText)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                if appModel.needsModelSetup {
+                    Button("Set Up Model") {
+                        appModel.showSetupFlow = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.indigo)
+                } else {
+                    Button("Warm Model") {
+                        appModel.retryRuntimeWarmup()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.indigo)
+                }
+
+                Button("Model Library") {
+                    appModel.presentModelLibrary()
+                }
+                .buttonStyle(.bordered)
+            }
+            .font(.subheadline.weight(.semibold))
+        }
+        .padding()
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var sourcePickerCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Input Source")
+                .font(.headline)
+
+            ForEach(VisualSource.allCases) { source in
+                Button {
+                    selectedSource = source
+                    runVisualFlow(source: source)
+                } label: {
+                    HStack {
+                        Label(source.rawValue, systemImage: source.icon)
+                        Spacer()
+                        if selectedSource == source {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.indigo)
+                        }
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 6)
+                }
+                .buttonStyle(.bordered)
+            }
+
+            Text("This is a production shell preview. It does not claim private system visual powers.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding()
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    @ViewBuilder
+    private var stageCard: some View {
+        switch stage {
+        case .ready:
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Ready")
+                    .font(.headline)
+                Text("Choose a source to begin visual analysis flow.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+
+        case .analyzing:
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Analyzing visual context")
+                        .font(.headline)
+                }
+                Text("Preparing assistant-ready understanding from \(selectedSource?.rawValue ?? "input").")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+
+        case .result:
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Visual Summary", systemImage: "text.magnifyingglass")
+                    .font(.headline)
+                Text(simulatedInsight)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 8) {
+                    Button("Ask Follow-up") {
+                        let source = selectedSource?.rawValue.lowercased() ?? "visual input"
+                        appModel.apply(
+                            route: JarvisLaunchRoute(
+                                action: .chat,
+                                payload: "Based on this \(source), what should I do next?",
+                                source: JarvisAssistantEntrySource.inApp.rawValue,
+                                assistantTask: .analyzeText,
+                                shouldFocusComposer: true
+                            )
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.indigo)
+
+                    Button("Search Knowledge") {
+                        let payload = selectedSource?.rawValue ?? "visual analysis"
+                        appModel.apply(route: JarvisLaunchRoute(action: .knowledge, query: payload, source: JarvisAssistantEntrySource.inApp.rawValue, assistantTask: .knowledgeAnswer))
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .font(.subheadline.weight(.semibold))
+            }
+            .padding()
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
+        }
+    }
+
+    private func runVisualFlow(source: VisualSource) {
+        guard isVisualRuntimeReady else { return }
+        analysisTask?.cancel()
+        stage = .analyzing
+        JarvisHaptics.selection()
+
+        analysisTask = Task {
+            try? await Task.sleep(nanoseconds: 1_100_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                simulatedInsight = "\(source.rawValue) captured. Visual shell is ready to hand this context into grounded assistant reasoning once analyzer integration is enabled."
+                stage = .result
+                JarvisHaptics.success()
+            }
         }
     }
 }

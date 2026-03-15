@@ -1,6 +1,12 @@
 import AppIntents
 import Foundation
 
+private enum JarvisShortcutRouteBuilder {
+    static func save(_ route: JarvisLaunchRoute) {
+        JarvisLaunchRouteStore.shared.save(route)
+    }
+}
+
 struct OpenJarvisIntent: AppIntent {
     static var title: LocalizedStringResource = "Open Jarvis"
     static var description = IntentDescription("Open Jarvis using your configured startup destination.")
@@ -8,8 +14,21 @@ struct OpenJarvisIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         let startupRoute = JarvisAssistantSettingsStore().load().startupRoute
-        JarvisLaunchRouteStore.shared.save(
-            JarvisLaunchRoute(action: startupRoute.launchAction, source: "intent.open")
+        JarvisShortcutRouteBuilder.save(
+            JarvisLaunchRoute(action: startupRoute.launchAction, source: JarvisAssistantEntrySource.settings.rawValue)
+        )
+        return .result()
+    }
+}
+
+struct OpenAssistantIntent: AppIntent {
+    static var title: LocalizedStringResource = "Open Assistant"
+    static var description = IntentDescription("Open Jarvis directly in the assistant.")
+    static var openAppWhenRun: Bool = true
+
+    func perform() async throws -> some IntentResult {
+        JarvisShortcutRouteBuilder.save(
+            .assistant(.assistant, source: .shortcut, shouldFocusComposer: true)
         )
         return .result()
     }
@@ -28,8 +47,14 @@ struct AskJarvisIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        JarvisLaunchRouteStore.shared.save(
-            JarvisLaunchRoute(action: .ask, payload: prompt.isEmpty ? nil : prompt, source: "intent.ask")
+        JarvisShortcutRouteBuilder.save(
+            .assistant(
+                .chat,
+                payload: prompt.isEmpty ? nil : prompt,
+                task: .chat,
+                source: .shortcut,
+                shouldFocusComposer: true
+            )
         )
         return .result()
     }
@@ -41,18 +66,48 @@ struct VoiceJarvisIntent: AppIntent {
     static var openAppWhenRun: Bool = true
 
     func perform() async throws -> some IntentResult {
-        JarvisLaunchRouteStore.shared.save(JarvisLaunchRoute(action: .voice, source: "intent.voice"))
+        JarvisShortcutRouteBuilder.save(
+            .assistant(.voice, task: .chat, source: .shortcut, shouldStartListening: true)
+        )
         return .result()
     }
 }
 
-struct VisualIntelligenceIntent: AppIntent {
-    static var title: LocalizedStringResource = "Visual Intelligence"
-    static var description = IntentDescription("Open Jarvis visual intelligence workspace.")
+struct VisualJarvisIntent: AppIntent {
+    static var title: LocalizedStringResource = "Visual Jarvis"
+    static var description = IntentDescription("Open Jarvis visual assistant preview.")
     static var openAppWhenRun: Bool = true
 
     func perform() async throws -> some IntentResult {
-        JarvisLaunchRouteStore.shared.save(JarvisLaunchRoute(action: .visualIntelligence, source: "intent.visual"))
+        JarvisShortcutRouteBuilder.save(
+            .assistant(.visual, task: .visualDescribe, source: .shortcut)
+        )
+        return .result()
+    }
+}
+
+struct DraftReplyIntent: AppIntent {
+    static var title: LocalizedStringResource = "Draft Reply"
+    static var description = IntentDescription("Open Jarvis and prepare a reply draft.")
+    static var openAppWhenRun: Bool = true
+
+    @Parameter(title: "Reply Target", default: "")
+    var seedText: String
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Draft a reply for \(\.$seedText)")
+    }
+
+    func perform() async throws -> some IntentResult {
+        JarvisShortcutRouteBuilder.save(
+            .assistant(
+                .draftReply,
+                payload: seedText.isEmpty ? nil : seedText,
+                task: .reply,
+                source: .shortcut,
+                shouldFocusComposer: true
+            )
+        )
         return .result()
     }
 }
@@ -63,7 +118,14 @@ struct QuickCaptureIntent: AppIntent {
     static var openAppWhenRun: Bool = true
 
     func perform() async throws -> some IntentResult {
-        JarvisLaunchRouteStore.shared.save(JarvisLaunchRoute(action: .quickCapture, source: "intent.capture"))
+        JarvisShortcutRouteBuilder.save(
+            JarvisLaunchRoute(
+                action: .quickCapture,
+                source: JarvisAssistantEntrySource.shortcut.rawValue,
+                assistantTask: .quickCapture,
+                shouldFocusComposer: true
+            )
+        )
         return .result()
     }
 }
@@ -81,7 +143,28 @@ struct SummarizeTextIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        JarvisLaunchRouteStore.shared.save(JarvisLaunchRoute(action: .summarize, payload: text, source: "intent.summarize"))
+        JarvisShortcutRouteBuilder.save(
+            JarvisLaunchRoute(
+                action: .summarize,
+                payload: text,
+                source: JarvisAssistantEntrySource.shortcut.rawValue,
+                assistantTask: .summarize,
+                shouldFocusComposer: true
+            )
+        )
+        return .result()
+    }
+}
+
+struct OpenKnowledgeIntent: AppIntent {
+    static var title: LocalizedStringResource = "Open Knowledge"
+    static var description = IntentDescription("Open Jarvis local knowledge search.")
+    static var openAppWhenRun: Bool = true
+
+    func perform() async throws -> some IntentResult {
+        JarvisShortcutRouteBuilder.save(
+            .assistant(.knowledge, source: .shortcut)
+        )
         return .result()
     }
 }
@@ -99,7 +182,27 @@ struct SearchLocalKnowledgeIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        JarvisLaunchRouteStore.shared.save(JarvisLaunchRoute(action: .search, payload: query, source: "intent.search"))
+        JarvisShortcutRouteBuilder.save(
+            JarvisLaunchRoute(
+                action: .knowledge,
+                query: query,
+                source: JarvisAssistantEntrySource.shortcut.rawValue,
+                assistantTask: .knowledgeAnswer
+            )
+        )
+        return .result()
+    }
+}
+
+struct OpenModelLibraryIntent: AppIntent {
+    static var title: LocalizedStringResource = "Open Model Library"
+    static var description = IntentDescription("Open Jarvis model library directly.")
+    static var openAppWhenRun: Bool = true
+
+    func perform() async throws -> some IntentResult {
+        JarvisShortcutRouteBuilder.save(
+            JarvisLaunchRoute(action: .modelLibrary, source: JarvisAssistantEntrySource.shortcut.rawValue)
+        )
         return .result()
     }
 }
@@ -110,7 +213,9 @@ struct ContinueConversationIntent: AppIntent {
     static var openAppWhenRun: Bool = true
 
     func perform() async throws -> some IntentResult {
-        JarvisLaunchRouteStore.shared.save(JarvisLaunchRoute(action: .continueConversation, source: "intent.continue"))
+        JarvisShortcutRouteBuilder.save(
+            .assistant(.continueConversation, task: .chat, source: .shortcut, shouldFocusComposer: true)
+        )
         return .result()
     }
 }
@@ -146,13 +251,22 @@ struct JarvisPhoneShortcuts: AppShortcutsProvider {
             systemImageName: "waveform"
         )
         AppShortcut(
-            intent: VisualIntelligenceIntent(),
+            intent: VisualJarvisIntent(),
             phrases: [
-                "Visual intelligence in \(.applicationName)",
+                "Visual assistant in \(.applicationName)",
                 "Open visual mode in \(.applicationName)"
             ],
-            shortTitle: "Visual Mode",
+            shortTitle: "Visual Preview",
             systemImageName: "viewfinder"
+        )
+        AppShortcut(
+            intent: DraftReplyIntent(),
+            phrases: [
+                "Draft reply in \(.applicationName)",
+                "Reply with \(.applicationName)"
+            ],
+            shortTitle: "Draft Reply",
+            systemImageName: "arrowshape.turn.up.left.fill"
         )
         AppShortcut(
             intent: QuickCaptureIntent(),
@@ -180,6 +294,15 @@ struct JarvisPhoneShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Search Knowledge",
             systemImageName: "magnifyingglass"
+        )
+        AppShortcut(
+            intent: OpenModelLibraryIntent(),
+            phrases: [
+                "Open models in \(.applicationName)",
+                "Open model library in \(.applicationName)"
+            ],
+            shortTitle: "Model Library",
+            systemImageName: "cpu"
         )
         AppShortcut(
             intent: ContinueConversationIntent(),

@@ -57,7 +57,10 @@ final class JarvisIOSTests: XCTestCase {
             batterySaverMode: false,
             autoScrollConversation: false,
             showRuntimeDiagnostics: true,
-            hapticsEnabled: false
+            hapticsEnabled: false,
+            autoStartListeningForVoiceEntry: false,
+            autoSendVoiceAfterPause: false,
+            speechLocaleIdentifier: "en-US"
         )
 
         store.save(settings)
@@ -70,15 +73,35 @@ final class JarvisIOSTests: XCTestCase {
         XCTAssertEqual(route.source, "test")
     }
 
+    func testLaunchRouteParsesAssistantVoiceOptions() throws {
+        let route = try XCTUnwrap(
+            JarvisLaunchRoute.parse(
+                url: XCTUnwrap(URL(string: "jarvis://voice?source=shortcut&task=chat&listen=1&focus=0"))
+            )
+        )
+
+        XCTAssertEqual(route.action, .voice)
+        XCTAssertEqual(route.entryRoute, .voice)
+        XCTAssertEqual(route.assistantTask, .chat)
+        XCTAssertEqual(route.shouldStartListening, true)
+        XCTAssertEqual(route.shouldFocusComposer, false)
+        XCTAssertEqual(route.sourceKind, .shortcut)
+    }
+
     @MainActor
-    func testAskRouteWithoutModelShowsSetupInsteadOfDeadEnd() {
+    func testAskRouteWithoutModelShowsAssistantUnavailableState() {
         let appModel = makeAppModel()
 
         appModel.apply(route: JarvisLaunchRoute(action: .ask, source: "test"))
 
-        XCTAssertTrue(appModel.showSetupFlow)
-        XCTAssertEqual(appModel.selectedTab, .home)
-        XCTAssertEqual(appModel.statusText, "Import and activate a local model to continue")
+        XCTAssertEqual(appModel.selectedTab, .assistant)
+        XCTAssertFalse(appModel.showSetupFlow)
+        XCTAssertEqual(appModel.assistantEntryStyle, .quickAsk)
+        if case .unavailable(let reason) = appModel.assistantExperienceState {
+            XCTAssertTrue(reason.contains("Import and activate"))
+        } else {
+            XCTFail("Expected assistant unavailable state")
+        }
     }
 
     @MainActor
@@ -91,6 +114,17 @@ final class JarvisIOSTests: XCTestCase {
         XCTAssertTrue(appModel.isModelLibraryPresented)
     }
 
+    @MainActor
+    func testKnowledgeRouteAppliesIncomingQuery() {
+        let appModel = makeAppModel()
+
+        appModel.apply(route: JarvisLaunchRoute(action: .knowledge, query: "flight receipt", source: "test"))
+
+        XCTAssertEqual(appModel.selectedTab, .knowledge)
+        XCTAssertEqual(appModel.knowledgeQuery, "flight receipt")
+        XCTAssertEqual(appModel.activeAssistantRoute, .knowledge)
+    }
+
     func testSupportedModelCatalogMatchesGemmaGoldPathFilename() {
         let assessment = JarvisSupportedModelCatalog.assess(
             filename: "gemma-3-4b-it-q4_0.gguf",
@@ -100,9 +134,34 @@ final class JarvisIOSTests: XCTestCase {
 
         XCTAssertEqual(assessment.status, .ready)
         XCTAssertEqual(assessment.supportedProfileID, .gemma3_4b_it_q4_0)
+        XCTAssertEqual(assessment.compatibilityClass, .primaryRecommended)
     }
 
-    func testModelLibraryImportStoresBookmarkAndDoesNotAutoActivate() throws {
+    func testSupportedModelCatalogMatchesGemmaQATGoldPathFilename() {
+        let assessment = JarvisSupportedModelCatalog.assess(
+            filename: "gemma-3-4b-it-qat-q4_0.gguf",
+            fileSizeBytes: 2_530_000_000,
+            format: .gguf
+        )
+
+        XCTAssertEqual(assessment.status, .ready)
+        XCTAssertEqual(assessment.supportedProfileID, .gemma3_4b_it_q4_0)
+        XCTAssertEqual(assessment.compatibilityClass, .primaryRecommended)
+    }
+
+    func testSupportedModelCatalogMarksGenericImportAsImportOnly() {
+        let assessment = JarvisSupportedModelCatalog.assess(
+            filename: "Qwen2.5-3B-Instruct-Q4_K_M.gguf",
+            fileSizeBytes: 1_900_000_000,
+            format: .gguf
+        )
+
+        XCTAssertEqual(assessment.status, .ready)
+        XCTAssertEqual(assessment.compatibilityClass, .importOnly)
+        XCTAssertNil(assessment.supportedProfileID)
+    }
+
+    func testModelLibraryImportCopiesIntoSandboxAndDoesNotAutoActivate() throws {
         let suffix = UUID().uuidString
         let library = JarvisModelLibrary(payloadFilename: "JarvisModelLibrary-\(suffix).json")
         let supportedURL = try temporarySparseGGUFURL(
@@ -112,10 +171,11 @@ final class JarvisIOSTests: XCTestCase {
 
         let imported = try library.importModel(from: supportedURL)
 
-        XCTAssertEqual(imported.status, .ready)
+        XCTAssertEqual(imported.importState, .imported)
+        XCTAssertEqual(imported.activationEligibility, .eligible)
         XCTAssertEqual(imported.supportedProfileID, .gemma3_4b_it_q4_0)
-        XCTAssertEqual(imported.primaryAsset.storageKind, .securityScopedBookmark)
-        XCTAssertNotNil(imported.primaryAsset.bookmarkData)
+        XCTAssertEqual(imported.primaryAsset.storageKind, .sandboxCopy)
+        XCTAssertNotNil(imported.primaryAsset.sandboxStoredFilename)
         XCTAssertNil(library.activeModelID())
     }
 
@@ -129,9 +189,40 @@ final class JarvisIOSTests: XCTestCase {
 
         let imported = try library.importModel(from: genericURL)
 
-        XCTAssertEqual(imported.status, .ready)
+        XCTAssertEqual(imported.importState, .imported)
+        XCTAssertEqual(imported.activationEligibility, .eligible)
         XCTAssertNil(imported.supportedProfileID)
         XCTAssertEqual(imported.family, .qwen)
+    }
+
+    func testModelLibraryActivationSucceedsForGenericGGUF() throws {
+        let suffix = UUID().uuidString
+        let library = JarvisModelLibrary(payloadFilename: "JarvisModelLibrary-\(suffix).json")
+        let genericURL = try temporarySparseGGUFURL(
+            named: "Qwen2.5-3B-Instruct-Q4_K_M",
+            size: 1_900_000_000
+        )
+
+        let imported = try library.importModel(from: genericURL)
+        let activated = try library.activateModel(id: imported.id)
+
+        XCTAssertEqual(activated.activationEligibility, .eligible)
+        XCTAssertEqual(library.activeModelID(), imported.id)
+    }
+
+    func testModelLibraryActivationSucceedsForCuratedGemma() throws {
+        let suffix = UUID().uuidString
+        let library = JarvisModelLibrary(payloadFilename: "JarvisModelLibrary-\(suffix).json")
+        let supportedURL = try temporarySparseGGUFURL(
+            named: "gemma-3-4b-it-q4_0",
+            size: 3_400_000_000
+        )
+
+        let imported = try library.importModel(from: supportedURL)
+        let activated = try library.activateModel(id: imported.id)
+
+        XCTAssertEqual(activated.activationEligibility, .eligible)
+        XCTAssertEqual(library.activeModelID(), imported.id)
     }
 
     func testGemmaProjectorAttachmentPersistsCompanionMetadata() throws {
@@ -150,7 +241,7 @@ final class JarvisIOSTests: XCTestCase {
         let updated = try library.attachProjector(from: projectorURL, to: imported.id)
 
         XCTAssertTrue(updated.hasProjectorAttached)
-        XCTAssertEqual(updated.projectorAsset?.storageKind, .securityScopedBookmark)
+        XCTAssertEqual(updated.projectorAsset?.storageKind, .sandboxCopy)
     }
 
     @MainActor
@@ -210,9 +301,8 @@ private final class TestGGUFEngine: JarvisGGUFEngine {
         loadedProjectorPath = nil
     }
 
-    func generate(prompt: String, history: [JarvisChatMessage], onToken: @escaping @Sendable (String) -> Void) async throws {
-        _ = prompt
-        _ = history
+    func generate(request: JarvisAssistantRequest, onToken: @escaping @Sendable (String) -> Void) async throws {
+        _ = request
         _ = configuration
         onToken("ok")
     }

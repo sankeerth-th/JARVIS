@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct JarvisPhoneSettingsView: View {
     @Environment(\.dismiss) private var dismiss
@@ -26,6 +25,10 @@ struct JarvisPhoneSettingsView: View {
                         LabeledContent("Active") {
                             Text(appModel.activeModel?.displayName ?? "None")
                                 .foregroundStyle(appModel.activeModel == nil ? .orange : .primary)
+                        }
+                        if let activeModel = appModel.activeModel {
+                            LabeledContent("Import State", value: activeModel.importState.displayName)
+                            LabeledContent("Activation", value: activeModel.activationEligibility.displayName)
                         }
                         LabeledContent("Supported") {
                             Text(appModel.supportedModelFormatText)
@@ -75,11 +78,11 @@ struct JarvisPhoneSettingsView: View {
                 }
             }
         }
-        .fileImporter(
-            isPresented: $appModel.isModelImporterPresented,
-            allowedContentTypes: [UTType(filenameExtension: "gguf") ?? .data],
-            allowsMultipleSelection: false,
-            onCompletion: appModel.handleModelImportResult
-        )
+        .sheet(isPresented: $appModel.isModelImporterPresented) {
+            JarvisGGUFImportPicker(
+                isPresented: $appModel.isModelImporterPresented,
+                onCompletion: appModel.handleModelImportResult
+            )
+        }
     }
 }

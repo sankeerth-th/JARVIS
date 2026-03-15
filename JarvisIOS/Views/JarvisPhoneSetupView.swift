@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct JarvisPhoneSetupView: View {
     @EnvironmentObject private var appModel: JarvisPhoneAppModel
@@ -43,12 +42,12 @@ struct JarvisPhoneSetupView: View {
                 }
             }
         }
-        .fileImporter(
-            isPresented: $appModel.isModelImporterPresented,
-            allowedContentTypes: [UTType(filenameExtension: "gguf") ?? .data],
-            allowsMultipleSelection: false,
-            onCompletion: appModel.handleModelImportResult
-        )
+        .sheet(isPresented: $appModel.isModelImporterPresented) {
+            JarvisGGUFImportPicker(
+                isPresented: $appModel.isModelImporterPresented,
+                onCompletion: appModel.handleModelImportResult
+            )
+        }
     }
 
     private var hero: some View {
@@ -169,9 +168,9 @@ struct JarvisPhoneSetupView: View {
                 .foregroundStyle(.white)
 
             if let active = appModel.activeModel {
-                Text("Active: \(active.displayName) • \(active.status.displayName)")
+                Text("Active: \(active.displayName) • \(active.importState.displayName) • \(active.activationEligibility.displayName)")
                     .font(.system(.footnote, design: .rounded, weight: .semibold))
-                    .foregroundStyle(active.status == .ready ? .green.opacity(0.95) : .orange)
+                    .foregroundStyle(active.canActivate ? .green.opacity(0.95) : .orange)
             } else {
                 Text("No active model selected")
                     .font(.system(.footnote, design: .rounded, weight: .semibold))

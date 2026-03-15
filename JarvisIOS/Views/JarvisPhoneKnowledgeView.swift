@@ -60,6 +60,13 @@ struct JarvisPhoneKnowledgeView: View {
                                             .font(.system(.footnote, design: .rounded, weight: .medium))
                                             .foregroundStyle(.white.opacity(0.8))
                                             .lineLimit(4)
+
+                                        Button("Ask with this note") {
+                                            appModel.askWithKnowledgeResult(result)
+                                        }
+                                        .buttonStyle(.borderedProminent)
+                                        .tint(.cyan)
+                                        .font(.caption.weight(.semibold))
                                     }
                                     .padding(12)
                                     .frame(maxWidth: .infinity, alignment: .leading)

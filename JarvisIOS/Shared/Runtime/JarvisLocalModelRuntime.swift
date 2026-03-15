@@ -11,6 +11,59 @@ public enum JarvisGGUFEngineCapability: Equatable {
     case placeholder
 }
 
+public enum JarvisRuntimeFailureKind: String, Equatable {
+    case fileAccess
+    case invalidModel
+    case unsupportedModel
+    case runtimeUnavailable
+    case loadFailed
+    case warmupFailed
+    case inferenceFailed
+}
+
+public struct JarvisRuntimeFailure: Equatable {
+    public var kind: JarvisRuntimeFailureKind
+    public var message: String
+    public var recoverySuggestion: String?
+
+    public init(kind: JarvisRuntimeFailureKind, message: String, recoverySuggestion: String? = nil) {
+        self.kind = kind
+        self.message = message
+        self.recoverySuggestion = recoverySuggestion
+    }
+}
+
+public struct JarvisRuntimeLoadDiagnostics: Equatable {
+    public var modelName: String
+    public var modelPath: String
+    public var fileExists: Bool
+    public var fileSizeBytes: Int64
+    public var pathExtension: String
+    public var usesSandboxCopy: Bool
+    public var runningOnSimulator: Bool
+    public var projectorPath: String?
+
+    public init(
+        modelName: String,
+        modelPath: String,
+        fileExists: Bool,
+        fileSizeBytes: Int64,
+        pathExtension: String,
+        usesSandboxCopy: Bool,
+        runningOnSimulator: Bool,
+        projectorPath: String? = nil
+    ) {
+        self.modelName = modelName
+        self.modelPath = modelPath
+        self.fileExists = fileExists
+        self.fileSizeBytes = fileSizeBytes
+        self.pathExtension = pathExtension
+        self.usesSandboxCopy = usesSandboxCopy
+        self.runningOnSimulator = runningOnSimulator
+        self.projectorPath = projectorPath
+    }
+}
+
 public enum JarvisModelFileAccessState: Equatable {
     case noImportedFile
     case bookmarkCreated(modelName: String, detail: String)
@@ -114,7 +167,7 @@ public enum JarvisModelRuntimeState: Equatable {
     case ready(modelName: String)
     case busy(modelName: String, detail: String)
     case paused(modelName: String?, detail: String)
-    case failed(modelName: String?, message: String)
+    case failed(modelName: String?, failure: JarvisRuntimeFailure)
 
     public var title: String {
         switch self {
@@ -165,8 +218,7 @@ public protocol JarvisGGUFEngine {
     func loadModel(at path: String, projectorPath: String?) async throws
     func unloadModel() async
     func generate(
-        prompt: String,
-        history: [JarvisChatMessage],
+        request: JarvisAssistantRequest,
         onToken: @escaping @Sendable (String) -> Void
     ) async throws
     func cancelGeneration()
@@ -195,12 +247,10 @@ public final class StubGGUFEngine: JarvisGGUFEngine {
     public func unloadModel() async {}
 
     public func generate(
-        prompt: String,
-        history: [JarvisChatMessage],
+        request: JarvisAssistantRequest,
         onToken: @escaping @Sendable (String) -> Void
     ) async throws {
-        _ = prompt
-        _ = history
+        _ = request
         _ = onToken
 
         #if targetEnvironment(simulator)
@@ -223,9 +273,29 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
     private static let baseSystemInstruction =
         "You are Jarvis, a concise and practical on-device iPhone assistant. Keep answers direct and useful."
 
+    private struct LoadAttempt: Equatable {
+        let context: Int
+        let threads: Int
+        let batch: Int
+
+        var parameter: LlamaClient.Parameter {
+            LlamaClient.Parameter(
+                context: context,
+                numberOfThreads: threads,
+                batch: batch,
+                temperature: 0.7,
+                topK: 40,
+                topP: 0.9,
+                penaltyLastN: 64,
+                penaltyRepeat: 1.1
+            )
+        }
+    }
+
     private let lock = NSLock()
     private var session: LLMSession?
     private var loadedModelPath: String?
+    private var loadedProjectorPath: String?
     private var cancelRequested = false
     private var configuration = JarvisRuntimeConfiguration()
 
@@ -266,8 +336,9 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         }
 
         let currentPath = withLock { loadedModelPath }
+        let currentProjectorPath = withLock { loadedProjectorPath }
         let currentSession = withLock { session }
-        if currentPath == path, currentSession != nil {
+        if currentPath == path, currentProjectorPath == projectorPath, currentSession != nil {
             print("[JarvisRuntime] Model already loaded at path: \(path)")
             return
         }
@@ -276,39 +347,65 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
             cancelRequested = false
         }
 
-        let config = withLock { configuration }
-        let parameters = deviceAwareParameters(using: config)
-        print("[JarvisRuntime] Loading model with context=\(parameters.context), threads=\(parameters.numberOfThreads ?? 0)")
-
         let fileURL = URL(fileURLWithPath: path)
-        let model = LLMSession.LocalModel.llama(url: fileURL, parameter: parameters)
-        let newSession = LLMSession(model: model)
+        let projectorURL = projectorPath.map { URL(fileURLWithPath: $0) }
+        let config = withLock { configuration }
+        let attempts = loadAttempts(using: config, fileSizeBytes: fileSize, filename: fileURL.lastPathComponent)
 
-        do {
-            try await newSession.prewarm()
-        } catch {
-            throw JarvisModelError.runtimeFailure("Failed to prewarm model: \(error.localizedDescription)")
+        var failureMessages: [String] = []
+        for (index, attempt) in attempts.enumerated() {
+            let parameter = parameter(for: attempt, configuration: config)
+            print(
+                "[JarvisRuntime] Load attempt \(index + 1)/\(attempts.count) " +
+                "context=\(attempt.context) threads=\(attempt.threads) batch=\(attempt.batch)"
+            )
+
+            let model = LLMSession.LocalModel.llama(
+                url: fileURL,
+                mmprojURL: projectorURL,
+                parameter: parameter
+            )
+            let newSession = LLMSession(model: model)
+
+            do {
+                try await newSession.prewarm()
+                withLock {
+                    session = newSession
+                    loadedModelPath = path
+                    loadedProjectorPath = projectorPath
+                    cancelRequested = false
+                }
+                print("[JarvisRuntime] Model loaded successfully: \(path)")
+                return
+            } catch {
+                let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+                let normalizedMessage = message.isEmpty ? "Unknown runtime error." : message
+                failureMessages.append(
+                    "Attempt \(index + 1): ctx \(attempt.context), threads \(attempt.threads), batch \(attempt.batch) -> \(normalizedMessage)"
+                )
+                print("[JarvisRuntime] Load attempt \(index + 1) failed: \(normalizedMessage)")
+            }
         }
 
-        withLock {
-            session = newSession
-            loadedModelPath = path
-            cancelRequested = false
-        }
-        print("[JarvisRuntime] Model loaded successfully: \(path)")
+        let finalMessage = warmupFailureMessage(
+            modelFilename: fileURL.lastPathComponent,
+            projectorPath: projectorPath,
+            attemptMessages: failureMessages
+        )
+        throw JarvisModelError.runtimeFailure(finalMessage)
     }
 
     public func unloadModel() async {
         withLock {
             session = nil
             loadedModelPath = nil
+            loadedProjectorPath = nil
             cancelRequested = false
         }
     }
 
     public func generate(
-        prompt: String,
-        history: [JarvisChatMessage],
+        request: JarvisAssistantRequest,
         onToken: @escaping @Sendable (String) -> Void
     ) async throws {
         guard let session = withLock({ session }) else {
@@ -320,10 +417,10 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         }
 
         let config = withLock { configuration }
-        session.messages = mappedMessages(from: history, configuration: config)
+        session.messages = mappedMessages(for: request, configuration: config)
 
         do {
-            let stream = session.streamResponse(to: prompt)
+            let stream = session.streamResponse(to: request.prompt)
             for try await chunk in stream {
                 try Task.checkCancellation()
                 if withLock({ cancelRequested }) {
@@ -357,65 +454,161 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         }
     }
 
-    private func deviceAwareParameters(using configuration: JarvisRuntimeConfiguration) -> LlamaClient.Parameter {
+    private func deviceAwareParameters(
+        using configuration: JarvisRuntimeConfiguration,
+        fileSizeBytes: Int64,
+        filename: String
+    ) -> LoadAttempt {
         let processorCount = ProcessInfo.processInfo.activeProcessorCount
         let physicalMemoryMB = Double(ProcessInfo.processInfo.physicalMemory) / 1_000_000
+        let thermalState = ProcessInfo.processInfo.thermalState
+        let lowerFilename = filename.lowercased()
+        let isGemma3Family = lowerFilename.contains("gemma") && lowerFilename.contains("3")
+        let isLargeModel = fileSizeBytes >= 2_000_000_000
 
         let autoContext: Int
-        if physicalMemoryMB >= 8000 {
-            autoContext = 4096
-        } else if physicalMemoryMB >= 6000 {
-            autoContext = 2048
-        } else {
+        if physicalMemoryMB >= 10_000 {
+            autoContext = 1536
+        } else if physicalMemoryMB >= 7_000 {
             autoContext = 1024
+        } else {
+            autoContext = 768
         }
 
         var contextSize = configuration.contextWindow.explicitContextSize ?? autoContext
-        if configuration.batterySaverMode {
+        if isLargeModel {
             contextSize = min(contextSize, 1024)
         }
+        if isGemma3Family {
+            contextSize = min(contextSize, 768)
+        }
+        if configuration.batterySaverMode {
+            contextSize = min(contextSize, 512)
+        }
+        if thermalState == .serious {
+            contextSize = min(contextSize, 512)
+        }
+        contextSize = max(384, contextSize)
 
         let threadCount: Int
         switch configuration.performanceProfile {
         case .efficient:
-            threadCount = max(1, processorCount / 2)
+            threadCount = 1
         case .balanced:
-            threadCount = max(1, processorCount - 1)
+            threadCount = min(3, max(2, processorCount / 2))
         case .quality:
-            threadCount = max(2, processorCount - 1)
+            threadCount = min(4, max(2, (processorCount / 2) + 1))
         }
 
         let batchSize: Int
         switch configuration.performanceProfile {
         case .efficient:
-            batchSize = min(128, contextSize / 8)
+            batchSize = 8
         case .balanced:
-            batchSize = min(256, contextSize / 4)
+            batchSize = 16
         case .quality:
-            batchSize = min(384, contextSize / 3)
+            batchSize = 32
         }
 
-        return LlamaClient.Parameter(
+        let effectiveThreadCount: Int
+        let effectiveBatchSize: Int
+        if thermalState == .serious {
+            effectiveThreadCount = 1
+            effectiveBatchSize = 4
+        } else {
+            effectiveThreadCount = max(1, threadCount)
+            effectiveBatchSize = max(4, min(batchSize, max(4, contextSize / 8)))
+        }
+
+        return LoadAttempt(
             context: contextSize,
-            numberOfThreads: threadCount,
-            batch: max(64, batchSize),
-            temperature: Float(configuration.temperature),
-            topK: configuration.responseStyle == .detailed ? 50 : 40,
-            topP: configuration.responseStyle == .detailed ? 0.94 : 0.9,
-            penaltyLastN: 64,
-            penaltyRepeat: 1.1
+            threads: effectiveThreadCount,
+            batch: effectiveBatchSize
         )
     }
 
-    private func mappedMessages(
-        from history: [JarvisChatMessage],
-        configuration: JarvisRuntimeConfiguration
-    ) -> [LLMInput.Message] {
-        var messages: [LLMInput.Message] = [
-            .system("\(Self.baseSystemInstruction) \(configuration.responseStyle.systemInstructionSuffix)")
+    private func loadAttempts(
+        using configuration: JarvisRuntimeConfiguration,
+        fileSizeBytes: Int64,
+        filename: String
+    ) -> [LoadAttempt] {
+        let base = deviceAwareParameters(
+            using: configuration,
+            fileSizeBytes: fileSizeBytes,
+            filename: filename
+        )
+
+        let candidates = [
+            base,
+            LoadAttempt(
+                context: min(base.context, 768),
+                threads: min(base.threads, 3),
+                batch: min(base.batch, 16)
+            ),
+            LoadAttempt(
+                context: min(base.context, 512),
+                threads: min(base.threads, 2),
+                batch: min(base.batch, 8)
+            ),
+            LoadAttempt(context: 384, threads: 1, batch: 4)
         ]
 
-        for item in history {
+        var uniqueAttempts: [LoadAttempt] = []
+        for candidate in candidates {
+            if !uniqueAttempts.contains(candidate) {
+                uniqueAttempts.append(candidate)
+            }
+        }
+        return uniqueAttempts
+    }
+
+    private func parameter(
+        for attempt: LoadAttempt,
+        configuration: JarvisRuntimeConfiguration
+    ) -> LlamaClient.Parameter {
+        var parameter = attempt.parameter
+        parameter.temperature = Float(configuration.temperature)
+        parameter.topK = configuration.responseStyle == .detailed ? 50 : 40
+        parameter.topP = configuration.responseStyle == .detailed ? 0.94 : 0.9
+        parameter.options = .init(verbose: false, disableAutoPause: false)
+        return parameter
+    }
+
+    private func warmupFailureMessage(
+        modelFilename: String,
+        projectorPath: String?,
+        attemptMessages: [String]
+    ) -> String {
+        let summary = attemptMessages.last ?? "The runtime could not open the model file."
+        _ = modelFilename
+        _ = projectorPath
+        return "Failed to warm the model. \(summary) The import path is valid, but the local runtime could not open the GGUF with safe iPhone settings."
+    }
+
+    private func mappedMessages(
+        for request: JarvisAssistantRequest,
+        configuration: JarvisRuntimeConfiguration
+    ) -> [LLMInput.Message] {
+        var instructions = [Self.baseSystemInstruction, configuration.responseStyle.systemInstructionSuffix]
+        instructions.append(taskInstruction(for: request.task, configuration: configuration))
+
+        var messages: [LLMInput.Message] = [
+            .system(instructions.joined(separator: " "))
+        ]
+
+        if let replyTargetText = request.replyTargetText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !replyTargetText.isEmpty {
+            messages.append(.system("Draft reply target context:\n\(replyTargetText)"))
+        }
+
+        if !request.groundedResults.isEmpty {
+            let grounding = request.groundedResults.prefix(request.task.groundingLimit).map { result in
+                "\(result.item.title): \(result.snippet)"
+            }.joined(separator: "\n")
+            messages.append(.system("Local knowledge context:\n\(grounding)"))
+        }
+
+        for item in request.history {
             let text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
 
@@ -430,6 +623,34 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         }
 
         return messages
+    }
+
+    private func taskInstruction(
+        for task: JarvisAssistantTask,
+        configuration: JarvisRuntimeConfiguration
+    ) -> String {
+        switch task {
+        case .chat:
+            return "Handle the request as an ongoing assistant conversation."
+        case .summarize:
+            return "Summarize the provided content into useful, compact points before expanding."
+        case .quickCapture:
+            return "Treat this as a quick capture. Organize the thought, preserve intent, and keep the response concise."
+        case .knowledgeAnswer:
+            return "Use grounded local knowledge context when it is relevant and cite titles when useful."
+        case .reply:
+            return configuration.responseStyle == .detailed
+                ? "Draft a polished reply that matches the supplied context and preserves important details."
+                : "Draft a concise reply that matches the supplied context and tone."
+        case .draftEmail:
+            return "Draft a concise email reply using the supplied context and keep the structure professional."
+        case .analyzeText:
+            return "Analyze the supplied text and focus on key takeaways, risks, and next steps."
+        case .visualDescribe:
+            return "Be ready to describe user-provided visual context when that pipeline is added."
+        case .prioritizeNotifications:
+            return "Rank the supplied updates by urgency, impact, and required follow-up."
+        }
     }
 
     private func withLock<T>(_ body: () -> T) -> T {
@@ -486,6 +707,8 @@ enum JarvisGGUFEngineFactory {
 public final class JarvisLocalModelRuntime: ObservableObject {
     @Published public private(set) var state: JarvisModelRuntimeState = .noModel
     @Published public private(set) var fileAccessState: JarvisModelFileAccessState = .noImportedFile
+    @Published public private(set) var lastFailure: JarvisRuntimeFailure?
+    @Published public private(set) var lastLoadDiagnostics: JarvisRuntimeLoadDiagnostics?
 
     private let engine: JarvisGGUFEngine
     private var configuration: JarvisRuntimeConfiguration
@@ -535,6 +758,7 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         guard let model = selectedModel else {
             state = .noModel
             fileAccessState = .noImportedFile
+            lastFailure = nil
             return
         }
 
@@ -545,11 +769,17 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         guard isInferenceAvailable else {
             state = .runtimeUnavailable(reason: inferenceUnavailableReason)
             fileAccessState = restingFileAccessState(for: model)
+            lastFailure = runtimeFailure(
+                kind: .runtimeUnavailable,
+                message: inferenceUnavailableReason,
+                suggestion: "Run the app on a physical iPhone to test local inference."
+            )
             return
         }
 
         state = .cold(modelName: model.displayName)
         fileAccessState = restingFileAccessState(for: model)
+        lastFailure = nil
     }
 
     public func setSelectedModel(_ model: JarvisRuntimeModelSelection?) {
@@ -562,6 +792,7 @@ public final class JarvisLocalModelRuntime: ObservableObject {
             teardownLoadedModel()
             state = .noModel
             fileAccessState = .noImportedFile
+            lastFailure = nil
             return
         }
 
@@ -572,36 +803,55 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         guard isInferenceAvailable else {
             state = .runtimeUnavailable(reason: inferenceUnavailableReason)
             fileAccessState = restingFileAccessState(for: model)
+            lastFailure = runtimeFailure(
+                kind: .runtimeUnavailable,
+                message: inferenceUnavailableReason,
+                suggestion: "Run the local model on a physical device."
+            )
             return
         }
 
         state = idleState(for: model)
         fileAccessState = restingFileAccessState(for: model)
+        lastFailure = nil
     }
 
     public func prepareIfNeeded() async throws {
         guard let model = selectedModel else {
             state = .noModel
             fileAccessState = .noImportedFile
+            lastFailure = nil
+            lastLoadDiagnostics = nil
             throw JarvisModelError.unavailable("No active model selected. Import and activate a GGUF model from Files.")
         }
 
         guard isInferenceAvailable else {
             state = .runtimeUnavailable(reason: inferenceUnavailableReason)
             fileAccessState = restingFileAccessState(for: model)
+            lastFailure = runtimeFailure(
+                kind: .runtimeUnavailable,
+                message: inferenceUnavailableReason,
+                suggestion: "Use a physical iPhone build to test local inference."
+            )
             throw JarvisModelError.runtimeFailure(inferenceUnavailableReason)
         }
 
         if didLoadModel, loadedModelID == model.id, loadedResources != nil {
             state = .ready(modelName: model.displayName)
             fileAccessState = accessGrantedState(for: model)
+            lastFailure = nil
             return
         }
 
-        if ProcessInfo.processInfo.thermalState == .serious || ProcessInfo.processInfo.thermalState == .critical {
-            let message = "Device thermal state is high. Let iPhone cool before running local inference."
+        if ProcessInfo.processInfo.thermalState == .critical {
+            let message = "Device thermal state is critical. Let iPhone cool before running local inference."
             state = .paused(modelName: model.displayName, detail: message)
             fileAccessState = restingFileAccessState(for: model)
+            lastFailure = runtimeFailure(
+                kind: .warmupFailed,
+                message: message,
+                suggestion: "Wait for the phone to cool, then retry warmup."
+            )
             throw JarvisModelError.runtimeFailure(message)
         }
 
@@ -621,7 +871,32 @@ public final class JarvisLocalModelRuntime: ObservableObject {
                 fileAccessState = accessGrantedState(for: model)
             }
 
-            state = .warming(modelName: model.displayName, progress: 0.15, detail: "Preparing runtime")
+            let diagnostics = makeLoadDiagnostics(
+                modelName: model.displayName,
+                modelURL: resources.modelURL,
+                projectorURL: resources.projectorURL
+            )
+            lastLoadDiagnostics = diagnostics
+            print(
+                "[JarvisRuntime] final-load-path model=\(diagnostics.modelName) " +
+                "path=\(diagnostics.modelPath) exists=\(diagnostics.fileExists) " +
+                "size=\(diagnostics.fileSizeBytes) ext=\(diagnostics.pathExtension) " +
+                "sandbox=\(diagnostics.usesSandboxCopy) simulator=\(diagnostics.runningOnSimulator)"
+            )
+            guard diagnostics.fileExists else {
+                throw JarvisModelError.unavailable("Local copied model file is missing at \(diagnostics.modelPath)")
+            }
+            guard diagnostics.fileSizeBytes > 0 else {
+                throw JarvisModelError.unavailable("Local copied model file is empty at \(diagnostics.modelPath)")
+            }
+            guard diagnostics.pathExtension == "gguf" else {
+                throw JarvisModelError.runtimeFailure("Local copied model file has unsupported extension '.\(diagnostics.pathExtension)'.")
+            }
+
+            let thermalDetail = ProcessInfo.processInfo.thermalState == .serious
+                ? "Preparing runtime in cool-down mode"
+                : "Preparing runtime"
+            state = .warming(modelName: model.displayName, progress: 0.15, detail: thermalDetail)
             try await Task.sleep(nanoseconds: 80_000_000)
             state = .warming(modelName: model.displayName, progress: 0.45, detail: "Opening model file")
             try await engine.loadModel(
@@ -633,12 +908,19 @@ public final class JarvisLocalModelRuntime: ObservableObject {
             didLoadModel = true
             state = .ready(modelName: model.displayName)
             fileAccessState = accessGrantedState(for: model)
+            lastFailure = nil
             print("[JarvisRuntime] model ready \(model.displayName)")
         } catch let accessError as JarvisModelFileAccessError {
             releaseLoadedResources()
             resetLoadedModelState()
-            state = .failed(modelName: model.displayName, message: accessError.localizedDescription)
+            let failure = runtimeFailure(
+                kind: .fileAccess,
+                message: accessError.localizedDescription,
+                suggestion: "Revalidate the model file or re-import it from Files."
+            )
+            state = .failed(modelName: model.displayName, failure: failure)
             fileAccessState = mapFileAccessError(accessError, modelName: model.displayName)
+            lastFailure = failure
             print("[JarvisRuntime] file access failed for \(model.displayName): \(accessError.localizedDescription)")
             throw accessError
         } catch {
@@ -646,14 +928,20 @@ public final class JarvisLocalModelRuntime: ObservableObject {
             releaseLoadedResources()
             resetLoadedModelState()
             let normalizedError = normalized(error, modelName: model.displayName)
-            state = .failed(modelName: model.displayName, message: normalizedError.localizedDescription)
+            let failure = runtimeFailure(
+                kind: .warmupFailed,
+                message: normalizedError.localizedDescription,
+                suggestion: "Retry warmup, unload the model, or try a smaller/recommended GGUF if the device is running out of memory."
+            )
+            state = .failed(modelName: model.displayName, failure: failure)
             fileAccessState = restingFileAccessState(for: model)
+            lastFailure = failure
             print("[JarvisRuntime] failed to load model \(model.displayName): \(normalizedError.localizedDescription)")
             throw normalizedError
         }
     }
 
-    public func streamResponse(prompt: String, history: [JarvisChatMessage]) -> AsyncThrowingStream<String, Error> {
+    public func streamResponse(request: JarvisAssistantRequest) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             activeGenerationTask?.cancel()
             activeGenerationTask = Task { [weak self] in
@@ -663,20 +951,28 @@ public final class JarvisLocalModelRuntime: ObservableObject {
                     try await self.prepareIfNeeded()
                     let modelName = self.selectedModel?.displayName ?? "model"
                     self.state = .busy(modelName: modelName, detail: "Generating response")
-                    try await self.engine.generate(prompt: prompt, history: history) { token in
+                    self.lastFailure = nil
+                    try await self.engine.generate(request: request) { token in
                         continuation.yield(token)
                     }
                     self.state = .ready(modelName: modelName)
                     if let selectedModel = self.selectedModel {
                         self.fileAccessState = self.accessGrantedState(for: selectedModel)
                     }
+                    self.lastFailure = nil
                     continuation.finish()
                 } catch {
                     if let modelError = error as? JarvisModelError, case .cancelled = modelError {
                         self.restoreIdleState()
                     } else if !self.isTerminalState(self.state) {
                         let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                        self.state = .failed(modelName: self.selectedModel?.displayName, message: message)
+                        let failure = self.runtimeFailure(
+                            kind: .inferenceFailed,
+                            message: message,
+                            suggestion: "Retry the request or unload and warm the model again."
+                        )
+                        self.state = .failed(modelName: self.selectedModel?.displayName, failure: failure)
+                        self.lastFailure = failure
                     }
                     continuation.finish(throwing: error)
                 }
@@ -712,12 +1008,18 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         guard let model = selectedModel else {
             state = .noModel
             fileAccessState = .noImportedFile
+            lastFailure = nil
             return
         }
 
         guard isInferenceAvailable else {
             state = .runtimeUnavailable(reason: inferenceUnavailableReason)
             fileAccessState = restingFileAccessState(for: model)
+            lastFailure = runtimeFailure(
+                kind: .runtimeUnavailable,
+                message: inferenceUnavailableReason,
+                suggestion: "Run the local model on a physical iPhone."
+            )
             return
         }
 
@@ -726,6 +1028,9 @@ public final class JarvisLocalModelRuntime: ObservableObject {
             fileAccessState = accessGrantedState(for: model)
         } else {
             fileAccessState = restingFileAccessState(for: model)
+        }
+        if case .failed = state {
+            lastFailure = nil
         }
     }
 
@@ -742,9 +1047,11 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         if let model = selectedModel {
             state = .cold(modelName: model.displayName)
             fileAccessState = restingFileAccessState(for: model)
+            lastFailure = nil
         } else {
             state = .noModel
             fileAccessState = .noImportedFile
+            lastFailure = nil
         }
     }
 
@@ -759,6 +1066,8 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         guard let model = selectedModel else {
             state = .noModel
             fileAccessState = .noImportedFile
+            lastFailure = nil
+            lastLoadDiagnostics = nil
             return
         }
 
@@ -768,6 +1077,7 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         } else {
             fileAccessState = restingFileAccessState(for: model)
         }
+        lastFailure = nil
     }
 
     private func resetLoadedModelState() {
@@ -845,5 +1155,40 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         case .accessDenied, .fileMissing, .invalidResolvedFile:
             return .accessLost(modelName: modelName, reason: error.localizedDescription)
         }
+    }
+
+    private func runtimeFailure(
+        kind: JarvisRuntimeFailureKind,
+        message: String,
+        suggestion: String? = nil
+    ) -> JarvisRuntimeFailure {
+        JarvisRuntimeFailure(kind: kind, message: message, recoverySuggestion: suggestion)
+    }
+
+    private func makeLoadDiagnostics(
+        modelName: String,
+        modelURL: URL,
+        projectorURL: URL?
+    ) -> JarvisRuntimeLoadDiagnostics {
+        let fileExists = FileManager.default.fileExists(atPath: modelURL.path)
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: modelURL.path)[.size] as? Int64) ?? 0
+        let normalizedPath = modelURL.standardizedFileURL.path
+        let documentsRoot = (FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.path ?? "")
+        return JarvisRuntimeLoadDiagnostics(
+            modelName: modelName,
+            modelPath: normalizedPath,
+            fileExists: fileExists,
+            fileSizeBytes: fileSize,
+            pathExtension: modelURL.pathExtension.lowercased(),
+            usesSandboxCopy: normalizedPath.hasPrefix(documentsRoot),
+            runningOnSimulator: {
+                #if targetEnvironment(simulator)
+                true
+                #else
+                false
+                #endif
+            }(),
+            projectorPath: projectorURL?.standardizedFileURL.path
+        )
     }
 }

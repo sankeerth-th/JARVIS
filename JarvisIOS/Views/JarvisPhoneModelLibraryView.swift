@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import UIKit
 
 struct JarvisPhoneModelLibraryView: View {
     @Environment(\.dismiss) private var dismiss
@@ -44,12 +45,12 @@ struct JarvisPhoneModelLibraryView: View {
                 }
             }
         }
-        .fileImporter(
-            isPresented: $appModel.isModelImporterPresented,
-            allowedContentTypes: [UTType(filenameExtension: "gguf") ?? .data],
-            allowsMultipleSelection: false,
-            onCompletion: appModel.handleModelImportResult
-        )
+        .sheet(isPresented: $appModel.isModelImporterPresented) {
+            JarvisGGUFImportPicker(
+                isPresented: $appModel.isModelImporterPresented,
+                onCompletion: appModel.handleModelImportResult
+            )
+        }
     }
 
     private var emptyState: some View {
@@ -105,7 +106,10 @@ struct JarvisPhoneModelLibraryView: View {
                 Spacer(minLength: 10)
 
                 VStack(alignment: .trailing, spacing: 6) {
-                    statusPill(for: model.status)
+                    statusPill(
+                        title: model.importState.displayName,
+                        color: model.canActivate ? .green : statusColor(for: model.status)
+                    )
                     if isActive {
                         Text("Active")
                             .font(.system(.caption2, design: .rounded, weight: .bold))
@@ -129,7 +133,7 @@ struct JarvisPhoneModelLibraryView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(isActive ? .green.opacity(0.8) : Color(red: 0.14, green: 0.74, blue: 0.88))
-                .disabled(model.status != .ready || isActive)
+                .disabled(!model.canActivate || isActive)
 
                 Button("Revalidate") {
                     appModel.revalidateModel(id: model.id)
@@ -158,15 +162,15 @@ struct JarvisPhoneModelLibraryView: View {
         )
     }
 
-    private func statusPill(for status: JarvisModelRecordStatus) -> some View {
-        Text(status.displayName)
+    private func statusPill(title: String, color: Color) -> some View {
+        Text(title)
             .font(.system(.caption2, design: .rounded, weight: .bold))
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .foregroundStyle(statusColor(for: status))
+            .foregroundStyle(color)
             .background(
                 Capsule(style: .continuous)
-                    .fill(statusColor(for: status).opacity(0.15))
+                    .fill(color.opacity(0.15))
             )
     }
 
@@ -177,6 +181,44 @@ struct JarvisPhoneModelLibraryView: View {
         case .unsupported: return .yellow
         case .missing: return .red
         case .failed: return .red
+        }
+    }
+}
+
+struct JarvisGGUFImportPicker: UIViewControllerRepresentable {
+    @Binding var isPresented: Bool
+    let onCompletion: (Result<[URL], Error>) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(
+            forOpeningContentTypes: [UTType(filenameExtension: "gguf") ?? .data],
+            asCopy: true
+        )
+        picker.allowsMultipleSelection = false
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        private let parent: JarvisGGUFImportPicker
+
+        init(parent: JarvisGGUFImportPicker) {
+            self.parent = parent
+        }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            parent.isPresented = false
+            parent.onCompletion(.success(urls))
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            parent.isPresented = false
         }
     }
 }

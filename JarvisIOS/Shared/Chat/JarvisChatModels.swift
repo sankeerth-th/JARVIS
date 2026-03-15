@@ -64,3 +64,115 @@ public struct JarvisKnowledgeResult: Identifiable, Equatable {
         self.snippet = snippet
     }
 }
+
+public enum JarvisAssistantTask: String, Codable, CaseIterable, Equatable {
+    case chat
+    case summarize
+    case reply
+    case draftEmail
+    case analyzeText
+    case visualDescribe
+    case prioritizeNotifications
+    case quickCapture
+    case knowledgeAnswer
+
+    public var displayName: String {
+        switch self {
+        case .chat:
+            return "Chat"
+        case .summarize:
+            return "Summarize"
+        case .reply:
+            return "Reply"
+        case .draftEmail:
+            return "Draft Email"
+        case .analyzeText:
+            return "Analyze Text"
+        case .visualDescribe:
+            return "Visual Describe"
+        case .prioritizeNotifications:
+            return "Prioritize Notifications"
+        case .quickCapture:
+            return "Quick Capture"
+        case .knowledgeAnswer:
+            return "Knowledge Answer"
+        }
+    }
+
+    public var historyLimit: Int {
+        switch self {
+        case .chat:
+            return 12
+        case .summarize:
+            return 4
+        case .reply, .draftEmail:
+            return 6
+        case .analyzeText:
+            return 6
+        case .visualDescribe:
+            return 3
+        case .prioritizeNotifications:
+            return 5
+        case .quickCapture:
+            return 3
+        case .knowledgeAnswer:
+            return 8
+        }
+    }
+
+    public var groundingLimit: Int {
+        switch self {
+        case .knowledgeAnswer:
+            return 4
+        case .chat, .summarize, .reply, .draftEmail, .analyzeText, .visualDescribe, .prioritizeNotifications, .quickCapture:
+            return 2
+        }
+    }
+}
+
+public struct JarvisAssistantTaskContext: Equatable {
+    public var task: JarvisAssistantTask
+    public var source: String
+    public var seedText: String?
+    public var replyTargetText: String?
+    public var groundedResults: [JarvisKnowledgeResult]
+
+    public init(
+        task: JarvisAssistantTask,
+        source: String,
+        seedText: String? = nil,
+        replyTargetText: String? = nil,
+        groundedResults: [JarvisKnowledgeResult] = []
+    ) {
+        self.task = task
+        self.source = source
+        self.seedText = seedText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.replyTargetText = replyTargetText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.groundedResults = groundedResults
+    }
+}
+
+public struct JarvisAssistantRequest: Equatable {
+    public var task: JarvisAssistantTask
+    public var prompt: String
+    public var source: String
+    public var history: [JarvisChatMessage]
+    public var groundedResults: [JarvisKnowledgeResult]
+    public var replyTargetText: String?
+
+    public init(
+        task: JarvisAssistantTask,
+        prompt: String,
+        source: String,
+        history: [JarvisChatMessage],
+        groundedResults: [JarvisKnowledgeResult] = [],
+        replyTargetText: String? = nil
+    ) {
+        self.task = task
+        self.prompt = prompt
+        self.source = source
+        self.history = history
+        self.groundedResults = groundedResults
+        self.replyTargetText = replyTargetText?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}

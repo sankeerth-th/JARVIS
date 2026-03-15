@@ -19,22 +19,34 @@ struct AssistantTabView: View {
                         reduceMotion: reduceMotion
                     )
 
+                    if shouldShowEntryContext {
+                        entryContextBadge
+                            .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
+                    }
+
+                    assistantStateTimeline
+
                     if appModel.assistantInputMode == .voice {
                         voiceTranscriptPanel
-                            .transition(.move(edge: .top).combined(with: .opacity))
+                            .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
                     }
 
                     messagesPanel
 
                     if showGroundingContext {
                         groundingContextPanel
-                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                            .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
                     }
 
                     if !appModel.assistantSuggestions.isEmpty,
-                       appModel.assistantExperienceState == .groundedAnswerReady {
+                       appModel.assistantExperienceState == .answerReady {
                         suggestionStrip
-                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                            .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
+                    }
+
+                    if shouldShowActionRail {
+                        actionRail
+                            .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
                     }
 
                     composerPanel
@@ -93,6 +105,7 @@ struct AssistantTabView: View {
                 }
             }
             .animation(.spring(response: 0.42, dampingFraction: 0.86), value: appModel.assistantExperienceState)
+            .animation(.easeInOut(duration: 0.22), value: appModel.assistantEntryStyle)
         }
     }
 
@@ -148,6 +161,167 @@ struct AssistantTabView: View {
         )
     }
 
+    private var shouldShowEntryContext: Bool {
+        guard appModel.selectedTab == .assistant else { return false }
+        return appModel.assistantEntryStyle != .standard
+    }
+
+    private var entryContextBadge: some View {
+        HStack(spacing: 8) {
+            Image(systemName: entryIcon)
+                .font(.caption.weight(.semibold))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entryTitle)
+                    .font(.caption.weight(.semibold))
+                Text(entrySubtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.76))
+            }
+            Spacer()
+        }
+        .foregroundStyle(.white.opacity(0.92))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                )
+        )
+    }
+
+    private var entryTitle: String {
+        switch appModel.assistantEntryStyle {
+        case .standard:
+            return "Assistant"
+        case .assistant:
+            return "Assistant Entry"
+        case .chat:
+            return "Chat"
+        case .quickAsk:
+            return "Quick Ask"
+        case .quickCapture:
+            return "Quick Capture"
+        case .draftReply:
+            return "Draft Reply"
+        case .summarize:
+            return "Summarize"
+        case .continueConversation:
+            return "Continue Session"
+        case .voiceFirst:
+            return "Voice Entry"
+        case .visualPreview:
+            return "Visual Preview"
+        case .systemAssistant:
+            return "System Assistant"
+        }
+    }
+
+    private var entrySubtitle: String {
+        switch appModel.assistantEntryStyle {
+        case .standard:
+            return "Ready for input."
+        case .assistant:
+            return "Unified assistant entry surface."
+        case .chat:
+            return "Direct chat route."
+        case .quickAsk:
+            return "Focused one-shot assistant invocation."
+        case .quickCapture:
+            return "Capture context now, refine next."
+        case .draftReply:
+            return "Reply-focused drafting mode."
+        case .summarize:
+            return "Draft prepared for concise output."
+        case .continueConversation:
+            return "Resuming recent assistant context."
+        case .voiceFirst:
+            return "Hands-free listening mode."
+        case .visualPreview:
+            return "Honest preview while vision runtime is staged."
+        case .systemAssistant:
+            return "System-triggered assistant entry."
+        }
+    }
+
+    private var entryIcon: String {
+        switch appModel.assistantEntryStyle {
+        case .standard:
+            return "sparkles"
+        case .assistant:
+            return "bolt.badge.sparkles"
+        case .chat:
+            return "bubble.left.and.text.bubble.right.fill"
+        case .quickAsk:
+            return "bolt.fill"
+        case .quickCapture:
+            return "square.and.pencil"
+        case .draftReply:
+            return "arrowshape.turn.up.left.fill"
+        case .summarize:
+            return "text.quote"
+        case .continueConversation:
+            return "arrow.uturn.forward.circle"
+        case .voiceFirst:
+            return "waveform"
+        case .visualPreview:
+            return "viewfinder"
+        case .systemAssistant:
+            return "sparkles.tv"
+        }
+    }
+
+    private var assistantStateTimeline: some View {
+        HStack(spacing: 8) {
+            timelineChip("Listen", icon: "waveform", active: timelinePhase >= 1)
+            timelineConnector(active: timelinePhase >= 2)
+            timelineChip("Think", icon: "brain.head.profile", active: timelinePhase >= 2)
+            timelineConnector(active: timelinePhase >= 3)
+            timelineChip("Answer", icon: "sparkles.rectangle.stack", active: timelinePhase >= 3)
+        }
+    }
+
+    private func timelineChip(_ title: String, icon: String, active: Bool) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.caption2.weight(.semibold))
+            Text(title)
+                .font(.caption2.weight(.semibold))
+        }
+        .foregroundStyle(active ? .white.opacity(0.92) : .white.opacity(0.58))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(active ? Color.white.opacity(0.14) : Color.white.opacity(0.05))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(active ? Color.white.opacity(0.24) : Color.white.opacity(0.08), lineWidth: 1)
+                )
+        )
+    }
+
+    private func timelineConnector(active: Bool) -> some View {
+        Capsule(style: .continuous)
+            .fill(active ? Color.white.opacity(0.44) : Color.white.opacity(0.16))
+            .frame(width: 18, height: 2)
+    }
+
+    private var timelinePhase: Int {
+        switch appModel.assistantExperienceState {
+        case .idle, .armed, .unavailable:
+            return 0
+        case .listening, .transcribing:
+            return 1
+        case .thinking, .processing, .grounding:
+            return 2
+        case .responding, .answerReady, .error:
+            return 3
+        }
+    }
+
     private var listeningActive: Bool {
         switch appModel.assistantExperienceState {
         case .listening, .transcribing:
@@ -177,18 +351,10 @@ struct AssistantTabView: View {
     }
 
     private var messagesPanel: some View {
-        ScrollViewReader { proxy in
+        let messages = appModel.conversation.messages
+        return ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 10) {
-                    if appModel.conversation.messages.isEmpty {
-                        AssistantEmptyState()
-                    }
-
-                    ForEach(appModel.conversation.messages) { message in
-                        AssistantMessageRow(message: message)
-                            .id(message.id)
-                    }
-                }
+                messageList(messages: messages)
                 .padding(10)
             }
             .background(
@@ -214,9 +380,23 @@ struct AssistantTabView: View {
         }
     }
 
+    @ViewBuilder
+    private func messageList(messages: [JarvisChatMessage]) -> some View {
+        LazyVStack(spacing: 10) {
+            if messages.isEmpty {
+                AssistantEmptyState()
+            }
+
+            ForEach(messages) { message in
+                AssistantMessageRow(message: message)
+                    .id(message.id)
+            }
+        }
+    }
+
     private var showGroundingContext: Bool {
         switch appModel.assistantExperienceState {
-        case .grounding, .responding, .groundedAnswerReady:
+        case .grounding, .responding, .answerReady:
             return !contextPreviewResults.isEmpty
         default:
             return false
@@ -240,7 +420,7 @@ struct AssistantTabView: View {
                     .foregroundStyle(.white.opacity(0.85))
                 Spacer()
                 Button("Open Knowledge") {
-                    appModel.apply(route: JarvisLaunchRoute(action: .search, source: "assistant.context"))
+                    appModel.apply(route: .assistant(.knowledge, source: .inApp))
                 }
                 .font(.caption2.weight(.semibold))
                 .buttonStyle(.plain)
@@ -297,6 +477,58 @@ struct AssistantTabView: View {
             }
             .padding(.horizontal, 2)
         }
+    }
+
+    private var shouldShowActionRail: Bool {
+        appModel.assistantExperienceState == .answerReady && latestAssistantText != nil
+    }
+
+    private var latestAssistantText: String? {
+        let latestAssistant = appModel.conversation.messages.last { message in
+            message.role == JarvisChatRole.assistant
+        }
+        let trimmed = (latestAssistant?.text ?? "").trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private var actionRail: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                actionButton("Follow-up", icon: "arrow.turn.down.right") {
+                    appModel.setAssistantInputMode(.text)
+                    appModel.draft = "Can you expand your last answer with one practical next step?"
+                    appModel.shouldFocusComposer = true
+                }
+                actionButton("Rephrase", icon: "textformat.alt") {
+                    appModel.setAssistantInputMode(.text)
+                    appModel.draft = "Rephrase your last answer in simpler language."
+                    appModel.shouldFocusComposer = true
+                }
+                actionButton("Search More", icon: "magnifyingglass") {
+                    let payload = latestAssistantText.map { String($0.prefix(120)) }
+                    appModel.apply(route: JarvisLaunchRoute(action: .knowledge, query: payload, source: JarvisAssistantEntrySource.inApp.rawValue, assistantTask: .knowledgeAnswer))
+                }
+                actionButton("Voice Reply", icon: "waveform") {
+                    appModel.apply(route: .assistant(.voice, task: .chat, source: .inApp, shouldStartListening: true))
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+    }
+
+    private func actionButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Color.white.opacity(0.10), in: Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     private var composerPanel: some View {
@@ -397,6 +629,9 @@ struct AssistantTabView: View {
                 Text(appModel.runtimeState.title)
                     .font(.caption.weight(.semibold))
                 Spacer()
+                Text(appModel.assistantTask.displayName)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.78))
                 Text(appModel.runtimeEngineName)
                     .font(.caption2)
                     .foregroundStyle(.white.opacity(0.72))
@@ -405,6 +640,16 @@ struct AssistantTabView: View {
             Text("\(appModel.modelFileAccessState.title): \(appModel.modelFileAccessDetail)")
                 .font(.caption2)
                 .foregroundStyle(.white.opacity(0.72))
+
+            Text("Assistant gate: \(appModel.assistantRuntimeGateStatus.detail)")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.72))
+
+            if let failure = appModel.runtimeFailure {
+                Text("Failure: \(failure.kind.rawValue) - \(failure.message)")
+                    .font(.caption2)
+                    .foregroundStyle(.orange.opacity(0.9))
+            }
         }
         .foregroundStyle(.white.opacity(0.88))
         .padding(.horizontal, 10)
@@ -423,9 +668,16 @@ struct AssistantTabView: View {
                         UIApplication.shared.open(settingsURL)
                     }
                 }
-                if appModel.canRunInference {
+                if appModel.canRunInference,
+                   appModel.runtimeFailure?.kind != .runtimeUnavailable,
+                   appModel.runtimeFailure?.kind != .fileAccess {
                     Button("Retry Warm") {
                         appModel.retryRuntimeWarmup()
+                    }
+                }
+                if appModel.runtimeFailure?.kind != .runtimeUnavailable {
+                    Button("Unload") {
+                        appModel.unloadActiveModel()
                     }
                 }
                 Button("Models") {
@@ -516,7 +768,7 @@ private struct AssistantBackdrop: View {
         switch state {
         case .listening, .transcribing:
             return Color.cyan.opacity(0.28)
-        case .thinking, .grounding, .responding:
+        case .thinking, .processing, .grounding, .responding:
             return Color.indigo.opacity(0.30)
         case .error:
             return Color.red.opacity(0.24)
@@ -603,11 +855,13 @@ private struct AssistantPresenceSurface: View {
             return transcript.isEmpty ? "Converting speech into text…" : transcript
         case .thinking:
             return "Reasoning on-device."
+        case .processing:
+            return "Preparing your request."
         case .grounding:
             return "Retrieving local context."
         case .responding:
             return "Streaming answer."
-        case .groundedAnswerReady:
+        case .answerReady:
             return "Answer ready with follow-up actions."
         case .error(let message):
             return message
@@ -631,9 +885,9 @@ private struct AssistantPresenceSurface: View {
         switch state {
         case .listening, .transcribing:
             return .cyan
-        case .thinking, .grounding, .responding:
+        case .thinking, .processing, .grounding, .responding:
             return .indigo
-        case .groundedAnswerReady:
+        case .answerReady:
             return .green
         case .error:
             return .red
