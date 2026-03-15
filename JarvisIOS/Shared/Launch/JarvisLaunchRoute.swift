@@ -47,6 +47,7 @@ public struct JarvisLaunchRoute: Codable, Equatable {
     public var assistantTask: JarvisAssistantTask?
     public var shouldFocusComposer: Bool?
     public var shouldStartListening: Bool?
+    public var shouldAutoSubmit: Bool?
 
     public init(
         action: JarvisLaunchAction,
@@ -56,7 +57,8 @@ public struct JarvisLaunchRoute: Codable, Equatable {
         createdAt: Date = Date(),
         assistantTask: JarvisAssistantTask? = nil,
         shouldFocusComposer: Bool? = nil,
-        shouldStartListening: Bool? = nil
+        shouldStartListening: Bool? = nil,
+        shouldAutoSubmit: Bool? = nil
     ) {
         self.action = action
         self.payload = payload?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -66,6 +68,7 @@ public struct JarvisLaunchRoute: Codable, Equatable {
         self.assistantTask = assistantTask
         self.shouldFocusComposer = shouldFocusComposer
         self.shouldStartListening = shouldStartListening
+        self.shouldAutoSubmit = shouldAutoSubmit
     }
 
     public var entryRoute: JarvisAssistantEntryRoute? {
@@ -116,6 +119,9 @@ public struct JarvisLaunchRoute: Codable, Equatable {
         if let shouldStartListening {
             queryItems.append(URLQueryItem(name: "listen", value: shouldStartListening ? "1" : "0"))
         }
+        if let shouldAutoSubmit {
+            queryItems.append(URLQueryItem(name: "submit", value: shouldAutoSubmit ? "1" : "0"))
+        }
         components.queryItems = queryItems
         return components.url
     }
@@ -136,6 +142,7 @@ public struct JarvisLaunchRoute: Codable, Equatable {
         let assistantTask = queryMap["task"].flatMap(JarvisAssistantTask.init(rawValue:))
         let shouldFocusComposer = queryMap["focus"].flatMap(Self.bool(from:))
         let shouldStartListening = queryMap["listen"].flatMap(Self.bool(from:))
+        let shouldAutoSubmit = queryMap["submit"].flatMap(Self.bool(from:))
 
         return JarvisLaunchRoute(
             action: action,
@@ -144,7 +151,8 @@ public struct JarvisLaunchRoute: Codable, Equatable {
             source: source,
             assistantTask: assistantTask,
             shouldFocusComposer: shouldFocusComposer,
-            shouldStartListening: shouldStartListening
+            shouldStartListening: shouldStartListening,
+            shouldAutoSubmit: shouldAutoSubmit
         )
     }
 
@@ -155,7 +163,8 @@ public struct JarvisLaunchRoute: Codable, Equatable {
         task: JarvisAssistantTask? = nil,
         source: JarvisAssistantEntrySource,
         shouldFocusComposer: Bool? = nil,
-        shouldStartListening: Bool? = nil
+        shouldStartListening: Bool? = nil,
+        shouldAutoSubmit: Bool? = nil
     ) -> JarvisLaunchRoute {
         let action: JarvisLaunchAction
         switch route {
@@ -184,7 +193,8 @@ public struct JarvisLaunchRoute: Codable, Equatable {
             source: source.rawValue,
             assistantTask: task,
             shouldFocusComposer: shouldFocusComposer,
-            shouldStartListening: shouldStartListening
+            shouldStartListening: shouldStartListening,
+            shouldAutoSubmit: shouldAutoSubmit
         )
     }
 

@@ -6,64 +6,35 @@ struct AssistantTabView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var composerFocused: Bool
 
+    private let transcriptBottomAnchor = "assistant.transcript.bottom"
+
     var body: some View {
         NavigationStack {
             ZStack {
                 AssistantBackdrop(state: appModel.assistantExperienceState)
 
-                VStack(spacing: 14) {
-                    AssistantPresenceSurface(
-                        state: appModel.assistantExperienceState,
-                        mode: appModel.assistantInputMode,
-                        transcript: appModel.assistantLiveTranscript,
-                        reduceMotion: reduceMotion
-                    )
-
-                    if shouldShowEntryContext {
-                        entryContextBadge
-                            .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
-                    }
-
-                    assistantStateTimeline
-
-                    if appModel.assistantInputMode == .voice {
-                        voiceTranscriptPanel
-                            .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
-                    }
-
+                VStack(spacing: 12) {
+                    assistantHeader
                     messagesPanel
-
-                    if showGroundingContext {
-                        groundingContextPanel
-                            .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
-                    }
-
-                    if !appModel.assistantSuggestions.isEmpty,
-                       appModel.assistantExperienceState == .answerReady {
-                        suggestionStrip
-                            .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
-                    }
-
-                    if shouldShowActionRail {
-                        actionRail
-                            .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
-                    }
-
-                    composerPanel
                 }
                 .padding(.horizontal, 14)
                 .padding(.top, 10)
-                .padding(.bottom, 8)
             }
-            .navigationTitle("Assistant")
+            .safeAreaInset(edge: .bottom) {
+                assistantBottomDock
+                    .padding(.horizontal, 14)
+                    .padding(.top, 8)
+                    .padding(.bottom, 8)
+            }
+            .navigationTitle("Ask Jarvis")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    if appModel.shouldShowAssistantBackButton {
+                    if appModel.shouldShowFocusedBackButton {
                         Button {
-                            appModel.returnFromAssistant()
+                            appModel.returnFromFocusedExperience()
                         } label: {
-                            Label("Back", systemImage: "chevron.left")
+                            Label(appModel.focusedBackButtonTitle, systemImage: "chevron.left")
                         }
                     }
                 }
@@ -106,6 +77,116 @@ struct AssistantTabView: View {
             }
             .animation(.spring(response: 0.42, dampingFraction: 0.86), value: appModel.assistantExperienceState)
             .animation(.easeInOut(duration: 0.22), value: appModel.assistantEntryStyle)
+        }
+    }
+
+    private var assistantHeader: some View {
+        VStack(spacing: 10) {
+            AssistantPresenceSurface(
+                state: appModel.assistantExperienceState,
+                mode: appModel.assistantInputMode,
+                transcript: appModel.assistantLiveTranscript,
+                reduceMotion: reduceMotion
+            )
+
+            if let assistantContinuityLabel = appModel.assistantContinuityLabel {
+                continuityBadge(assistantContinuityLabel)
+            }
+
+            if appModel.assistantExperienceState == .answerReady {
+                assistantStateTimeline
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    assistantMetaChip(
+                        title: appModel.assistantTask.displayName,
+                        icon: taskIcon,
+                        tint: .cyan
+                    )
+                    assistantMetaChip(
+                        title: modeTitle,
+                        icon: modeIcon,
+                        tint: .white
+                    )
+                    assistantMetaChip(
+                        title: appModel.runtimeState.title,
+                        icon: runtimeIcon,
+                        tint: runtimeTint
+                    )
+                    if shouldShowEntryContext {
+                        assistantMetaChip(
+                            title: entryTitle,
+                            icon: entryIcon,
+                            tint: .indigo
+                        )
+                    }
+                }
+                .padding(.horizontal, 2)
+            }
+        }
+    }
+
+    private func continuityBadge(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "memorychip")
+                .font(.caption2.weight(.semibold))
+            Text(text)
+                .font(.caption2.weight(.semibold))
+        }
+        .foregroundStyle(.white.opacity(0.84))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            Capsule(style: .continuous)
+                .fill(Color.white.opacity(0.08))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                )
+        )
+    }
+
+    private func assistantMetaChip(title: String, icon: String, tint: Color) -> some View {
+        Label(title, systemImage: icon)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.white.opacity(0.9))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(tint.opacity(0.18))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(tint.opacity(0.32), lineWidth: 1)
+                    )
+            )
+    }
+
+    private var assistantBottomDock: some View {
+        VStack(spacing: 10) {
+            if appModel.assistantInputMode == .voice {
+                voiceTranscriptPanel
+                    .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+            }
+
+            if showGroundingContext {
+                groundingContextPanel
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
+            }
+
+            if !appModel.assistantSuggestions.isEmpty,
+               appModel.assistantExperienceState == .answerReady {
+                suggestionStrip
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
+            }
+
+            if shouldShowActionRail {
+                actionRail
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
+            }
+
+            composerPanel
         }
     }
 
@@ -159,6 +240,25 @@ struct AssistantTabView: View {
                         .stroke(Color.white.opacity(0.16), lineWidth: 1)
                 )
         )
+    }
+
+    private var transcriptScrollSignature: String {
+        let messages = appModel.conversation.messages
+        guard let last = messages.last else {
+            return "empty-\(appModel.isSending)-\(appModel.assistantExperienceState.title)-\(appModel.streamingRevision)"
+        }
+        return "\(messages.count)-\(last.id.uuidString)-\(last.text.count)-\(last.isStreaming)-\(appModel.isSending)-\(appModel.streamingRevision)"
+    }
+
+    private func scrollTranscriptToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
+        let action = {
+            proxy.scrollTo(transcriptBottomAnchor, anchor: .bottom)
+        }
+        if animated {
+            withAnimation(.easeOut(duration: 0.18), action)
+        } else {
+            action()
+        }
     }
 
     private var shouldShowEntryContext: Bool {
@@ -273,6 +373,89 @@ struct AssistantTabView: View {
         }
     }
 
+    private var taskIcon: String {
+        switch appModel.assistantTask {
+        case .chat:
+            return "bubble.left.and.text.bubble.right"
+        case .summarize:
+            return "text.quote"
+        case .reply:
+            return "arrowshape.turn.up.left"
+        case .draftEmail:
+            return "envelope"
+        case .analyzeText:
+            return "doc.text.magnifyingglass"
+        case .visualDescribe:
+            return "viewfinder"
+        case .prioritizeNotifications:
+            return "bell.badge"
+        case .quickCapture:
+            return "square.and.pencil"
+        case .knowledgeAnswer:
+            return "books.vertical"
+        }
+    }
+
+    private var modeTitle: String {
+        switch appModel.assistantInputMode {
+        case .text:
+            return "Text"
+        case .voice:
+            return "Voice"
+        case .visual:
+            return "Visual"
+        }
+    }
+
+    private var modeIcon: String {
+        switch appModel.assistantInputMode {
+        case .text:
+            return "text.bubble"
+        case .voice:
+            return "waveform"
+        case .visual:
+            return "viewfinder"
+        }
+    }
+
+    private var runtimeIcon: String {
+        switch appModel.runtimeState {
+        case .noModel:
+            return "exclamationmark.circle"
+        case .runtimeUnavailable:
+            return "xmark.octagon"
+        case .cold:
+            return "snowflake"
+        case .warming:
+            return "hourglass"
+        case .ready:
+            return "checkmark.circle"
+        case .busy:
+            return "waveform.path"
+        case .paused:
+            return "pause.circle"
+        case .failed:
+            return "exclamationmark.triangle"
+        }
+    }
+
+    private var runtimeTint: Color {
+        switch appModel.runtimeState {
+        case .ready:
+            return .green
+        case .warming, .busy:
+            return .indigo
+        case .failed:
+            return .red
+        case .runtimeUnavailable, .noModel:
+            return .orange
+        case .cold:
+            return .blue
+        case .paused:
+            return .yellow
+        }
+    }
+
     private var assistantStateTimeline: some View {
         HStack(spacing: 8) {
             timelineChip("Listen", icon: "waveform", active: timelinePhase >= 1)
@@ -355,27 +538,28 @@ struct AssistantTabView: View {
         return ScrollViewReader { proxy in
             ScrollView {
                 messageList(messages: messages)
-                .padding(10)
+                    .padding(10)
+
+                Color.clear
+                    .frame(height: 1)
+                    .id(transcriptBottomAnchor)
             }
             .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .fill(Color.black.opacity(0.22))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
                             .stroke(Color.white.opacity(0.14), lineWidth: 1)
                     )
             )
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             .onAppear {
-                guard appModel.settings.autoScrollConversation,
-                      let last = appModel.conversation.messages.last?.id else { return }
-                proxy.scrollTo(last, anchor: .bottom)
-            }
-            .onChange(of: appModel.conversation.messages.count) { _, _ in
                 guard appModel.settings.autoScrollConversation else { return }
-                guard let last = appModel.conversation.messages.last?.id else { return }
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo(last, anchor: .bottom)
-                }
+                scrollTranscriptToBottom(proxy, animated: false)
+            }
+            .onChange(of: transcriptScrollSignature) { _, _ in
+                guard appModel.settings.autoScrollConversation else { return }
+                scrollTranscriptToBottom(proxy, animated: !reduceMotion)
             }
         }
     }
@@ -539,6 +723,22 @@ struct AssistantTabView: View {
                 modeButton(title: "Visual", icon: "viewfinder", mode: .visual)
             }
 
+            HStack(spacing: 8) {
+                assistantMetaChip(title: appModel.assistantTask.displayName, icon: taskIcon, tint: .indigo)
+                if let activeModel = appModel.activeModel {
+                    assistantMetaChip(title: activeModel.displayName, icon: "cpu", tint: .white)
+                }
+                Spacer(minLength: 0)
+                if !appModel.conversation.messages.isEmpty {
+                    Button("New Chat") {
+                        appModel.startNewConversation()
+                    }
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.cyan)
+                }
+            }
+
             if case .unavailable(let reason) = appModel.assistantExperienceState {
                 stateInfoRow(icon: "exclamationmark.triangle.fill", text: reason, tint: .orange)
                 recoveryActionsRow
@@ -587,13 +787,13 @@ struct AssistantTabView: View {
             }
 
             HStack(spacing: 10) {
-                TextField("Ask Jarvis", text: $appModel.draft, axis: .vertical)
+                TextField(composerPlaceholder, text: $appModel.draft, axis: .vertical)
                     .focused($composerFocused)
                     .lineLimit(1...5)
                     .textFieldStyle(.plain)
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 11)
-                    .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .padding(.vertical, 12)
+                    .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
 
                 Button {
                     if appModel.assistantInputMode == .voice {
@@ -603,8 +803,17 @@ struct AssistantTabView: View {
                     }
                 } label: {
                     Image(systemName: sendIcon)
-                        .font(.system(size: 27, weight: .semibold))
+                        .font(.system(size: 22, weight: .bold))
                         .symbolRenderingMode(.hierarchical)
+                        .frame(width: 46, height: 46)
+                        .background(
+                            Circle()
+                                .fill(canSend ? Color.cyan.opacity(0.22) : Color.white.opacity(0.08))
+                                .overlay(
+                                    Circle()
+                                        .stroke(canSend ? Color.cyan.opacity(0.5) : Color.white.opacity(0.12), lineWidth: 1)
+                                )
+                        )
                 }
                 .disabled(!canSend)
                 .tint(.cyan)
@@ -612,10 +821,10 @@ struct AssistantTabView: View {
         }
         .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .fill(.ultraThinMaterial)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
                         .stroke(Color.white.opacity(0.18), lineWidth: 1)
                 )
         )
@@ -629,9 +838,12 @@ struct AssistantTabView: View {
                 Text(appModel.runtimeState.title)
                     .font(.caption.weight(.semibold))
                 Spacer()
-                Text(appModel.assistantTask.displayName)
+                Text(appModel.lastTaskClassification.category.displayName)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.78))
+                Text(appModel.lastGenerationPreset.rawValue.capitalized)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.cyan.opacity(0.85))
                 Text(appModel.runtimeEngineName)
                     .font(.caption2)
                     .foregroundStyle(.white.opacity(0.72))
@@ -644,6 +856,12 @@ struct AssistantTabView: View {
             Text("Assistant gate: \(appModel.assistantRuntimeGateStatus.detail)")
                 .font(.caption2)
                 .foregroundStyle(.white.opacity(0.72))
+
+            if !appModel.lastPromptDebugSummary.isEmpty {
+                Text("Prompt pipeline: \(appModel.lastPromptDebugSummary)")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.72))
+            }
 
             if let failure = appModel.runtimeFailure {
                 Text("Failure: \(failure.kind.rawValue) - \(failure.message)")
@@ -698,6 +916,29 @@ struct AssistantTabView: View {
         appModel.canRunInference &&
         !appModel.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !appModel.isSending
+    }
+
+    private var composerPlaceholder: String {
+        switch appModel.assistantTask {
+        case .chat:
+            return appModel.assistantEntryStyle == .quickAsk ? "Ask directly" : "Ask anything"
+        case .summarize:
+            return "Paste text to summarize"
+        case .reply:
+            return "What should the reply say?"
+        case .draftEmail:
+            return "Draft the email"
+        case .analyzeText:
+            return "Paste the text to analyze"
+        case .visualDescribe:
+            return "Ask about what you captured"
+        case .prioritizeNotifications:
+            return "Paste the updates to rank"
+        case .quickCapture:
+            return "Capture the thought before you lose it"
+        case .knowledgeAnswer:
+            return "Ask using your saved knowledge"
+        }
     }
 
     private var sendIcon: String {
@@ -923,8 +1164,18 @@ private struct AssistantMessageRow: View {
                         .font(.body)
                         .foregroundStyle(.white)
                         .textSelection(.enabled)
+                    if let displayText = message.memoryAttribution?.displayText, !displayText.isEmpty {
+                        Label(displayText, systemImage: "memorychip")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.66))
+                            .padding(.top, 2)
+                    }
+                    if let structuredOutput = message.structuredOutput, !structuredOutput.isEmpty {
+                        AssistantStructuredOutputView(output: structuredOutput)
+                    }
                 }
             }
+            .frame(maxWidth: 312, alignment: .leading)
             .padding(12)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -940,21 +1191,124 @@ private struct AssistantMessageRow: View {
     }
 }
 
-private struct AssistantEmptyState: View {
+private struct AssistantStructuredOutputView: View {
+    let output: JarvisAssistantStructuredOutput
+
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(output.cards) { card in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: icon(for: card.kind))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.cyan)
+                        Text(card.title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.9))
+                    }
+
+                    if !card.body.isEmpty {
+                        Text(card.body)
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.82))
+                            .textSelection(.enabled)
+                    }
+
+                    if !card.items.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(card.items.enumerated()), id: \.offset) { index, item in
+                                HStack(alignment: .top, spacing: 6) {
+                                    Text("\(index + 1).")
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(.cyan.opacity(0.9))
+                                    Text(item)
+                                        .font(.caption)
+                                        .foregroundStyle(.white.opacity(0.84))
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                    }
+
+                    if let callout = card.callout, !callout.isEmpty {
+                        Text(callout)
+                            .font(.caption2)
+                            .foregroundStyle(.white.opacity(0.64))
+                    }
+                }
+                .padding(10)
+                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private func icon(for kind: JarvisAssistantCardKind) -> String {
+        switch kind {
+        case .draft:
+            return "square.and.pencil"
+        case .action:
+            return "bolt.fill"
+        case .checklist:
+            return "checklist"
+        case .clarification:
+            return "questionmark.bubble"
+        case .summary:
+            return "text.quote"
+        }
+    }
+}
+
+private struct AssistantEmptyState: View {
+    @EnvironmentObject private var appModel: JarvisPhoneAppModel
+
+    var body: some View {
+        VStack(spacing: 14) {
             Image(systemName: "sparkles.rectangle.stack.fill")
                 .font(.system(size: 34))
                 .foregroundStyle(.white.opacity(0.82))
-            Text("Start in text, voice, or visual mode.")
+            Text("Start with one strong action.")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.white.opacity(0.90))
-            Text("Assistant states and transitions adapt as you listen, think, and answer.")
+            Text("Ask a question, summarize text, draft a reply, or use local knowledge without hunting through the app.")
                 .font(.caption)
                 .foregroundStyle(.white.opacity(0.72))
                 .multilineTextAlignment(.center)
+
+            VStack(spacing: 8) {
+                starterButton("Summarize pasted text", icon: "text.quote") {
+                    appModel.apply(route: JarvisLaunchRoute(action: .summarize, source: "assistant.empty"))
+                }
+                starterButton("Draft a reply", icon: "arrowshape.turn.up.left") {
+                    appModel.apply(route: JarvisLaunchRoute(action: .draftReply, source: "assistant.empty"))
+                }
+                starterButton("Search my local knowledge", icon: "books.vertical") {
+                    appModel.apply(route: JarvisLaunchRoute(action: .knowledge, source: "assistant.empty"))
+                }
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 30)
+    }
+
+    private func starterButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.92))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .frame(maxWidth: .infinity)
+                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
     }
 }

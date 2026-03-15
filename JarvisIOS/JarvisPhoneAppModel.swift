@@ -204,6 +204,11 @@ final class JarvisPhoneAppModel: ObservableObject {
     @Published var assistantExperienceState: AssistantExperienceState = .idle
     @Published var assistantLiveTranscript: String = ""
     @Published var assistantSuggestions: [AssistantSuggestion] = []
+    @Published private(set) var assistantContinuityLabel: String?
+    @Published private(set) var lastTaskClassification: JarvisTaskClassification = .default
+    @Published private(set) var lastPromptDebugSummary: String = ""
+    @Published private(set) var lastGenerationPreset: JarvisGenerationPreset = .balanced
+    @Published private(set) var streamingRevision: Int = 0
     @Published private(set) var assistantEntryStyle: AssistantEntryStyle = .standard
     @Published private(set) var assistantEntryDate: Date = .distantPast
     @Published private(set) var assistantTask: JarvisAssistantTask = .chat
@@ -214,6 +219,13 @@ final class JarvisPhoneAppModel: ObservableObject {
         microphoneGranted: false,
         speechRecognitionGranted: false
     )
+    
+    // MARK: - New Orchestration Layer
+    @Published private(set) var orchestrator: JarvisTaskOrchestrator
+    @Published private(set) var orchestrationState: JarvisOrchestrationState = .idle
+    @Published private(set) var currentAssistantMode: JarvisAssistantMode = .general
+    @Published private(set) var lastExecutionPlan: JarvisAssistantExecutionPlan?
+    @Published private(set) var lastDecisionTrace: JarvisAssistantDecisionTrace?
 
     let quickLaunchItems: [QuickLaunchItem]
 
@@ -360,6 +372,19 @@ final class JarvisPhoneAppModel: ObservableObject {
         selectedTab == .assistant && assistantReturnTab != nil
     }
 
+    var shouldShowFocusedBackButton: Bool {
+        switch selectedTab {
+        case .assistant, .visual, .knowledge:
+            return assistantReturnTab != nil
+        case .home, .settings:
+            return false
+        }
+    }
+
+    var focusedBackButtonTitle: String {
+        assistantReturnTab?.title ?? "Back"
+    }
+
     private let store: JarvisConversationStore
     private let modelLibrary: JarvisModelLibrary
     private let launchStore: JarvisLaunchRouteStore
@@ -373,6 +398,7 @@ final class JarvisPhoneAppModel: ObservableObject {
     private var pendingModelLibraryImport = false
     private var pendingImportRequest: ModelImportRequest = .primaryModel
     private var pendingAssistantRequest: JarvisAssistantRequest?
+    private var latestCompletedRequest: JarvisAssistantRequest?
 
     init(
         store: JarvisConversationStore = JarvisConversationStore(),
@@ -389,6 +415,7 @@ final class JarvisPhoneAppModel: ObservableObject {
         self.settings = loadedSettings
 
         self.runtime = JarvisLocalModelRuntime(configuration: loadedSettings.runtimeConfiguration)
+        self.orchestrator = JarvisTaskOrchestrator(runtime: self.runtime)
         self.speechCoordinator = speechCoordinator ?? JarvisSpeechCoordinator()
         self.runtimeState = runtime.state
         self.runtimeFailure = runtime.lastFailure
@@ -477,6 +504,14 @@ final class JarvisPhoneAppModel: ObservableObject {
             }
             .store(in: &cancellables)
 
+        orchestrator.$state
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in
+                self?.orchestrationState = state
+                self?.syncExperienceStateWithOrchestration(state)
+            }
+            .store(in: &cancellables)
+
         self.speechCoordinator.$state
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
@@ -500,6 +535,14 @@ final class JarvisPhoneAppModel: ObservableObject {
                 if self.assistantInputMode == .voice {
                     self.assistantLiveTranscript = transcript
                 }
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                _ = self.consumePendingRouteIfNeeded()
             }
             .store(in: &cancellables)
 
@@ -575,24 +618,61 @@ final class JarvisPhoneAppModel: ObservableObject {
 
     func handleTabSelection(_ tab: JarvisAppTab) {
         selectedTab = tab
-        if tab != .assistant {
-            assistantReturnTab = nil
+        assistantReturnTab = nil
+
+        if assistantInputMode == .voice, tab != .assistant {
+            stopVoicePreview(commit: false)
+        }
+
+        switch tab {
+        case .home:
+            assistantInputMode = .text
             assistantEntryStyle = .standard
-            if assistantInputMode == .voice {
-                stopVoicePreview(commit: false)
-            }
-            if assistantInputMode != .visual {
-                assistantInputMode = .text
-            }
+            activeAssistantRoute = .assistant
             if !needsModelSetup {
                 assistantExperienceState = .idle
             }
-        } else if assistantInputMode == .text && !needsModelSetup {
-            assistantExperienceState = .armed
+            statusText = "Ready"
+        case .assistant:
+            if assistantInputMode == .visual {
+                assistantInputMode = .text
+            }
+            if assistantTask == .visualDescribe {
+                assistantTask = .chat
+            }
+            activeAssistantRoute = .assistant
+            if assistantInputMode == .text && !needsModelSetup {
+                assistantExperienceState = .armed
+            }
+        case .visual:
+            assistantInputMode = .visual
+            assistantEntryStyle = .visualPreview
+            activeAssistantRoute = .visual
+            assistantTask = .visualDescribe
+            assistantExperienceState = canRunVisualAssistant ? .armed : .unavailable(reason: visualAssistantStatusText)
+            statusText = "Visual assistant preview"
+        case .knowledge:
+            assistantInputMode = .text
+            assistantEntryStyle = .standard
+            activeAssistantRoute = .knowledge
+            assistantTask = .knowledgeAnswer
+            assistantExperienceState = .idle
+            statusText = "Search local knowledge"
+        case .settings:
+            assistantInputMode = .text
+            assistantEntryStyle = .standard
+            if !needsModelSetup {
+                assistantExperienceState = .idle
+            }
+            statusText = "Settings"
         }
     }
 
     func returnFromAssistant() {
+        returnFromFocusedExperience()
+    }
+
+    func returnFromFocusedExperience() {
         let destination = assistantReturnTab ?? .home
         assistantReturnTab = nil
         if assistantInputMode == .voice {
@@ -633,6 +713,7 @@ final class JarvisPhoneAppModel: ObservableObject {
                 entryRoute: .assistant,
                 entryStyle: .assistant
             )
+            scheduleRouteAutoSubmitIfNeeded(route)
         case .chat, .ask:
             prepareConversationForFocusedEntry()
             setAssistantTask(route.assistantTask ?? .chat, source: route.source, seedText: route.payload)
@@ -646,6 +727,7 @@ final class JarvisPhoneAppModel: ObservableObject {
                 entryRoute: .chat,
                 entryStyle: route.action == .ask ? .quickAsk : .chat
             )
+            scheduleRouteAutoSubmitIfNeeded(route)
         case .quickCapture:
             prepareConversationForFocusedEntry()
             setAssistantTask(.quickCapture, source: route.source)
@@ -658,9 +740,12 @@ final class JarvisPhoneAppModel: ObservableObject {
             let seed = route.payload ?? UIPasteboard.general.string ?? ""
             draft = seed
             enterAssistant(mode: .text, status: "Summarize text", focusComposer: route.shouldFocusComposer ?? true, entryRoute: .chat, entryStyle: .summarize)
+            scheduleRouteAutoSubmitIfNeeded(route)
         case .search, .knowledge:
+            if selectedTab != .knowledge {
+                assistantReturnTab = selectedTab
+            }
             selectedTab = .knowledge
-            assistantReturnTab = nil
             assistantTask = .knowledgeAnswer
             activeAssistantRoute = .knowledge
             assistantTaskContext = JarvisAssistantTaskContext(task: .knowledgeAnswer, source: route.source, seedText: route.query ?? route.payload)
@@ -684,6 +769,7 @@ final class JarvisPhoneAppModel: ObservableObject {
                 entryRoute: .draftReply,
                 entryStyle: .draftReply
             )
+            scheduleRouteAutoSubmitIfNeeded(route)
         case .continueConversation:
             if let latest = conversations.first {
                 conversation = latest
@@ -700,8 +786,10 @@ final class JarvisPhoneAppModel: ObservableObject {
                 statusText = "Voice entry ready"
             }
         case .visualIntelligence:
+            if selectedTab != .visual {
+                assistantReturnTab = selectedTab
+            }
             selectedTab = .visual
-            assistantReturnTab = nil
             assistantInputMode = .visual
             activeAssistantRoute = .visual
             assistantTask = .visualDescribe
@@ -730,6 +818,7 @@ final class JarvisPhoneAppModel: ObservableObject {
                 entryRoute: .systemAssistant,
                 entryStyle: .systemAssistant
             )
+            scheduleRouteAutoSubmitIfNeeded(route)
         }
 
         JarvisHaptics.selection()
@@ -911,124 +1000,187 @@ final class JarvisPhoneAppModel: ObservableObject {
         let cleanPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanPrompt.isEmpty else { return }
         guard validateAssistantSendAvailability(for: assistantTask) else { return }
-        let request = buildAssistantRequest(prompt: cleanPrompt)
-        pendingAssistantRequest = request
-
-        if !settings.autoWarmOnFirstSend {
-            switch runtimeState {
-            case .cold, .failed, .paused:
-                let reason = "Warm \(activeModel?.displayName ?? "the active model") before sending. Auto-warm on first send is turned off."
-                draft = cleanPrompt
-                statusText = reason
-                assistantExperienceState = .unavailable(reason: reason)
-                JarvisHaptics.error()
-                return
-            default:
-                break
-            }
-        }
-
+        
+        // Use new orchestrator-based flow
+        sendWithOrchestrator(prompt: cleanPrompt)
+    }
+    
+    private func sendWithOrchestrator(prompt: String) {
+        // Cancel any existing tasks
         streamTask?.cancel()
         groundingTransitionTask?.cancel()
-        runtimeState = runtime.state
-
+        orchestrator.cancel()
+        
+        // Determine mode from task
+        let mode = JarvisAssistantMode.mode(for: assistantTask)
+        currentAssistantMode = mode
+        
+        // Create orchestration request
+        let orchestrationRequest = JarvisOrchestrationRequest(
+            prompt: prompt,
+            task: assistantTask,
+            source: assistantTaskContext.source,
+            sourceKind: orchestrationSourceKind(),
+            mode: mode,
+            conversation: conversation,
+            knowledgeResults: knowledgeResults,
+            replyTargetText: assistantTaskContext.replyTargetText,
+            inputMode: assistantInputMode.analyticsValue,
+            routeContext: orchestrationRouteContext(),
+            executionPreferences: JarvisAssistantExecutionPreferences(
+                preferredDeliveryMode: .streamingText,
+                prefersStructuredOutput: assistantTask == .summarize || assistantTask == .prioritizeNotifications,
+                allowCapabilityExecution: true,
+                allowMemoryAugmentation: true
+            )
+        )
+        
+        // Set up UI state
         isSending = true
         statusText = pendingWarmupStatusText()
         assistantExperienceState = .thinking
         assistantSuggestions = []
+        assistantContinuityLabel = nil
         JarvisHaptics.softImpact()
-
+        
+        // Add user message to conversation
+        let streamingID = UUID()
+        var updatedConversation = conversation
+        updatedConversation.updatedAt = Date()
+        updatedConversation.messages.append(JarvisChatMessage(role: .user, text: prompt))
+        updatedConversation.messages.append(JarvisChatMessage(id: streamingID, role: .assistant, text: "", isStreaming: true))
+        conversation = updatedConversation
+        persistCurrentConversation()
+        pendingAssistantRequest = buildAssistantRequest(prompt: prompt)
+        
+        // Transition to grounding state after delay
         groundingTransitionTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 420_000_000)
             guard let self else { return }
             guard self.isSending, self.assistantExperienceState == .thinking else { return }
             self.assistantExperienceState = .grounding
         }
-
-        streamTask = Task { [weak self] in
-            guard let self else { return }
-            var streamingID: UUID?
-            do {
-                try await self.runtime.prepareIfNeeded()
-                let activeRequest = await MainActor.run { () -> JarvisAssistantRequest in
-                    let activeRequest = self.pendingAssistantRequest ?? request
-                    let newStreamingID = UUID()
-                    var updated = self.conversation
-                    updated.updatedAt = Date()
-                    updated.messages.append(JarvisChatMessage(role: .user, text: activeRequest.prompt))
-                    updated.messages.append(JarvisChatMessage(id: newStreamingID, role: .assistant, text: "", isStreaming: true))
-                    self.conversation = updated
-                    self.persistCurrentConversation()
-                    self.runtimeState = self.runtime.state
-                    self.runtimeFailure = self.runtime.lastFailure
-                    streamingID = newStreamingID
-                    self.pendingAssistantRequest = activeRequest
-                    return activeRequest
-                }
-
-                let stream = self.runtime.streamResponse(request: activeRequest)
-                var emittedFirstToken = false
-                for try await token in stream {
-                    guard !Task.isCancelled else { break }
-                    if !emittedFirstToken {
-                        emittedFirstToken = true
-                        await MainActor.run {
-                            self.groundingTransitionTask?.cancel()
-                            self.groundingTransitionTask = nil
-                        }
-                        await MainActor.run {
-                            self.assistantExperienceState = .responding
-                        }
-                    }
-                    if let streamingID {
-                        await self.appendStreamingToken(token, id: streamingID)
+        
+        // Start orchestration
+        orchestrator.orchestrate(
+            request: orchestrationRequest,
+            onToken: { [weak self] token in
+                Task { @MainActor [weak self] in
+                    guard let self = self else { return }
+                    if let index = self.conversation.messages.firstIndex(where: { $0.id == streamingID }) {
+                        self.conversation.messages[index].text.append(token)
+                        self.streamingRevision &+= 1
                     }
                 }
-                if let streamingID {
-                    await self.finalizeStreamingMessage(id: streamingID)
-                }
-                await MainActor.run {
-                    self.isSending = false
+            },
+            onComplete: { [weak self] result in
+                Task { @MainActor [weak self] in
+                    guard let self = self else { return }
+                    
                     self.groundingTransitionTask?.cancel()
                     self.groundingTransitionTask = nil
-                    self.statusText = "Ready"
-                    self.runtimeState = self.runtime.state
-                    self.runtimeFailure = self.runtime.lastFailure
-                    self.assistantExperienceState = .answerReady
-                    self.refreshAssistantSuggestions()
-                    self.persistCurrentConversation()
-                    self.pendingAssistantRequest = nil
-                    JarvisHaptics.success()
-                }
-            } catch {
-                let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                await MainActor.run {
                     self.isSending = false
-                    self.groundingTransitionTask?.cancel()
-                    self.groundingTransitionTask = nil
-                    self.runtimeState = self.runtime.state
-                    self.runtimeFailure = self.runtime.lastFailure
-                    self.statusText = message
-                    if let streamingID {
-                        self.replaceStreamingMessage(id: streamingID, with: "I couldn't complete that request: \(message)")
-                        self.persistCurrentConversation()
+                    
+                    if let error = result.error {
+                        self.statusText = error.localizedDescription
+                        self.lastExecutionPlan = result.executionPlan
+                        self.lastDecisionTrace = result.executionPlan.diagnostics
+                        self.pendingAssistantRequest = nil
+                        self.assistantContinuityLabel = nil
+                        if let index = self.conversation.messages.firstIndex(where: { $0.id == streamingID }) {
+                            self.conversation.messages[index].text = "I couldn't complete that request: \(error.localizedDescription)"
+                            self.conversation.messages[index].isStreaming = false
+                        }
+                        self.assistantExperienceState = .error(message: error.localizedDescription)
+                        JarvisHaptics.error()
                     } else {
-                        self.draft = request.prompt
+                        // Finalize the message
+                        if let index = self.conversation.messages.firstIndex(where: { $0.id == streamingID }) {
+                            self.conversation.messages[index].isStreaming = false
+                            self.conversation.messages[index].structuredOutput = JarvisAssistantOutputFormatter.format(
+                                text: self.conversation.messages[index].text,
+                                classification: result.classification,
+                                memoryContext: result.memoryContext
+                            )
+                            self.conversation.messages[index].memoryAttribution = JarvisMessageMemoryAttribution(
+                                labels: result.memoryContext.memoryLabels,
+                                usedSummary: result.memoryContext.summary != nil
+                            )
+                        }
+                        
+                        self.statusText = "Ready"
+                        self.assistantExperienceState = .answerReady
+                        self.lastTaskClassification = result.classification
+                        self.lastGenerationPreset = result.tuning.preset
+                        self.lastPromptDebugSummary = result.assistantRequest.debugSummary
+                        self.lastExecutionPlan = result.executionPlan
+                        self.lastDecisionTrace = result.executionPlan.diagnostics
+                        self.pendingAssistantRequest = nil
+                        self.latestCompletedRequest = result.assistantRequest
+                        self.assistantContinuityLabel = self.buildContinuityLabel(from: result.memoryContext)
+                        
+                        // Convert and set suggestions
+                        self.assistantSuggestions = result.suggestions.map { self.makeAssistantSuggestion(from: $0) }
+                        
+                        self.persistCurrentConversation()
+                        JarvisHaptics.success()
                     }
-                    self.pendingAssistantRequest = request
-                    self.assistantExperienceState = .error(message: message)
-                    JarvisHaptics.error()
+                    
+                    self.runtimeState = self.runtime.state
+                    self.runtimeFailure = self.runtime.lastFailure
                 }
             }
+        )
+    }
+    
+    private func syncExperienceStateWithOrchestration(_ state: JarvisOrchestrationState) {
+        switch state {
+        case .idle, .planning, .classifying, .gatheringContext, .preparingPrompt:
+            // Keep current state (thinking/grounding)
+            break
+        case .warmingRuntime:
+            assistantExperienceState = .thinking
+        case .generating:
+            groundingTransitionTask?.cancel()
+            groundingTransitionTask = nil
+            assistantExperienceState = .responding
+        case .streaming:
+            groundingTransitionTask?.cancel()
+            groundingTransitionTask = nil
+            assistantExperienceState = .responding
+        case .complete:
+            assistantExperienceState = .answerReady
+        case .error(let error):
+            assistantExperienceState = .error(message: error.localizedDescription)
         }
+    }
+
+    private func orchestrationRouteContext() -> JarvisAssistantRouteContext {
+        JarvisAssistantRouteContext(
+            tabIdentifier: selectedTab.rawValue,
+            entryRouteIdentifier: activeAssistantRoute.rawValue,
+            entryStyleIdentifier: String(describing: assistantEntryStyle),
+            isFocusedExperience: assistantReturnTab != nil,
+            shouldFocusComposer: selectedTab == .assistant && assistantInputMode == .text
+        )
+    }
+
+    private func orchestrationSourceKind() -> JarvisAssistantInvocationSourceKind {
+        JarvisAssistantInvocationSourceKind(
+            source: assistantTaskContext.source,
+            route: activeAssistantRoute
+        )
     }
 
     func cancelStreaming() {
         streamTask?.cancel()
         groundingTransitionTask?.cancel()
         groundingTransitionTask = nil
+        orchestrator.cancel()
         runtime.cancel()
         isSending = false
+        lastExecutionPlan = nil
+        lastDecisionTrace = nil
         runtimeState = runtime.state
         runtimeFailure = runtime.lastFailure
         statusText = "Cancelled"
@@ -1157,9 +1309,16 @@ final class JarvisPhoneAppModel: ObservableObject {
         setAssistantTask(.chat, source: "conversation.new")
         pendingAssistantRequest = nil
         assistantSuggestions = []
+        assistantContinuityLabel = nil
         assistantLiveTranscript = ""
         statusText = "New conversation"
         assistantExperienceState = .armed
+        lastTaskClassification = .default
+        lastPromptDebugSummary = ""
+        lastGenerationPreset = .balanced
+        latestCompletedRequest = nil
+        orchestrator.reset()
+        currentAssistantMode = .general
     }
 
     func openConversation(_ record: JarvisConversationRecord, source: String) {
@@ -1209,6 +1368,26 @@ final class JarvisPhoneAppModel: ObservableObject {
 
     func dismissSetupFlowIfReady() {
         showSetupFlow = needsModelSetup
+    }
+
+    private func scheduleRouteAutoSubmitIfNeeded(_ route: JarvisLaunchRoute) {
+        guard route.shouldAutoSubmit == true else { return }
+        let prompt = (route.payload ?? draft).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else { return }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            guard !self.isSending else { return }
+
+            if !self.validateAssistantSendAvailability(for: self.assistantTask, presentSetup: true) {
+                self.shouldFocusComposer = true
+                return
+            }
+
+            self.send(prompt: prompt)
+            self.draft = ""
+        }
     }
 
     private func handleSettingsChange(from oldValue: JarvisAssistantSettings, to newValue: JarvisAssistantSettings) {
@@ -1310,7 +1489,9 @@ final class JarvisPhoneAppModel: ObservableObject {
         }
         assistantSuggestions = []
         assistantLiveTranscript = ""
+        assistantContinuityLabel = nil
         pendingAssistantRequest = nil
+        latestCompletedRequest = nil
     }
 
     private func setAssistantTask(
@@ -1334,29 +1515,80 @@ final class JarvisPhoneAppModel: ObservableObject {
 
     private func buildAssistantRequest(prompt: String) -> JarvisAssistantRequest {
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        let history = Array(conversation.messages.suffix(assistantTask.historyLimit))
-        let groundedResults: [JarvisKnowledgeResult]
-        switch assistantTask {
-        case .knowledgeAnswer:
-            groundedResults = Array(knowledgeResults.prefix(assistantTask.groundingLimit))
-        default:
-            groundedResults = []
-        }
+        let classification = JarvisAssistantIntelligence.classify(
+            prompt: trimmedPrompt,
+            requestedTask: assistantTask,
+            context: assistantTaskContext,
+            conversation: conversation
+        )
+        let tuning = JarvisAssistantIntelligence.tuning(for: classification, settings: settings)
+        let history = Array(
+            JarvisAssistantIntelligence.recentHistory(
+                from: conversation.messages,
+                budget: tuning.maxHistoryCharacters
+            ).suffix(max(assistantTask.historyLimit, 3))
+        )
+        let olderMemorySummary = JarvisAssistantIntelligence.condensedMemorySummary(
+            from: conversation.messages,
+            excluding: history
+        )
+        let groundedResults = groundedResults(for: trimmedPrompt, classification: classification, tuning: tuning)
 
         let replyTargetText: String?
-        if assistantTask == .reply {
+        if classification.task == .reply {
             replyTargetText = assistantTaskContext.replyTargetText ?? conversation.messages.last(where: { $0.role == .assistant || $0.role == .user })?.text
         } else {
             replyTargetText = nil
         }
 
-        return JarvisAssistantRequest(
-            task: assistantTask,
+        let envelope = JarvisAssistantIntelligence.buildPromptEnvelope(
             prompt: trimmedPrompt,
             source: assistantTaskContext.source,
+            classification: classification,
+            tuning: tuning,
             history: history,
+            olderMemorySummary: olderMemorySummary,
             groundedResults: groundedResults,
-            replyTargetText: replyTargetText
+            replyTargetText: replyTargetText,
+            mode: assistantInputMode.analyticsValue
+        )
+
+        lastTaskClassification = classification
+        lastPromptDebugSummary = envelope.debugSummary
+        lastGenerationPreset = tuning.preset
+
+        return JarvisAssistantRequest(
+            task: classification.task,
+            prompt: envelope.prompt,
+            source: assistantTaskContext.source,
+            history: envelope.history,
+            groundedResults: envelope.groundedResults,
+            replyTargetText: envelope.replyTargetText,
+            classification: envelope.classification,
+            promptBlueprint: envelope.blueprint,
+            tuning: envelope.tuning,
+            debugSummary: envelope.debugSummary
+        )
+    }
+
+    private func groundedResults(
+        for prompt: String,
+        classification: JarvisTaskClassification,
+        tuning: JarvisGenerationTuning
+    ) -> [JarvisKnowledgeResult] {
+        guard classification.shouldInjectKnowledge || assistantTask == .knowledgeAnswer else { return [] }
+
+        var combined: [JarvisKnowledgeResult] = []
+        combined.append(contentsOf: knowledgeResults)
+
+        let searched = store.searchKnowledge(query: prompt, limit: 8)
+        for result in searched where !combined.contains(where: { $0.item.id == result.item.id }) {
+            combined.append(result)
+        }
+
+        return JarvisAssistantIntelligence.limitedKnowledge(
+            from: combined,
+            maxCharacters: tuning.maxKnowledgeCharacters
         )
     }
 
@@ -1540,6 +1772,34 @@ final class JarvisPhoneAppModel: ObservableObject {
         }
     }
 
+    private func applyRuntimeTuningIfNeeded(for tuning: JarvisGenerationTuning) {
+        switch runtimeState {
+        case .cold, .failed, .paused, .noModel:
+            var configuration = settings.runtimeConfiguration
+            configuration.temperature = tuning.temperature
+            configuration.responseStyle = tuning.responseStyle
+            if settings.contextWindow == .automatic {
+                configuration.contextWindow = tunedContextWindow(for: tuning.preset)
+            }
+            runtime.updateConfiguration(configuration)
+            runtimeState = runtime.state
+            runtimeFailure = runtime.lastFailure
+        case .runtimeUnavailable, .warming, .ready, .busy:
+            break
+        }
+    }
+
+    private func tunedContextWindow(for preset: JarvisGenerationPreset) -> JarvisContextWindowPreset {
+        switch preset {
+        case .precise:
+            return .compact
+        case .coding, .balanced, .drafting:
+            return .standard
+        case .creative:
+            return .extended
+        }
+    }
+
     private func missingSupportedModelReason() -> String {
         if hasReadyModel {
             return "Activate one of your imported models to continue. Recommended target: \(supportedModelDisplayName)."
@@ -1580,33 +1840,10 @@ final class JarvisPhoneAppModel: ObservableObject {
             return
         }
 
-        assistantSuggestions = [
-            AssistantSuggestion(
-                title: "Ask follow-up",
-                icon: "arrow.turn.down.right",
-                action: .prompt("Can you expand with one practical example?")
-            ),
-            AssistantSuggestion(
-                title: "Summarize answer",
-                icon: "text.quote",
-                action: .task(.summarize, latestAssistant.text)
-            ),
-            AssistantSuggestion(
-                title: "Draft a reply",
-                icon: "arrowshape.turn.up.left",
-                action: .task(.reply, latestAssistant.text)
-            ),
-            AssistantSuggestion(
-                title: "Save to knowledge",
-                icon: "bookmark",
-                action: .saveToKnowledge
-            ),
-            AssistantSuggestion(
-                title: "Continue voice",
-                icon: "waveform",
-                action: .route(JarvisLaunchRoute(action: .voice, source: "assistant.suggestion"))
-            )
-        ]
+        let classification = latestCompletedRequest?.classification ?? lastTaskClassification
+        assistantSuggestions = JarvisAssistantIntelligence
+            .suggestions(for: classification, latestAssistantText: latestAssistant.text)
+            .map(makeAssistantSuggestion(from:))
     }
 
     private func persistCurrentConversation() {
@@ -1629,16 +1866,71 @@ final class JarvisPhoneAppModel: ObservableObject {
         guard let index = conversation.messages.firstIndex(where: { $0.id == id }) else { return }
         conversation.messages[index].text += token
         conversation.messages[index].isStreaming = true
+        streamingRevision &+= 1
     }
 
     private func finalizeStreamingMessage(id: UUID) async {
         guard let index = conversation.messages.firstIndex(where: { $0.id == id }) else { return }
         conversation.messages[index].isStreaming = false
+        streamingRevision &+= 1
     }
 
     private func replaceStreamingMessage(id: UUID, with text: String) {
         guard let index = conversation.messages.firstIndex(where: { $0.id == id }) else { return }
         conversation.messages[index].text = text
         conversation.messages[index].isStreaming = false
+        streamingRevision &+= 1
+    }
+
+    private func makeAssistantSuggestion(from descriptor: JarvisAssistantSuggestionDescriptor) -> AssistantSuggestion {
+        let action: AssistantSuggestionAction
+        switch descriptor.action {
+        case .prompt(let prompt):
+            action = .prompt(prompt)
+        case .task(let task, let prompt):
+            action = .task(task, prompt)
+        case .saveToKnowledge:
+            action = .saveToKnowledge
+        case .voiceFollowUp:
+            action = .route(JarvisLaunchRoute(action: .voice, source: "assistant.suggestion"))
+        case .searchKnowledge(let query):
+            action = .route(
+                JarvisLaunchRoute(
+                    action: .knowledge,
+                    query: query,
+                    source: "assistant.suggestion",
+                    assistantTask: .knowledgeAnswer
+                )
+            )
+        }
+
+        return AssistantSuggestion(
+            title: descriptor.title,
+            icon: descriptor.icon,
+            action: action
+        )
+    }
+
+    private func buildContinuityLabel(from context: MemoryContext) -> String? {
+        if !context.memoryLabels.isEmpty {
+            return "Using memory"
+        }
+        if context.summary != nil {
+            return "Using summary"
+        }
+        return nil
+    }
+}
+
+private extension JarvisPhoneAppModel.AssistantInputMode {
+    var analyticsValue: String {
+        switch self {
+        case .text:
+            return "text"
+        case .voice:
+            return "voice"
+        case .visual:
+            return "visual"
+        }
     }
 }

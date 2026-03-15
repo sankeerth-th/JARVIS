@@ -64,6 +64,66 @@ public struct JarvisRuntimeLoadDiagnostics: Equatable {
     }
 }
 
+public enum JarvisRuntimeDeviceTier: String, Equatable, Codable {
+    case constrained
+    case baseline
+    case high
+
+    static func current(physicalMemoryBytes: UInt64 = ProcessInfo.processInfo.physicalMemory) -> JarvisRuntimeDeviceTier {
+        let physicalMemoryGB = Double(physicalMemoryBytes) / 1_000_000_000
+        if physicalMemoryGB >= 11 {
+            return .high
+        }
+        if physicalMemoryGB >= 7.5 {
+            return .baseline
+        }
+        return .constrained
+    }
+}
+
+public struct JarvisRuntimeGenerationDiagnostics: Equatable {
+    public var preset: String
+    public var taskCategory: String
+    public var deviceTier: JarvisRuntimeDeviceTier
+    public var promptCharacterCount: Int
+    public var historyMessageCount: Int
+    public var groundedResultCount: Int
+    public var outputCharacterCount: Int
+    public var estimatedOutputTokens: Int
+    public var timeToFirstTokenSeconds: Double?
+    public var generationDurationSeconds: Double
+    public var thermalState: ProcessInfo.ThermalState
+    public var usedMemorySafeFallback: Bool
+
+    public init(
+        preset: String,
+        taskCategory: String,
+        deviceTier: JarvisRuntimeDeviceTier,
+        promptCharacterCount: Int,
+        historyMessageCount: Int,
+        groundedResultCount: Int,
+        outputCharacterCount: Int,
+        estimatedOutputTokens: Int,
+        timeToFirstTokenSeconds: Double?,
+        generationDurationSeconds: Double,
+        thermalState: ProcessInfo.ThermalState,
+        usedMemorySafeFallback: Bool
+    ) {
+        self.preset = preset
+        self.taskCategory = taskCategory
+        self.deviceTier = deviceTier
+        self.promptCharacterCount = promptCharacterCount
+        self.historyMessageCount = historyMessageCount
+        self.groundedResultCount = groundedResultCount
+        self.outputCharacterCount = outputCharacterCount
+        self.estimatedOutputTokens = estimatedOutputTokens
+        self.timeToFirstTokenSeconds = timeToFirstTokenSeconds
+        self.generationDurationSeconds = generationDurationSeconds
+        self.thermalState = thermalState
+        self.usedMemorySafeFallback = usedMemorySafeFallback
+    }
+}
+
 public enum JarvisModelFileAccessState: Equatable {
     case noImportedFile
     case bookmarkCreated(modelName: String, detail: String)
@@ -215,6 +275,7 @@ public protocol JarvisGGUFEngine {
     var supportsVisualInputs: Bool { get }
 
     func updateConfiguration(_ configuration: JarvisRuntimeConfiguration)
+    func updateGenerationTuning(_ tuning: JarvisGenerationTuning?)
     func loadModel(at path: String, projectorPath: String?) async throws
     func unloadModel() async
     func generate(
@@ -234,6 +295,10 @@ public final class StubGGUFEngine: JarvisGGUFEngine {
 
     public func updateConfiguration(_ configuration: JarvisRuntimeConfiguration) {
         _ = configuration
+    }
+
+    public func updateGenerationTuning(_ tuning: JarvisGenerationTuning?) {
+        _ = tuning
     }
 
     public func loadModel(at path: String, projectorPath: String?) async throws {
@@ -271,7 +336,108 @@ public final class StubGGUFEngine: JarvisGGUFEngine {
 @available(iOS 17.0, *)
 public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
     private static let baseSystemInstruction =
-        "You are Jarvis, a concise and practical on-device iPhone assistant. Keep answers direct and useful."
+        "You are Jarvis, a sharp, reliable, on-device iPhone assistant. " +
+        "Lead with the answer, stay concrete, and be useful immediately. " +
+        "Do not repeat the user's message back as filler. " +
+        "Do not mention the local runtime, model, or device limits unless the user asks or it directly blocks the task. " +
+        "If a request is ambiguous, make one reasonable assumption and say so briefly. " +
+        "Prefer clean structure, practical next steps, and strong writing."
+
+    private struct RuntimePolicy: Equatable {
+        let deviceTier: JarvisRuntimeDeviceTier
+        let contextSize: Int
+        let threadCount: Int
+        let batchSize: Int
+        let kvBudgetMB: Int
+        let maxOutputTokens: Int
+        let shouldUseMemorySafeFallback: Bool
+    }
+
+    private struct GenerationGuard {
+        let maxOutputTokens: Int
+        let maxDurationSeconds: Double
+        let repetitionWindowCharacters: Int
+        let repetitionThreshold: Int
+
+        private(set) var estimatedOutputTokens = 0
+        private(set) var outputCharacterCount = 0
+        private var normalizedTail = ""
+        private let startedAt = CFAbsoluteTimeGetCurrent()
+
+        init(
+            maxOutputTokens: Int,
+            maxDurationSeconds: Double,
+            repetitionWindowCharacters: Int,
+            repetitionThreshold: Int
+        ) {
+            self.maxOutputTokens = maxOutputTokens
+            self.maxDurationSeconds = maxDurationSeconds
+            self.repetitionWindowCharacters = repetitionWindowCharacters
+            self.repetitionThreshold = repetitionThreshold
+        }
+
+        mutating func ingest(_ chunk: String) throws {
+            let normalized = Self.normalize(chunk)
+            guard !normalized.isEmpty else { return }
+
+            outputCharacterCount += chunk.count
+            estimatedOutputTokens += max(1, Int((Double(normalized.utf8.count) / 3.6).rounded(.up)))
+            normalizedTail.append(normalized)
+            if normalizedTail.count > repetitionWindowCharacters * repetitionThreshold {
+                normalizedTail.removeFirst(normalizedTail.count - (repetitionWindowCharacters * repetitionThreshold))
+            }
+
+            if estimatedOutputTokens > maxOutputTokens {
+                throw JarvisModelError.runtimeFailure("Generation stopped early to protect responsiveness on this device.")
+            }
+
+            if CFAbsoluteTimeGetCurrent() - startedAt > maxDurationSeconds && estimatedOutputTokens > (maxOutputTokens / 2) {
+                throw JarvisModelError.runtimeFailure("Generation stopped because the device is under sustained inference load.")
+            }
+
+            if Self.hasRepetitionLoop(in: normalizedTail, unitLimit: repetitionWindowCharacters, threshold: repetitionThreshold) {
+                throw JarvisModelError.runtimeFailure("Generation stopped because the model entered a repetition loop.")
+            }
+        }
+
+        private static func normalize(_ text: String) -> String {
+            text.lowercased()
+                .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        private static func hasRepetitionLoop(in text: String, unitLimit: Int, threshold: Int) -> Bool {
+            let characters = Array(text)
+            let maxUnit = min(unitLimit, max(24, characters.count / threshold))
+            guard maxUnit >= 24 else { return false }
+
+            for unitLength in stride(from: maxUnit, through: 24, by: -8) {
+                guard characters.count >= unitLength * threshold else { continue }
+                let repeatedUnit = Array(characters.suffix(unitLength))
+                var matches = 1
+                var offset = unitLength * 2
+
+                while offset <= characters.count, matches < threshold {
+                    let start = characters.count - offset
+                    let end = start + unitLength
+                    guard start >= 0 else { break }
+                    let priorUnit = Array(characters[start..<end])
+                    if priorUnit == repeatedUnit {
+                        matches += 1
+                        offset += unitLength
+                    } else {
+                        break
+                    }
+                }
+
+                if matches >= threshold {
+                    return true
+                }
+            }
+
+            return false
+        }
+    }
 
     private struct LoadAttempt: Equatable {
         let context: Int
@@ -298,6 +464,7 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
     private var loadedProjectorPath: String?
     private var cancelRequested = false
     private var configuration = JarvisRuntimeConfiguration()
+    private var requestTuning: JarvisGenerationTuning?
 
     public init() {}
 
@@ -309,6 +476,12 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
     public func updateConfiguration(_ configuration: JarvisRuntimeConfiguration) {
         withLock {
             self.configuration = configuration
+        }
+    }
+
+    public func updateGenerationTuning(_ tuning: JarvisGenerationTuning?) {
+        withLock {
+            requestTuning = tuning
         }
     }
 
@@ -354,7 +527,7 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
 
         var failureMessages: [String] = []
         for (index, attempt) in attempts.enumerated() {
-            let parameter = parameter(for: attempt, configuration: config)
+            let parameter = parameter(for: attempt, configuration: config, tuning: withLock { requestTuning })
             print(
                 "[JarvisRuntime] Load attempt \(index + 1)/\(attempts.count) " +
                 "context=\(attempt.context) threads=\(attempt.threads) batch=\(attempt.batch)"
@@ -417,7 +590,21 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         }
 
         let config = withLock { configuration }
+        let modelPath = withLock { loadedModelPath } ?? ""
+        let fileSizeBytes = (try? FileManager.default.attributesOfItem(atPath: modelPath)[.size] as? Int64) ?? 0
+        let policy = runtimePolicy(
+            using: config,
+            fileSizeBytes: fileSizeBytes,
+            filename: URL(fileURLWithPath: modelPath).lastPathComponent,
+            tuning: request.tuning
+        )
         session.messages = mappedMessages(for: request, configuration: config)
+        var guardrail = GenerationGuard(
+            maxOutputTokens: policy.maxOutputTokens,
+            maxDurationSeconds: policy.shouldUseMemorySafeFallback ? 14 : 24,
+            repetitionWindowCharacters: request.tuning.repetitionWindowCharacters,
+            repetitionThreshold: request.tuning.repetitionThreshold
+        )
 
         do {
             let stream = session.streamResponse(to: request.prompt)
@@ -425,6 +612,9 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
                 try Task.checkCancellation()
                 if withLock({ cancelRequested }) {
                     throw JarvisModelError.cancelled
+                }
+                if config.memorySafetyGuardsEnabled {
+                    try guardrail.ingest(chunk)
                 }
                 onToken(chunk)
             }
@@ -457,73 +647,20 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
     private func deviceAwareParameters(
         using configuration: JarvisRuntimeConfiguration,
         fileSizeBytes: Int64,
-        filename: String
+        filename: String,
+        tuning: JarvisGenerationTuning?
     ) -> LoadAttempt {
-        let processorCount = ProcessInfo.processInfo.activeProcessorCount
-        let physicalMemoryMB = Double(ProcessInfo.processInfo.physicalMemory) / 1_000_000
-        let thermalState = ProcessInfo.processInfo.thermalState
-        let lowerFilename = filename.lowercased()
-        let isGemma3Family = lowerFilename.contains("gemma") && lowerFilename.contains("3")
-        let isLargeModel = fileSizeBytes >= 2_000_000_000
-
-        let autoContext: Int
-        if physicalMemoryMB >= 10_000 {
-            autoContext = 1536
-        } else if physicalMemoryMB >= 7_000 {
-            autoContext = 1024
-        } else {
-            autoContext = 768
-        }
-
-        var contextSize = configuration.contextWindow.explicitContextSize ?? autoContext
-        if isLargeModel {
-            contextSize = min(contextSize, 1024)
-        }
-        if isGemma3Family {
-            contextSize = min(contextSize, 768)
-        }
-        if configuration.batterySaverMode {
-            contextSize = min(contextSize, 512)
-        }
-        if thermalState == .serious {
-            contextSize = min(contextSize, 512)
-        }
-        contextSize = max(384, contextSize)
-
-        let threadCount: Int
-        switch configuration.performanceProfile {
-        case .efficient:
-            threadCount = 1
-        case .balanced:
-            threadCount = min(3, max(2, processorCount / 2))
-        case .quality:
-            threadCount = min(4, max(2, (processorCount / 2) + 1))
-        }
-
-        let batchSize: Int
-        switch configuration.performanceProfile {
-        case .efficient:
-            batchSize = 8
-        case .balanced:
-            batchSize = 16
-        case .quality:
-            batchSize = 32
-        }
-
-        let effectiveThreadCount: Int
-        let effectiveBatchSize: Int
-        if thermalState == .serious {
-            effectiveThreadCount = 1
-            effectiveBatchSize = 4
-        } else {
-            effectiveThreadCount = max(1, threadCount)
-            effectiveBatchSize = max(4, min(batchSize, max(4, contextSize / 8)))
-        }
+        let policy = runtimePolicy(
+            using: configuration,
+            fileSizeBytes: fileSizeBytes,
+            filename: filename,
+            tuning: tuning
+        )
 
         return LoadAttempt(
-            context: contextSize,
-            threads: effectiveThreadCount,
-            batch: effectiveBatchSize
+            context: policy.contextSize,
+            threads: policy.threadCount,
+            batch: policy.batchSize
         )
     }
 
@@ -535,7 +672,8 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         let base = deviceAwareParameters(
             using: configuration,
             fileSizeBytes: fileSizeBytes,
-            filename: filename
+            filename: filename,
+            tuning: withLock { requestTuning }
         )
 
         let candidates = [
@@ -562,14 +700,168 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         return uniqueAttempts
     }
 
+    private func runtimePolicy(
+        using configuration: JarvisRuntimeConfiguration,
+        fileSizeBytes: Int64,
+        filename: String,
+        tuning: JarvisGenerationTuning?
+    ) -> RuntimePolicy {
+        let processorCount = ProcessInfo.processInfo.activeProcessorCount
+        let thermalState = ProcessInfo.processInfo.thermalState
+        let lowerFilename = filename.lowercased()
+        let deviceTier = configuration.adaptiveDeviceTieringEnabled ? JarvisRuntimeDeviceTier.current() : .baseline
+        let isGemma3Family = lowerFilename.contains("gemma") && lowerFilename.contains("3")
+        let isLargeModel = fileSizeBytes >= 2_000_000_000
+
+        let baseContext: Int
+        switch deviceTier {
+        case .constrained:
+            baseContext = 768
+        case .baseline:
+            baseContext = 1024
+        case .high:
+            baseContext = 1536
+        }
+
+        let kvBudgetMB: Int
+        switch deviceTier {
+        case .constrained:
+            kvBudgetMB = 560
+        case .baseline:
+            kvBudgetMB = 896
+        case .high:
+            kvBudgetMB = 1_280
+        }
+
+        var contextSize = configuration.contextWindow.explicitContextSize ?? baseContext
+        contextSize = min(contextSize, tuning?.maxContextTokens ?? contextSize)
+        contextSize = min(contextSize, maxContextFromKVEstimate(fileSizeBytes: fileSizeBytes, kvBudgetMB: kvBudgetMB))
+        if isLargeModel {
+            contextSize = min(contextSize, deviceTier == .high ? 1_280 : 896)
+        }
+        if isGemma3Family {
+            contextSize = min(contextSize, deviceTier == .high ? 1_024 : 768)
+        }
+        if configuration.batterySaverMode {
+            contextSize = min(contextSize, 640)
+        }
+        if configuration.thermalProtectionEnabled && thermalState == .serious {
+            contextSize = min(contextSize, 512)
+        }
+        contextSize = max(384, contextSize)
+
+        let desiredThreads: Int
+        switch configuration.performanceProfile {
+        case .efficient:
+            desiredThreads = 1
+        case .balanced:
+            desiredThreads = deviceTier == .high ? min(4, max(2, processorCount / 2)) : min(3, max(2, processorCount / 2))
+        case .quality:
+            desiredThreads = deviceTier == .high ? min(5, max(3, (processorCount / 2) + 1)) : min(3, max(2, processorCount / 2))
+        }
+
+        let desiredBatch: Int
+        switch configuration.performanceProfile {
+        case .efficient:
+            desiredBatch = deviceTier == .constrained ? 8 : 12
+        case .balanced:
+            desiredBatch = deviceTier == .high ? 24 : 16
+        case .quality:
+            desiredBatch = deviceTier == .high ? 32 : 20
+        }
+
+        let threadCount: Int
+        let batchSize: Int
+        if configuration.thermalProtectionEnabled && thermalState == .serious {
+            threadCount = 1
+            batchSize = 4
+        } else {
+            threadCount = max(1, desiredThreads)
+            batchSize = max(4, min(desiredBatch, max(4, contextSize / 12)))
+        }
+
+        var maxOutputTokens = tuning?.maxOutputTokens ?? 280
+        if configuration.responseStyle == .concise {
+            maxOutputTokens = min(maxOutputTokens, 220)
+        }
+        if configuration.batterySaverMode {
+            maxOutputTokens = min(maxOutputTokens, 220)
+        }
+        if configuration.thermalProtectionEnabled && thermalState == .serious {
+            maxOutputTokens = min(maxOutputTokens, 180)
+        }
+
+        return RuntimePolicy(
+            deviceTier: deviceTier,
+            contextSize: contextSize,
+            threadCount: threadCount,
+            batchSize: batchSize,
+            kvBudgetMB: kvBudgetMB,
+            maxOutputTokens: max(120, maxOutputTokens),
+            shouldUseMemorySafeFallback: deviceTier == .constrained || configuration.batterySaverMode || thermalState == .serious
+        )
+    }
+
+    private func maxContextFromKVEstimate(fileSizeBytes: Int64, kvBudgetMB: Int) -> Int {
+        let kvMBPerToken: Double
+        switch fileSizeBytes {
+        case 3_200_000_000...:
+            kvMBPerToken = 1.0
+        case 2_300_000_000...:
+            kvMBPerToken = 0.72
+        case 1_500_000_000...:
+            kvMBPerToken = 0.48
+        default:
+            kvMBPerToken = 0.32
+        }
+
+        return max(384, Int(Double(kvBudgetMB) / kvMBPerToken))
+    }
+
     private func parameter(
         for attempt: LoadAttempt,
-        configuration: JarvisRuntimeConfiguration
+        configuration: JarvisRuntimeConfiguration,
+        tuning: JarvisGenerationTuning?
     ) -> LlamaClient.Parameter {
         var parameter = attempt.parameter
-        parameter.temperature = Float(configuration.temperature)
-        parameter.topK = configuration.responseStyle == .detailed ? 50 : 40
-        parameter.topP = configuration.responseStyle == .detailed ? 0.94 : 0.9
+        let effectiveTemperature = tuning?.temperature ?? configuration.temperature
+        let clampedTemperature = max(0.12, min(effectiveTemperature, 0.95))
+        parameter.temperature = Float(clampedTemperature)
+
+        if let tuning {
+            parameter.context = tuning.maxContextTokens > 0 ? min(parameter.context, tuning.maxContextTokens) : parameter.context
+            parameter.topK = tuning.topK
+            parameter.topP = Float(tuning.topP)
+            parameter.typicalP = Float(tuning.typicalP)
+            parameter.penaltyRepeat = Float(tuning.repeatPenalty)
+            parameter.penaltyLastN = tuning.penaltyLastN
+        } else {
+            switch configuration.responseStyle {
+            case .concise:
+                parameter.topK = 32
+                parameter.topP = 0.86
+                parameter.typicalP = 0.94
+            case .balanced:
+                parameter.topK = 40
+                parameter.topP = 0.9
+                parameter.typicalP = 0.96
+            case .detailed:
+                parameter.topK = 48
+                parameter.topP = 0.94
+                parameter.typicalP = 0.98
+            }
+        }
+
+        if tuning == nil {
+            switch configuration.responseStyle {
+            case .concise:
+                parameter.penaltyLastN = 48
+            case .balanced:
+                parameter.penaltyLastN = 64
+            case .detailed:
+                parameter.penaltyLastN = 80
+            }
+        }
         parameter.options = .init(verbose: false, disableAutoPause: false)
         return parameter
     }
@@ -589,23 +881,43 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         for request: JarvisAssistantRequest,
         configuration: JarvisRuntimeConfiguration
     ) -> [LLMInput.Message] {
-        var instructions = [Self.baseSystemInstruction, configuration.responseStyle.systemInstructionSuffix]
-        instructions.append(taskInstruction(for: request.task, configuration: configuration))
+        let blueprint = request.promptBlueprint
+        let resolvedResponseStyle = request.tuning.responseStyle
+        let fallbackTaskInstruction = taskInstruction(for: request, configuration: configuration)
+
+        let combinedSystemInstruction = [
+            blueprint.systemInstruction.isEmpty ? Self.baseSystemInstruction : blueprint.systemInstruction,
+            blueprint.assistantRole.isEmpty ? "Act like a capable private iPhone assistant." : blueprint.assistantRole,
+            blueprint.taskTypeInstruction.isEmpty ? fallbackTaskInstruction : blueprint.taskTypeInstruction,
+            blueprint.responseInstruction.isEmpty ? responseStyleInstruction(for: resolvedResponseStyle) : blueprint.responseInstruction,
+            request.tuning.requiresGroundedAnswers
+                ? "Answer with high confidence only where supported by the prompt or local context. If something is uncertain, say so briefly instead of filling gaps."
+                : nil
+        ]
+        .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+        .joined(separator: "\n")
 
         var messages: [LLMInput.Message] = [
-            .system(instructions.joined(separator: " "))
+            .system(combinedSystemInstruction)
         ]
 
-        if let replyTargetText = request.replyTargetText?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !replyTargetText.isEmpty {
-            messages.append(.system("Draft reply target context:\n\(replyTargetText)"))
+        for block in blueprint.contextBlocks where !block.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            messages.append(.system("\(block.title):\n\(block.content)"))
         }
 
-        if !request.groundedResults.isEmpty {
-            let grounding = request.groundedResults.prefix(request.task.groundingLimit).map { result in
-                "\(result.item.title): \(result.snippet)"
-            }.joined(separator: "\n")
-            messages.append(.system("Local knowledge context:\n\(grounding)"))
+        if blueprint.contextBlocks.isEmpty {
+            if let replyTargetText = request.replyTargetText?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !replyTargetText.isEmpty {
+                messages.append(.system("Draft reply target context:\n\(replyTargetText)"))
+            }
+
+            if !request.groundedResults.isEmpty {
+                let grounding = request.groundedResults.prefix(request.task.groundingLimit).map { result in
+                    "\(result.item.title): \(result.snippet)"
+                }.joined(separator: "\n")
+                messages.append(.system("Local knowledge context:\n\(grounding)"))
+            }
         }
 
         for item in request.history {
@@ -625,31 +937,67 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         return messages
     }
 
+    private func responseStyleInstruction(for style: JarvisAssistantResponseStyle) -> String {
+        switch style {
+        case .concise:
+            return "Default to compact answers. Use short paragraphs or tight bullets only when they improve clarity."
+        case .balanced:
+            return "Balance speed with usefulness. Give a direct answer first, then add the most relevant supporting detail."
+        case .detailed:
+            return "Be thorough when it adds value, but keep the structure easy to scan on a phone screen."
+        }
+    }
+
     private func taskInstruction(
-        for task: JarvisAssistantTask,
+        for request: JarvisAssistantRequest,
         configuration: JarvisRuntimeConfiguration
     ) -> String {
-        switch task {
+        switch request.classification.category {
+        case .generalChat:
+            return "Handle this as a high-quality assistant conversation. Answer directly, avoid fluff, and give a practical next step when it would help."
+        case .questionAnswering:
+            return "Answer the question directly, then add only the most useful clarifying detail."
+        case .summarization:
+            return "Summarize the content into a short overview, then key points, then concrete next actions if they are implied. Keep the summary faithful and do not pad."
+        case .draftingMessage:
+            return "Draft a concise message that sounds natural and is ready to send."
+        case .draftingEmail:
+            return "Draft a professional email with a clear opening, concise body, and strong close. Make it ready to send."
+        case .rewritingText:
+            return "Rewrite the text with the requested tone or compression while preserving the important meaning."
+        case .explainingSomething:
+            return "Explain the concept clearly. Lead with the core idea, then add the mechanism or example that makes it click."
+        case .planning:
+            return "Organize the answer into actionable steps, priorities, and next moves."
+        case .coding:
+            return "Reason carefully about the code path, likely issues, and the smallest high-confidence fix."
+        case .contextAwareReply:
+            return configuration.responseStyle == .detailed
+                ? "Draft a polished, context-aware reply that is ready to send with minimal editing."
+                : "Draft a concise, context-aware reply that is ready to send."
+        }
+
+        switch request.task {
         case .chat:
-            return "Handle the request as an ongoing assistant conversation."
+            return "Handle this as a high-quality assistant conversation. Answer directly, avoid fluff, and give a practical next step when it would help."
         case .summarize:
-            return "Summarize the provided content into useful, compact points before expanding."
+            return "Summarize the content into a short overview, then key points, then concrete next actions if they are implied. Keep the summary faithful and do not pad."
         case .quickCapture:
-            return "Treat this as a quick capture. Organize the thought, preserve intent, and keep the response concise."
+            return "Treat this as a quick capture. Organize the thought clearly, preserve intent, and return a compact structure the user can act on later."
         case .knowledgeAnswer:
-            return "Use grounded local knowledge context when it is relevant and cite titles when useful."
+            return "Use the provided local knowledge when it is relevant. Prefer grounded answers, mention source titles when helpful, and clearly say when the local context is insufficient."
         case .reply:
             return configuration.responseStyle == .detailed
-                ? "Draft a polished reply that matches the supplied context and preserves important details."
-                : "Draft a concise reply that matches the supplied context and tone."
+                ? "Draft a polished, send-ready reply that matches the supplied context, preserves important details, and sounds natural."
+                : "Draft a concise, send-ready reply that matches the supplied context and tone."
         case .draftEmail:
-            return "Draft a concise email reply using the supplied context and keep the structure professional."
+            return "Draft a professional email with a clear opening, concise body, and strong close. Make it ready to send."
         case .analyzeText:
-            return "Analyze the supplied text and focus on key takeaways, risks, and next steps."
+            return "Analyze the text and focus on what matters: key takeaways, risks, decisions, and next steps."
         case .visualDescribe:
             return "Be ready to describe user-provided visual context when that pipeline is added."
         case .prioritizeNotifications:
-            return "Rank the supplied updates by urgency, impact, and required follow-up."
+            return "Rank the supplied updates by urgency, impact, and required follow-up. Make the ranking easy to scan quickly."
         }
     }
 
@@ -705,10 +1053,35 @@ enum JarvisGGUFEngineFactory {
 
 @MainActor
 public final class JarvisLocalModelRuntime: ObservableObject {
+    private final class StreamingMetricsBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var timeToFirstToken: Double?
+        private var outputCharacterCount = 0
+        private var estimatedOutputTokens = 0
+
+        func recordToken(_ token: String, startedAt: CFAbsoluteTime) {
+            lock.lock()
+            defer { lock.unlock() }
+
+            if timeToFirstToken == nil {
+                timeToFirstToken = CFAbsoluteTimeGetCurrent() - startedAt
+            }
+            outputCharacterCount += token.count
+            estimatedOutputTokens += max(1, Int((Double(token.utf8.count) / 3.6).rounded(.up)))
+        }
+
+        func snapshot() -> (Double?, Int, Int) {
+            lock.lock()
+            defer { lock.unlock() }
+            return (timeToFirstToken, outputCharacterCount, estimatedOutputTokens)
+        }
+    }
+
     @Published public private(set) var state: JarvisModelRuntimeState = .noModel
     @Published public private(set) var fileAccessState: JarvisModelFileAccessState = .noImportedFile
     @Published public private(set) var lastFailure: JarvisRuntimeFailure?
     @Published public private(set) var lastLoadDiagnostics: JarvisRuntimeLoadDiagnostics?
+    @Published public private(set) var lastGenerationDiagnostics: JarvisRuntimeGenerationDiagnostics?
 
     private let engine: JarvisGGUFEngine
     private var configuration: JarvisRuntimeConfiguration
@@ -759,6 +1132,7 @@ public final class JarvisLocalModelRuntime: ObservableObject {
             state = .noModel
             fileAccessState = .noImportedFile
             lastFailure = nil
+            lastGenerationDiagnostics = nil
             return
         }
 
@@ -793,6 +1167,7 @@ public final class JarvisLocalModelRuntime: ObservableObject {
             state = .noModel
             fileAccessState = .noImportedFile
             lastFailure = nil
+            lastGenerationDiagnostics = nil
             return
         }
 
@@ -816,14 +1191,17 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         lastFailure = nil
     }
 
-    public func prepareIfNeeded() async throws {
+    public func prepareIfNeeded(tuning: JarvisGenerationTuning? = nil) async throws {
         guard let model = selectedModel else {
             state = .noModel
             fileAccessState = .noImportedFile
             lastFailure = nil
             lastLoadDiagnostics = nil
+            lastGenerationDiagnostics = nil
             throw JarvisModelError.unavailable("No active model selected. Import and activate a GGUF model from Files.")
         }
+
+        engine.updateGenerationTuning(tuning)
 
         guard isInferenceAvailable else {
             state = .runtimeUnavailable(reason: inferenceUnavailableReason)
@@ -948,13 +1326,31 @@ public final class JarvisLocalModelRuntime: ObservableObject {
                 guard let self else { return }
 
                 do {
-                    try await self.prepareIfNeeded()
+                    let startedAt = CFAbsoluteTimeGetCurrent()
+                    let metrics = StreamingMetricsBox()
+                    try await self.prepareIfNeeded(tuning: request.tuning)
                     let modelName = self.selectedModel?.displayName ?? "model"
                     self.state = .busy(modelName: modelName, detail: "Generating response")
                     self.lastFailure = nil
                     try await self.engine.generate(request: request) { token in
+                        metrics.recordToken(token, startedAt: startedAt)
                         continuation.yield(token)
                     }
+                    let snapshot = metrics.snapshot()
+                    self.lastGenerationDiagnostics = JarvisRuntimeGenerationDiagnostics(
+                        preset: request.tuning.preset.rawValue,
+                        taskCategory: request.classification.category.rawValue,
+                        deviceTier: JarvisRuntimeDeviceTier.current(),
+                        promptCharacterCount: request.prompt.count,
+                        historyMessageCount: request.history.count,
+                        groundedResultCount: request.groundedResults.count,
+                        outputCharacterCount: snapshot.1,
+                        estimatedOutputTokens: snapshot.2,
+                        timeToFirstTokenSeconds: snapshot.0,
+                        generationDurationSeconds: CFAbsoluteTimeGetCurrent() - startedAt,
+                        thermalState: ProcessInfo.processInfo.thermalState,
+                        usedMemorySafeFallback: self.shouldUseMemorySafeFallback(for: request)
+                    )
                     self.state = .ready(modelName: modelName)
                     if let selectedModel = self.selectedModel {
                         self.fileAccessState = self.accessGrantedState(for: selectedModel)
@@ -994,6 +1390,17 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         engine.cancelGeneration()
         activeGenerationTask?.cancel()
         restoreIdleState()
+    }
+
+    private func shouldUseMemorySafeFallback(for request: JarvisAssistantRequest) -> Bool {
+        let thermalState = ProcessInfo.processInfo.thermalState
+        let runtimeConfiguration = self.configuration
+        let deviceTier = runtimeConfiguration.adaptiveDeviceTieringEnabled ? JarvisRuntimeDeviceTier.current() : .baseline
+        return runtimeConfiguration.batterySaverMode ||
+            (runtimeConfiguration.thermalProtectionEnabled && thermalState == .serious) ||
+            deviceTier == .constrained ||
+            request.tuning.maxContextTokens <= 640 ||
+            request.tuning.maxOutputTokens <= 220
     }
 
     public func pauseForBackground() {

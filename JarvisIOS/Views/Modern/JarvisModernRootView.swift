@@ -486,6 +486,17 @@ struct ModernVisualIntelligenceTabView: View {
             }
             .navigationTitle("Visual")
             .background(Color(.systemGroupedBackground))
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if appModel.shouldShowFocusedBackButton {
+                        Button {
+                            appModel.returnFromFocusedExperience()
+                        } label: {
+                            Label(appModel.focusedBackButtonTitle, systemImage: "chevron.left")
+                        }
+                    }
+                }
+            }
             .onDisappear {
                 analysisTask?.cancel()
                 analysisTask = nil

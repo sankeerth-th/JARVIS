@@ -15,7 +15,7 @@ struct OpenJarvisIntent: AppIntent {
     func perform() async throws -> some IntentResult {
         let startupRoute = JarvisAssistantSettingsStore().load().startupRoute
         JarvisShortcutRouteBuilder.save(
-            JarvisLaunchRoute(action: startupRoute.launchAction, source: JarvisAssistantEntrySource.settings.rawValue)
+            JarvisLaunchRoute(action: startupRoute.launchAction, source: JarvisAssistantEntrySource.shortcut.rawValue)
         )
         return .result()
     }
@@ -47,13 +47,43 @@ struct AskJarvisIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult {
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         JarvisShortcutRouteBuilder.save(
-            .assistant(
-                .chat,
-                payload: prompt.isEmpty ? nil : prompt,
-                task: .chat,
-                source: .shortcut,
-                shouldFocusComposer: true
+            JarvisLaunchRoute(
+                action: .ask,
+                payload: trimmedPrompt.isEmpty ? nil : trimmedPrompt,
+                source: JarvisAssistantEntrySource.shortcut.rawValue,
+                assistantTask: .chat,
+                shouldFocusComposer: trimmedPrompt.isEmpty,
+                shouldAutoSubmit: !trimmedPrompt.isEmpty
+            )
+        )
+        return .result()
+    }
+}
+
+struct QuickAskIntent: AppIntent {
+    static var title: LocalizedStringResource = "Quick Ask"
+    static var description = IntentDescription("Open Jarvis in a fast ask flow, optionally sending the provided text immediately.")
+    static var openAppWhenRun: Bool = true
+
+    @Parameter(title: "Question", default: "")
+    var question: String
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Quick ask Jarvis with \(\.$question)")
+    }
+
+    func perform() async throws -> some IntentResult {
+        let trimmedQuestion = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        JarvisShortcutRouteBuilder.save(
+            JarvisLaunchRoute(
+                action: .ask,
+                payload: trimmedQuestion.isEmpty ? nil : trimmedQuestion,
+                source: JarvisAssistantEntrySource.shortcut.rawValue,
+                assistantTask: .chat,
+                shouldFocusComposer: trimmedQuestion.isEmpty,
+                shouldAutoSubmit: !trimmedQuestion.isEmpty
             )
         )
         return .result()
@@ -99,13 +129,15 @@ struct DraftReplyIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult {
+        let trimmedSeedText = seedText.trimmingCharacters(in: .whitespacesAndNewlines)
         JarvisShortcutRouteBuilder.save(
             .assistant(
                 .draftReply,
-                payload: seedText.isEmpty ? nil : seedText,
+                payload: trimmedSeedText.isEmpty ? nil : trimmedSeedText,
                 task: .reply,
                 source: .shortcut,
-                shouldFocusComposer: true
+                shouldFocusComposer: trimmedSeedText.isEmpty,
+                shouldAutoSubmit: !trimmedSeedText.isEmpty
             )
         )
         return .result()
@@ -143,13 +175,15 @@ struct SummarizeTextIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         JarvisShortcutRouteBuilder.save(
             JarvisLaunchRoute(
                 action: .summarize,
-                payload: text,
+                payload: trimmedText.isEmpty ? nil : trimmedText,
                 source: JarvisAssistantEntrySource.shortcut.rawValue,
                 assistantTask: .summarize,
-                shouldFocusComposer: true
+                shouldFocusComposer: trimmedText.isEmpty,
+                shouldAutoSubmit: !trimmedText.isEmpty
             )
         )
         return .result()
@@ -224,13 +258,13 @@ struct JarvisPhoneShortcuts: AppShortcutsProvider {
     @AppShortcutsBuilder
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
-            intent: OpenJarvisIntent(),
+            intent: OpenAssistantIntent(),
             phrases: [
-                "Open \(.applicationName)",
-                "Launch \(.applicationName)"
+                "Open assistant in \(.applicationName)",
+                "Open ask in \(.applicationName)"
             ],
-            shortTitle: "Open Jarvis",
-            systemImageName: "bolt.fill"
+            shortTitle: "Open Assistant",
+            systemImageName: "bubble.left.and.text.bubble.right.fill"
         )
         AppShortcut(
             intent: AskJarvisIntent(),
@@ -240,6 +274,15 @@ struct JarvisPhoneShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Ask Jarvis",
             systemImageName: "sparkles"
+        )
+        AppShortcut(
+            intent: QuickAskIntent(),
+            phrases: [
+                "Quick ask in \(.applicationName)",
+                "Quick question in \(.applicationName)"
+            ],
+            shortTitle: "Quick Ask",
+            systemImageName: "bolt.fill"
         )
         AppShortcut(
             intent: VoiceJarvisIntent(),
@@ -287,22 +330,13 @@ struct JarvisPhoneShortcuts: AppShortcutsProvider {
             systemImageName: "text.quote"
         )
         AppShortcut(
-            intent: SearchLocalKnowledgeIntent(),
+            intent: OpenKnowledgeIntent(),
             phrases: [
-                "Search knowledge in \(.applicationName)",
-                "Find in \(.applicationName)"
+                "Open knowledge in \(.applicationName)",
+                "Open search in \(.applicationName)"
             ],
-            shortTitle: "Search Knowledge",
-            systemImageName: "magnifyingglass"
-        )
-        AppShortcut(
-            intent: OpenModelLibraryIntent(),
-            phrases: [
-                "Open models in \(.applicationName)",
-                "Open model library in \(.applicationName)"
-            ],
-            shortTitle: "Model Library",
-            systemImageName: "cpu"
+            shortTitle: "Open Knowledge",
+            systemImageName: "books.vertical"
         )
         AppShortcut(
             intent: ContinueConversationIntent(),

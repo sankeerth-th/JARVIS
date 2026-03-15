@@ -12,13 +12,25 @@ public struct JarvisChatMessage: Identifiable, Codable, Equatable {
     public var text: String
     public var createdAt: Date
     public var isStreaming: Bool
+    public var structuredOutput: JarvisAssistantStructuredOutput?
+    public var memoryAttribution: JarvisMessageMemoryAttribution?
 
-    public init(id: UUID = UUID(), role: JarvisChatRole, text: String, createdAt: Date = Date(), isStreaming: Bool = false) {
+    public init(
+        id: UUID = UUID(),
+        role: JarvisChatRole,
+        text: String,
+        createdAt: Date = Date(),
+        isStreaming: Bool = false,
+        structuredOutput: JarvisAssistantStructuredOutput? = nil,
+        memoryAttribution: JarvisMessageMemoryAttribution? = nil
+    ) {
         self.id = id
         self.role = role
         self.text = text
         self.createdAt = createdAt
         self.isStreaming = isStreaming
+        self.structuredOutput = structuredOutput
+        self.memoryAttribution = memoryAttribution
     }
 }
 
@@ -159,6 +171,10 @@ public struct JarvisAssistantRequest: Equatable {
     public var history: [JarvisChatMessage]
     public var groundedResults: [JarvisKnowledgeResult]
     public var replyTargetText: String?
+    public var classification: JarvisTaskClassification
+    public var promptBlueprint: JarvisPromptBlueprint
+    public var tuning: JarvisGenerationTuning
+    public var debugSummary: String
 
     public init(
         task: JarvisAssistantTask,
@@ -166,7 +182,11 @@ public struct JarvisAssistantRequest: Equatable {
         source: String,
         history: [JarvisChatMessage],
         groundedResults: [JarvisKnowledgeResult] = [],
-        replyTargetText: String? = nil
+        replyTargetText: String? = nil,
+        classification: JarvisTaskClassification = .default,
+        promptBlueprint: JarvisPromptBlueprint = .default,
+        tuning: JarvisGenerationTuning = .balanced,
+        debugSummary: String = ""
     ) {
         self.task = task
         self.prompt = prompt
@@ -174,5 +194,9 @@ public struct JarvisAssistantRequest: Equatable {
         self.history = history
         self.groundedResults = groundedResults
         self.replyTargetText = replyTargetText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.classification = classification
+        self.promptBlueprint = promptBlueprint
+        self.tuning = tuning
+        self.debugSummary = debugSummary.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

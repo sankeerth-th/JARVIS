@@ -143,19 +143,28 @@ public struct JarvisRuntimeConfiguration: Equatable, Codable, Sendable {
     public var responseStyle: JarvisAssistantResponseStyle
     public var temperature: Double
     public var batterySaverMode: Bool
+    public var memorySafetyGuardsEnabled: Bool
+    public var thermalProtectionEnabled: Bool
+    public var adaptiveDeviceTieringEnabled: Bool
 
     public init(
         performanceProfile: JarvisRuntimePerformanceProfile = .balanced,
         contextWindow: JarvisContextWindowPreset = .automatic,
         responseStyle: JarvisAssistantResponseStyle = .balanced,
-        temperature: Double = 0.7,
-        batterySaverMode: Bool = false
+        temperature: Double = 0.55,
+        batterySaverMode: Bool = false,
+        memorySafetyGuardsEnabled: Bool = true,
+        thermalProtectionEnabled: Bool = true,
+        adaptiveDeviceTieringEnabled: Bool = true
     ) {
         self.performanceProfile = performanceProfile
         self.contextWindow = contextWindow
         self.responseStyle = responseStyle
         self.temperature = temperature
         self.batterySaverMode = batterySaverMode
+        self.memorySafetyGuardsEnabled = memorySafetyGuardsEnabled
+        self.thermalProtectionEnabled = thermalProtectionEnabled
+        self.adaptiveDeviceTieringEnabled = adaptiveDeviceTieringEnabled
     }
 }
 
@@ -185,7 +194,7 @@ public struct JarvisAssistantSettings: Codable, Equatable {
         performanceProfile: JarvisRuntimePerformanceProfile = .balanced,
         contextWindow: JarvisContextWindowPreset = .automatic,
         responseStyle: JarvisAssistantResponseStyle = .balanced,
-        creativity: Double = 0.7,
+        creativity: Double = 0.55,
         unloadModelOnBackground: Bool = false,
         batterySaverMode: Bool = false,
         autoScrollConversation: Bool = true,
@@ -241,7 +250,7 @@ public struct JarvisAssistantSettings: Codable, Equatable {
         performanceProfile = try container.decodeIfPresent(JarvisRuntimePerformanceProfile.self, forKey: .performanceProfile) ?? .balanced
         contextWindow = try container.decodeIfPresent(JarvisContextWindowPreset.self, forKey: .contextWindow) ?? .automatic
         responseStyle = try container.decodeIfPresent(JarvisAssistantResponseStyle.self, forKey: .responseStyle) ?? .balanced
-        creativity = try container.decodeIfPresent(Double.self, forKey: .creativity) ?? 0.7
+        creativity = try container.decodeIfPresent(Double.self, forKey: .creativity) ?? 0.55
         unloadModelOnBackground = try container.decodeIfPresent(Bool.self, forKey: .unloadModelOnBackground) ?? false
         batterySaverMode = try container.decodeIfPresent(Bool.self, forKey: .batterySaverMode) ?? false
         autoScrollConversation = try container.decodeIfPresent(Bool.self, forKey: .autoScrollConversation) ?? true

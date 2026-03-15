@@ -26,6 +26,15 @@ struct KnowledgeTabView: View {
                 appModel.refreshKnowledgeResults()
             }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if appModel.shouldShowFocusedBackButton {
+                        Button {
+                            appModel.returnFromFocusedExperience()
+                        } label: {
+                            Label(appModel.focusedBackButtonTitle, systemImage: "chevron.left")
+                        }
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     EditButton()
                 }
