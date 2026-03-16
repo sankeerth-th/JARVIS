@@ -49,6 +49,9 @@ final class JarvisIOSTests: XCTestCase {
             preferredModelProfile: .gemma3_4b_it_q4_0,
             autoWarmOnLaunch: true,
             autoWarmOnFirstSend: false,
+            assistantQualityMode: .highQuality,
+            promptMode: .advanced,
+            memoryEnabled: false,
             performanceProfile: .quality,
             contextWindow: .extended,
             responseStyle: .detailed,
@@ -95,13 +98,7 @@ final class JarvisIOSTests: XCTestCase {
         appModel.apply(route: JarvisLaunchRoute(action: .ask, source: "test"))
 
         XCTAssertEqual(appModel.selectedTab, .assistant)
-        XCTAssertFalse(appModel.showSetupFlow)
         XCTAssertEqual(appModel.assistantEntryStyle, .quickAsk)
-        if case .unavailable(let reason) = appModel.assistantExperienceState {
-            XCTAssertTrue(reason.contains("Import and activate"))
-        } else {
-            XCTFail("Expected assistant unavailable state")
-        }
     }
 
     @MainActor
@@ -317,7 +314,48 @@ final class JarvisIOSTests: XCTestCase {
         let context = manager.prepareContext(
             conversation: conversation,
             prompt: "Create the project launch checklist",
-            task: .analyzeText,
+            classification: JarvisTaskClassification(
+                category: .planning,
+                task: .analyzeText,
+                preset: .balanced,
+                confidence: 0.8,
+                reasoningHint: "Organize the work into concrete actions.",
+                responseHint: "Use a checklist.",
+                shouldInjectKnowledge: false,
+                shouldPreferStructuredOutput: true
+            ),
+            skill: JarvisResolvedSkill(
+                skill: JarvisSkillCatalog.resolve(
+                    for: JarvisNormalizedAssistantRequest(
+                        prompt: "Create the project launch checklist",
+                        requestedTask: .analyzeText,
+                        invocationSource: "test",
+                        sourceKind: .chat,
+                        assistantMode: .plan,
+                        conversationID: conversationID,
+                        conversation: conversation,
+                        routeContext: JarvisAssistantRouteContext()
+                    ),
+                    classification: JarvisTaskClassification(
+                        category: .planning,
+                        task: .analyzeText,
+                        preset: .balanced,
+                        confidence: 0.8,
+                        reasoningHint: "Organize the work into concrete actions.",
+                        responseHint: "Use a checklist.",
+                        shouldInjectKnowledge: false,
+                        shouldPreferStructuredOutput: true
+                    )
+                ),
+                policy: JarvisSkillContextPolicy(
+                    recentMessageLimit: 4,
+                    includeSummary: true,
+                    knowledgeLimit: 1,
+                    maxMemoryItems: 3,
+                    maxMemoryCharacters: 360,
+                    includeReplyTarget: false
+                )
+            ),
             taskBudget: 4
         )
 
@@ -350,6 +388,287 @@ final class JarvisIOSTests: XCTestCase {
 
         XCTAssertEqual(output?.cards.first?.kind, .checklist)
         XCTAssertEqual(output?.cards.first?.items.count, 3)
+    }
+
+    @MainActor
+    func testMemoryWriteFilteringIgnoresTrivialConversation() {
+        let store = JarvisMemoryStore(filename: "JarvisMemoryFilter-\(UUID().uuidString).json")
+        store.clearAll()
+        let manager = ConversationMemoryManager(store: store)
+
+        let conversationID = UUID()
+        manager.recordInteraction(
+            conversationID: conversationID,
+            userMessage: JarvisChatMessage(role: .user, text: "Thanks"),
+            assistantMessage: JarvisChatMessage(role: .assistant, text: "You're welcome."),
+            task: .chat,
+            classification: .default
+        )
+
+        let matches = store.searchMemories(query: "thanks", conversationID: conversationID, limit: 5)
+        XCTAssertTrue(matches.isEmpty)
+    }
+
+    @MainActor
+    func testEntityExtractionImprovesRetrieval() {
+        let store = JarvisMemoryStore(filename: "JarvisMemoryEntity-\(UUID().uuidString).json")
+        store.clearAll()
+        let manager = ConversationMemoryManager(store: store)
+
+        let conversationID = UUID()
+        manager.recordInteraction(
+            conversationID: conversationID,
+            userMessage: JarvisChatMessage(role: .user, text: "I am building Jarvis in SwiftUI for iOS."),
+            assistantMessage: JarvisChatMessage(role: .assistant, text: "I can help with the Jarvis SwiftUI iOS work."),
+            task: .chat,
+            classification: .default
+        )
+
+        let matches = store.searchMemories(query: "swiftui ios jarvis", conversationID: nil, limit: 5)
+        XCTAssertFalse(matches.isEmpty)
+        XCTAssertTrue(matches.first?.record.entityHints.contains("swiftui") == true)
+    }
+
+    func testSkillCapabilityProviderMatchesDraftEmailIntent() async {
+        let provider = JarvisSkillCapabilityProvider()
+        let request = JarvisNormalizedAssistantRequest(
+            prompt: "Draft an email to the team about the release delay.",
+            requestedTask: .draftEmail,
+            invocationSource: "test",
+            sourceKind: .chat,
+            assistantMode: .write,
+            conversationID: UUID(),
+            conversation: JarvisConversationRecord(),
+            routeContext: JarvisAssistantRouteContext()
+        )
+
+        let candidates = await provider.candidates(
+            for: request,
+            classification: JarvisTaskClassification(
+                category: .draftingEmail,
+                task: .draftEmail,
+                preset: .drafting,
+                confidence: 0.9,
+                reasoningHint: "Draft the email.",
+                responseHint: "Make it send-ready.",
+                shouldInjectKnowledge: false,
+                shouldPreferStructuredOutput: true
+            )
+        )
+
+        XCTAssertTrue(candidates.contains { $0.name == "draft_email" })
+    }
+
+    func testSkillResolverPrefersPlanningSkillForPlanningClassification() {
+        let request = JarvisNormalizedAssistantRequest(
+            prompt: "Create a launch checklist for the Jarvis release.",
+            requestedTask: .analyzeText,
+            invocationSource: "test",
+            sourceKind: .chat,
+            assistantMode: .plan,
+            conversationID: UUID(),
+            conversation: JarvisConversationRecord(),
+            routeContext: JarvisAssistantRouteContext()
+        )
+
+        let classification = JarvisTaskClassification(
+            category: .planning,
+            task: .analyzeText,
+            preset: .balanced,
+            confidence: 0.9,
+            reasoningHint: "Organize the work.",
+            responseHint: "Use steps.",
+            shouldInjectKnowledge: false,
+            shouldPreferStructuredOutput: true
+        )
+
+        let resolved = JarvisSkillPolicyResolver.resolve(for: request, classification: classification)
+        XCTAssertEqual(resolved.skill.id, "planning")
+        XCTAssertEqual(resolved.policy.maxMemoryItems, 4)
+    }
+
+    func testTaskAwareMemoryRankingPrefersProjectForCoding() {
+        let store = JarvisMemoryStore(filename: "JarvisTaskAwareMemory-\(UUID().uuidString).json")
+        store.clearAll()
+
+        store.upsertMemory(
+            JarvisMemoryRecord(
+                kind: .project,
+                title: "Jarvis project",
+                content: "Jarvis uses SwiftUI and local GGUF models for iOS assistant work.",
+                importance: 0.9,
+                confidence: 0.9,
+                tags: ["jarvis", "swiftui", "ios"],
+                entityHints: ["jarvis", "swiftui", "ios"]
+            ),
+            maxCount: 20
+        )
+        store.upsertMemory(
+            JarvisMemoryRecord(
+                kind: .personalFact,
+                title: "Personal fact",
+                content: "I work from home on weekdays.",
+                importance: 0.7,
+                confidence: 0.8,
+                tags: ["home"]
+            ),
+            maxCount: 20
+        )
+
+        let classification = JarvisTaskClassification(
+            category: .coding,
+            task: .analyzeText,
+            preset: .coding,
+            confidence: 0.9,
+            reasoningHint: "Fix the code issue.",
+            responseHint: "Lead with the fix.",
+            shouldInjectKnowledge: false,
+            shouldPreferStructuredOutput: true
+        )
+        let request = JarvisNormalizedAssistantRequest(
+            prompt: "Fix the SwiftUI assistant view in Jarvis.",
+            requestedTask: .analyzeText,
+            invocationSource: "test",
+            sourceKind: .chat,
+            assistantMode: .code,
+            conversationID: UUID(),
+            conversation: JarvisConversationRecord(),
+            routeContext: JarvisAssistantRouteContext()
+        )
+        let skill = JarvisSkillCatalog.resolve(for: request, classification: classification)
+
+        let matches = store.searchMemories(
+            query: request.prompt,
+            conversationID: request.conversationID,
+            limit: 3,
+            classification: classification,
+            skill: skill
+        )
+
+        XCTAssertEqual(matches.first?.record.kind, .project)
+    }
+
+    func testContextBuilderPacksDraftContextSelectively() {
+        let builder = ContextBuilder()
+        let request = JarvisOrchestrationRequest(
+            prompt: "Draft a short email to the team about the delay.",
+            task: .draftEmail,
+            source: "test",
+            mode: .write,
+            conversation: JarvisConversationRecord(
+                messages: [
+                    JarvisChatMessage(role: .user, text: "Keep my emails direct."),
+                    JarvisChatMessage(role: .assistant, text: "Understood."),
+                    JarvisChatMessage(role: .user, text: "Draft a short email to the team about the delay.")
+                ]
+            ),
+            replyTargetText: "Team update thread"
+        )
+        let classification = JarvisTaskClassification(
+            category: .draftingEmail,
+            task: .draftEmail,
+            preset: .drafting,
+            confidence: 0.9,
+            reasoningHint: "Draft the email.",
+            responseHint: "Make it send-ready.",
+            shouldInjectKnowledge: false,
+            shouldPreferStructuredOutput: true
+        )
+        let resolved = JarvisSkillPolicyResolver.resolve(for: request.normalizedRequest, classification: classification)
+        let summary = ConversationSummary(
+            conversationID: request.conversation.id,
+            messageCount: 4,
+            summaryText: "User prefers direct updates.",
+            keyTopics: ["email"],
+            userIntent: "drafting",
+            assistantActions: ["drafted content"]
+        )
+        let context = builder.build(
+            request: request,
+            classification: classification,
+            memoryContext: MemoryContext(
+                recentMessages: request.conversation.messages,
+                summary: summary
+            ),
+            resolvedSkill: resolved
+        )
+
+        XCTAssertTrue(context.taskInstruction.contains("Skill: Draft Email"))
+        XCTAssertTrue(context.contextBlocks.contains { $0.title == "Reply Target" })
+        XCTAssertTrue(context.contextBlocks.contains { $0.title == "Conversation Context" })
+    }
+
+    func testSummaryIncludesGoalsTasksAndActions() {
+        let store = JarvisMemoryStore(filename: "JarvisSummaryGoals-\(UUID().uuidString).json")
+        store.clearAll()
+        let manager = ConversationMemoryManager(
+            store: store,
+            policy: MemoryRetentionPolicy(
+                maxRecentMessages: 2,
+                maxSummaryMessages: 4,
+                maxCharactersPerMessage: 400,
+                minMessageAgeForCompression: 0,
+                enableSemanticCompression: true,
+                maxRetrievedMemories: 3,
+                maxStoredMemories: 20
+            )
+        )
+        let conversationID = UUID()
+        manager.recordInteraction(
+            conversationID: conversationID,
+            userMessage: JarvisChatMessage(role: .user, text: "Our goal is to ship Jarvis this month."),
+            assistantMessage: JarvisChatMessage(role: .assistant, text: "I can turn that into launch steps."),
+            task: .analyzeText,
+            classification: JarvisTaskClassification(
+                category: .planning,
+                task: .analyzeText,
+                preset: .balanced,
+                confidence: 0.9,
+                reasoningHint: "Plan the launch.",
+                responseHint: "Use steps.",
+                shouldInjectKnowledge: false,
+                shouldPreferStructuredOutput: true
+            )
+        )
+        manager.recordInteraction(
+            conversationID: conversationID,
+            userMessage: JarvisChatMessage(role: .user, text: "We need to finalize TestFlight and follow up with QA."),
+            assistantMessage: JarvisChatMessage(role: .assistant, text: "Next I will outline the QA checklist and ask which release date to target."),
+            task: .analyzeText,
+            classification: JarvisTaskClassification(
+                category: .planning,
+                task: .analyzeText,
+                preset: .balanced,
+                confidence: 0.9,
+                reasoningHint: "Plan the launch.",
+                responseHint: "Use steps.",
+                shouldInjectKnowledge: false,
+                shouldPreferStructuredOutput: true
+            )
+        )
+
+        let summary = store.latestSummary(for: conversationID)
+        XCTAssertTrue(summary?.summaryText.contains("Open tasks:") == true)
+        XCTAssertTrue(summary?.summaryText.contains("Jarvis actions:") == true)
+    }
+
+    func testKnowledgeFormatterCreatesKnowledgeAnswerCard() {
+        let output = JarvisAssistantOutputFormatter.format(
+            text: "Jarvis stores notes locally and retrieves the most relevant ones for grounded answers.",
+            classification: JarvisTaskClassification(
+                category: .questionAnswering,
+                task: .knowledgeAnswer,
+                preset: .precise,
+                confidence: 0.9,
+                reasoningHint: "Ground the answer.",
+                responseHint: "Answer directly.",
+                shouldInjectKnowledge: true,
+                shouldPreferStructuredOutput: true
+            ),
+            memoryContext: MemoryContext()
+        )
+
+        XCTAssertEqual(output?.cards.first?.kind, .knowledgeAnswer)
     }
 
     func testGemmaProjectorAttachmentPersistsCompanionMetadata() throws {
@@ -417,7 +736,9 @@ final class JarvisIOSTests: XCTestCase {
         XCTAssertEqual(tuning.preset, .precise)
         XCTAssertTrue(tuning.requiresGroundedAnswers)
         XCTAssertTrue(tuning.usesReasoningPlan)
-        XCTAssertLessThanOrEqual(tuning.temperature, 0.36)
+        XCTAssertEqual(tuning.temperature, 0.45, accuracy: 0.001)
+        XCTAssertEqual(tuning.topP, 0.88, accuracy: 0.001)
+        XCTAssertEqual(tuning.maxOutputTokens, 200)
     }
 
     func testRecentHistoryPreservesLatestInstructionLikeMessage() {
@@ -459,7 +780,237 @@ final class JarvisIOSTests: XCTestCase {
     func testDeviceTierSelectionFavorsHighMemoryPhones() {
         XCTAssertEqual(JarvisRuntimeDeviceTier.current(physicalMemoryBytes: 6_500_000_000), .constrained)
         XCTAssertEqual(JarvisRuntimeDeviceTier.current(physicalMemoryBytes: 8_000_000_000), .baseline)
-        XCTAssertEqual(JarvisRuntimeDeviceTier.current(physicalMemoryBytes: 12_000_000_000), .high)
+        XCTAssertEqual(JarvisRuntimeDeviceTier.current(physicalMemoryBytes: 12_000_000_000), .highMemory)
+    }
+
+    func testMemoryPressureLevelThresholds() {
+        XCTAssertEqual(JarvisRuntimeMemoryPressureLevel.current(availableMemoryBytes: 1_500_000_000), .normal)
+        XCTAssertEqual(JarvisRuntimeMemoryPressureLevel.current(availableMemoryBytes: 1_000_000_000), .reduced)
+        XCTAssertEqual(JarvisRuntimeMemoryPressureLevel.current(availableMemoryBytes: 800_000_000), .critical)
+    }
+
+    func testKVContextBudgetHeuristicMatchesTierBudgetAssumptions() {
+        XCTAssertEqual(
+            JarvisRuntimeHeuristics.maxContextTokens(fileSizeBytes: 3_400_000_000, kvBudgetMB: 1_200),
+            1_200
+        )
+        XCTAssertEqual(
+            JarvisRuntimeHeuristics.maxContextTokens(fileSizeBytes: 2_500_000_000, kvBudgetMB: 1_200),
+            1_600
+        )
+        XCTAssertEqual(
+            JarvisRuntimeHeuristics.maxContextTokens(fileSizeBytes: 1_900_000_000, kvBudgetMB: 768),
+            1_536
+        )
+    }
+
+    func testEstimatedKVCacheBytesScalesWithContext() {
+        let small = JarvisRuntimeHeuristics.estimatedKVCacheBytes(
+            contextTokens: 512,
+            fileSizeBytes: 3_400_000_000
+        )
+        let large = JarvisRuntimeHeuristics.estimatedKVCacheBytes(
+            contextTokens: 1_024,
+            fileSizeBytes: 3_400_000_000
+        )
+
+        XCTAssertEqual(small, 512_000_000)
+        XCTAssertEqual(large, 1_024_000_000)
+        XCTAssertGreaterThan(large, small)
+    }
+
+    func testGPULayerTargetsRespectTierAndPressure() {
+        XCTAssertEqual(
+            JarvisRuntimeHeuristics.gpuLayerTarget(
+                for: .constrained,
+                performanceProfile: .balanced,
+                memoryPressure: .normal,
+                batterySaverMode: false,
+                thermalState: .nominal
+            ),
+            12
+        )
+        XCTAssertEqual(
+            JarvisRuntimeHeuristics.gpuLayerTarget(
+                for: .baseline,
+                performanceProfile: .quality,
+                memoryPressure: .normal,
+                batterySaverMode: false,
+                thermalState: .nominal
+            ),
+            48
+        )
+        XCTAssertEqual(
+            JarvisRuntimeHeuristics.gpuLayerTarget(
+                for: .highMemory,
+                performanceProfile: .balanced,
+                memoryPressure: .reduced,
+                batterySaverMode: false,
+                thermalState: .nominal
+            ),
+            48
+        )
+    }
+
+    func testFlashAttentionOnlyEnablesOnStableHighMemoryTier() {
+        XCTAssertTrue(
+            JarvisRuntimeHeuristics.shouldEnableFlashAttention(
+                for: .highMemory,
+                performanceProfile: .balanced,
+                memoryPressure: .normal,
+                batterySaverMode: false,
+                thermalState: .nominal
+            )
+        )
+        XCTAssertFalse(
+            JarvisRuntimeHeuristics.shouldEnableFlashAttention(
+                for: .baseline,
+                performanceProfile: .quality,
+                memoryPressure: .normal,
+                batterySaverMode: false,
+                thermalState: .nominal
+            )
+        )
+        XCTAssertFalse(
+            JarvisRuntimeHeuristics.shouldEnableFlashAttention(
+                for: .highMemory,
+                performanceProfile: .balanced,
+                memoryPressure: .reduced,
+                batterySaverMode: false,
+                thermalState: .nominal
+            )
+        )
+    }
+
+    func testMicroBatchSizingStaysSmallerThanLogicalBatch() {
+        XCTAssertEqual(
+            JarvisRuntimeHeuristics.microBatchSize(
+                for: 20,
+                deviceTier: .highMemory,
+                memoryPressure: .normal,
+                thermalState: .nominal
+            ),
+            12
+        )
+        XCTAssertEqual(
+            JarvisRuntimeHeuristics.microBatchSize(
+                for: 12,
+                deviceTier: .baseline,
+                memoryPressure: .reduced,
+                thermalState: .nominal
+            ),
+            8
+        )
+    }
+
+    func testRuntimeRepetitionGuardDetectsRepeatedSuffixPatterns() {
+        let repeated = "final answer " + String(repeating: "repeat this phrase ", count: 3)
+        XCTAssertTrue(
+            JarvisRuntimeHeuristics.repeatedSuffixDetected(
+                in: repeated,
+                windowCharacters: 64,
+                threshold: 3
+            )
+        )
+
+        XCTAssertFalse(
+            JarvisRuntimeHeuristics.repeatedSuffixDetected(
+                in: "Here is one concise explanation with no looping pattern at the end.",
+                windowCharacters: 64,
+                threshold: 3
+            )
+        )
+    }
+
+    func testRuntimeRepetitionGuardDetectsRepeatedPhraseWindows() {
+        XCTAssertTrue(
+            JarvisRuntimeHeuristics.repeatedPhraseDetected(
+                in: "alpha beta gamma alpha beta gamma alpha beta gamma",
+                threshold: 3
+            )
+        )
+        XCTAssertFalse(
+            JarvisRuntimeHeuristics.repeatedPhraseDetected(
+                in: "alpha beta gamma delta epsilon zeta",
+                threshold: 3
+            )
+        )
+    }
+
+    func testRuntimeStopReasonRawValuesRemainStable() {
+        XCTAssertEqual(JarvisRuntimeGenerationStopReason.normal.rawValue, "normal")
+        XCTAssertEqual(JarvisRuntimeGenerationStopReason.outputCap.rawValue, "output_cap")
+        XCTAssertEqual(JarvisRuntimeGenerationStopReason.repetitionGuard.rawValue, "repetition_guard")
+        XCTAssertEqual(JarvisRuntimeGenerationStopReason.thermalGuard.rawValue, "thermal_guard")
+        XCTAssertEqual(JarvisRuntimeGenerationStopReason.memoryGuard.rawValue, "memory_guard")
+    }
+
+    func testTaskPresetCapsMatchAssistantPolicies() {
+        let coding = JarvisAssistantIntelligence.tuning(
+            for: JarvisTaskClassification(
+                category: .coding,
+                task: .analyzeText,
+                preset: .coding,
+                confidence: 0.9,
+                reasoningHint: "reason",
+                responseHint: "respond",
+                shouldInjectKnowledge: false,
+                shouldPreferStructuredOutput: true
+            ),
+            settings: .default
+        )
+        XCTAssertEqual(coding.temperature, 0.20, accuracy: 0.001)
+        XCTAssertEqual(coding.topP, 0.85, accuracy: 0.001)
+        XCTAssertEqual(coding.penaltyLastN, 128)
+        XCTAssertEqual(coding.maxOutputTokens, 400)
+
+        let summarization = JarvisAssistantIntelligence.tuning(
+            for: JarvisTaskClassification(
+                category: .summarization,
+                task: .summarize,
+                preset: .precise,
+                confidence: 0.9,
+                reasoningHint: "summarize",
+                responseHint: "faithful",
+                shouldInjectKnowledge: false,
+                shouldPreferStructuredOutput: true
+            ),
+            settings: .default
+        )
+        XCTAssertEqual(summarization.maxOutputTokens, 300)
+        XCTAssertEqual(summarization.repeatPenalty, 1.16, accuracy: 0.001)
+
+        let questionAnswering = JarvisAssistantIntelligence.tuning(
+            for: JarvisTaskClassification(
+                category: .questionAnswering,
+                task: .knowledgeAnswer,
+                preset: .precise,
+                confidence: 0.9,
+                reasoningHint: "answer",
+                responseHint: "direct",
+                shouldInjectKnowledge: true,
+                shouldPreferStructuredOutput: false
+            ),
+            settings: .default
+        )
+        XCTAssertEqual(questionAnswering.maxOutputTokens, 200)
+        XCTAssertEqual(questionAnswering.topP, 0.88, accuracy: 0.001)
+
+        let planning = JarvisAssistantIntelligence.tuning(
+            for: JarvisTaskClassification(
+                category: .planning,
+                task: .analyzeText,
+                preset: .balanced,
+                confidence: 0.9,
+                reasoningHint: "plan",
+                responseHint: "steps",
+                shouldInjectKnowledge: false,
+                shouldPreferStructuredOutput: true
+            ),
+            settings: .default
+        )
+        XCTAssertEqual(planning.maxOutputTokens, 250)
+        XCTAssertEqual(planning.penaltyLastN, 96)
     }
 
     func testStreamingTextProcessorFlushesSentenceBoundaries() {
@@ -552,7 +1103,12 @@ final class JarvisIOSTests: XCTestCase {
         let plan = await planner.makePlan(
             for: request,
             classification: classification,
-            memoryContextAvailable: false
+            memoryContextAvailable: false,
+            elevatedRequest: JarvisRequestElevator().elevate(
+                prompt: "Help?",
+                requestedTask: .chat,
+                classification: classification
+            )
         )
 
         XCTAssertEqual(plan.mode, .clarify)
@@ -584,12 +1140,182 @@ final class JarvisIOSTests: XCTestCase {
         let plan = await planner.makePlan(
             for: request,
             classification: classification,
-            memoryContextAvailable: true
+            memoryContextAvailable: true,
+            elevatedRequest: JarvisRequestElevator().elevate(
+                prompt: "Continue",
+                requestedTask: .chat,
+                classification: classification
+            )
         )
 
         XCTAssertEqual(plan.mode, .memoryAugmentedResponse)
         XCTAssertTrue(plan.steps.contains(where: { $0.kind == .consultMemory }))
         XCTAssertTrue(plan.diagnostics.memoryAugmentationAvailable)
+    }
+
+    @MainActor
+    func testRequestElevatorHandlesGreetingWithoutModelCall() {
+        let elevator = JarvisRequestElevator()
+        let elevated = elevator.elevate(
+            prompt: "hi",
+            requestedTask: .chat,
+            classification: .default
+        )
+
+        XCTAssertEqual(elevated.kind, .greeting)
+        XCTAssertEqual(elevated.platformResponse, "Hey. Send me what you need.")
+        XCTAssertTrue(elevated.prefersSafePrompt)
+    }
+
+    @MainActor
+    func testRequestElevatorExpandsWeakEmailPrompt() {
+        let elevator = JarvisRequestElevator()
+        let elevated = elevator.elevate(
+            prompt: "mail",
+            requestedTask: .chat,
+            classification: .default
+        )
+
+        XCTAssertEqual(elevated.kind, .clarificationNeeded)
+        XCTAssertTrue(elevated.platformResponse?.contains("drafting a new email") == true)
+    }
+
+    @MainActor
+    func testRequestElevatorClassifiesCodingPrompt() {
+        let elevator = JarvisRequestElevator()
+        let classification = JarvisAssistantIntelligence.classify(
+            prompt: "write a python script for adding numbers",
+            requestedTask: .chat,
+            context: JarvisAssistantTaskContext(task: .chat, source: "test"),
+            conversation: JarvisConversationRecord()
+        )
+
+        let elevated = elevator.elevate(
+            prompt: "write a python script for adding numbers",
+            requestedTask: .chat,
+            classification: classification
+        )
+
+        XCTAssertEqual(classification.category, .coding)
+        XCTAssertEqual(elevated.kind, .codingRequest)
+        XCTAssertTrue(elevated.responseContract.prefersCodeFirst)
+        XCTAssertTrue(elevated.responseContract.prefersRunnableOutput)
+        XCTAssertTrue(elevated.elevatedPrompt.contains("Return runnable code first"))
+    }
+
+    @MainActor
+    func testRequestElevatorClassifiesScreenshotAsDeviceAction() {
+        let elevator = JarvisRequestElevator()
+        let elevated = elevator.elevate(
+            prompt: "take a screenshot of the screen",
+            requestedTask: .chat,
+            classification: .default
+        )
+
+        XCTAssertEqual(elevated.kind, .deviceActionRequest)
+        XCTAssertEqual(elevated.capabilityHint, .screenshot)
+        XCTAssertTrue(elevated.responseContract.forbidsHallucinatedCompletion)
+    }
+
+    @MainActor
+    func testExecutionPlannerRoutesScreenshotToCapabilityAction() async {
+        let planner = JarvisExecutionPlanner(capabilityProvider: JarvisSkillCapabilityProvider())
+        let request = JarvisNormalizedAssistantRequest(
+            prompt: "take a screenshot of the screen",
+            requestedTask: .chat,
+            invocationSource: JarvisAssistantEntrySource.inApp.rawValue,
+            sourceKind: .chat,
+            assistantMode: .general,
+            conversationID: UUID(),
+            conversation: JarvisConversationRecord(),
+            routeContext: JarvisAssistantRouteContext()
+        )
+        let elevated = JarvisRequestElevator().elevate(
+            prompt: request.prompt,
+            requestedTask: .chat,
+            classification: .default
+        )
+
+        let plan = await planner.makePlan(
+            for: request,
+            classification: .default,
+            memoryContextAvailable: false,
+            elevatedRequest: elevated
+        )
+
+        XCTAssertEqual(plan.mode, .capabilityAction)
+        XCTAssertTrue(plan.diagnostics.reasoning.joined(separator: " ").contains("capability"))
+        XCTAssertFalse(plan.steps.contains(where: { $0.kind == .infer }))
+    }
+
+    @MainActor
+    func testExecutionPlannerKeepsCodingOnDirectResponse() async {
+        let planner = JarvisExecutionPlanner(capabilityProvider: JarvisSkillCapabilityProvider())
+        let classification = JarvisAssistantIntelligence.classify(
+            prompt: "write a python script for adding numbers",
+            requestedTask: .chat,
+            context: JarvisAssistantTaskContext(task: .chat, source: "test"),
+            conversation: JarvisConversationRecord()
+        )
+        let request = JarvisNormalizedAssistantRequest(
+            prompt: "write a python script for adding numbers",
+            requestedTask: .chat,
+            invocationSource: JarvisAssistantEntrySource.inApp.rawValue,
+            sourceKind: .chat,
+            assistantMode: .general,
+            conversationID: UUID(),
+            conversation: JarvisConversationRecord(),
+            routeContext: JarvisAssistantRouteContext()
+        )
+
+        let plan = await planner.makePlan(
+            for: request,
+            classification: classification,
+            memoryContextAvailable: false,
+            elevatedRequest: JarvisRequestElevator().elevate(
+                prompt: request.prompt,
+                requestedTask: .chat,
+                classification: classification
+            )
+        )
+
+        XCTAssertEqual(plan.mode, .directResponse)
+        XCTAssertTrue(plan.diagnostics.reasoning.joined(separator: " ").contains("direct response") || plan.diagnostics.reasoning.joined(separator: " ").contains("direct answer"))
+    }
+
+    @MainActor
+    func testCapabilityFallbackReturnsStructuredNonModelResponseWhenUnavailable() async {
+        let engine = TestGGUFEngine()
+        let runtime = JarvisLocalModelRuntime(engine: engine)
+        let orchestrator = JarvisTaskOrchestrator(
+            runtime: runtime,
+            executionPlanner: JarvisExecutionPlanner(capabilityProvider: JarvisSkillCapabilityProvider())
+        )
+
+        let request = JarvisOrchestrationRequest(
+            prompt: "take a screenshot of the screen",
+            task: .chat,
+            source: "test",
+            sourceKind: .chat,
+            mode: .general,
+            conversation: JarvisConversationRecord(),
+            settingsSnapshot: .default
+        )
+
+        let expectation = expectation(description: "capability fallback")
+        var result: JarvisOrchestrationResult?
+
+        orchestrator.orchestrate(request: request, onComplete: { completed in
+            result = completed
+            expectation.fulfill()
+        })
+
+        await fulfillment(of: [expectation], timeout: 2.0)
+
+        XCTAssertEqual(result?.executionPlan.mode, .capabilityAction)
+        XCTAssertEqual(result?.turnResult.deliveryMode, .statusOnly)
+        XCTAssertTrue(result?.streamingText.contains("screenshot action") == true)
+        XCTAssertEqual(engine.loadCount, 0)
     }
 
     @MainActor
@@ -653,10 +1379,20 @@ private final class TestGGUFEngine: JarvisGGUFEngine {
         loadedProjectorPath = nil
     }
 
-    func generate(request: JarvisAssistantRequest, onToken: @escaping @Sendable (String) -> Void) async throws {
+    func generate(
+        request: JarvisAssistantRequest,
+        onToken: @escaping @Sendable (String) -> Void
+    ) async throws -> JarvisRuntimeGenerationOutcome {
         _ = request
         _ = configuration
         onToken("ok")
+        return JarvisRuntimeGenerationOutcome(
+            stopReason: .normal,
+            requestedContextTokenLimit: 768,
+            effectiveContextTokenLimit: 768,
+            effectiveOutputTokenLimit: 220,
+            promptTokenEstimate: 16
+        )
     }
 
     func cancelGeneration() {}

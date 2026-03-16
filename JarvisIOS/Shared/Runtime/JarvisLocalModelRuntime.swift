@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import os
 
 #if canImport(LocalLLMClientLlama)
 import LocalLLMClientCore
@@ -42,6 +43,13 @@ public struct JarvisRuntimeLoadDiagnostics: Equatable {
     public var usesSandboxCopy: Bool
     public var runningOnSimulator: Bool
     public var projectorPath: String?
+    public var availableMemoryBytesAtLoad: UInt64?
+    public var prefersMemoryMapping: Bool
+    public var effectiveMemoryMappingKnown: Bool
+    public var memoryMappingNote: String
+    public var requestedGPUOffload: Bool
+    public var requestedGPULayerCount: Int
+    public var flashAttentionRequested: Bool
 
     public init(
         modelName: String,
@@ -51,7 +59,14 @@ public struct JarvisRuntimeLoadDiagnostics: Equatable {
         pathExtension: String,
         usesSandboxCopy: Bool,
         runningOnSimulator: Bool,
-        projectorPath: String? = nil
+        projectorPath: String? = nil,
+        availableMemoryBytesAtLoad: UInt64? = nil,
+        prefersMemoryMapping: Bool = true,
+        effectiveMemoryMappingKnown: Bool = false,
+        memoryMappingNote: String = "Runtime prefers mmap, but the current LocalLLMClient API does not surface whether fallback heap loading occurred.",
+        requestedGPUOffload: Bool = false,
+        requestedGPULayerCount: Int = 0,
+        flashAttentionRequested: Bool = false
     ) {
         self.modelName = modelName
         self.modelPath = modelPath
@@ -61,23 +76,117 @@ public struct JarvisRuntimeLoadDiagnostics: Equatable {
         self.usesSandboxCopy = usesSandboxCopy
         self.runningOnSimulator = runningOnSimulator
         self.projectorPath = projectorPath
+        self.availableMemoryBytesAtLoad = availableMemoryBytesAtLoad
+        self.prefersMemoryMapping = prefersMemoryMapping
+        self.effectiveMemoryMappingKnown = effectiveMemoryMappingKnown
+        self.memoryMappingNote = memoryMappingNote
+        self.requestedGPUOffload = requestedGPUOffload
+        self.requestedGPULayerCount = requestedGPULayerCount
+        self.flashAttentionRequested = flashAttentionRequested
     }
 }
 
 public enum JarvisRuntimeDeviceTier: String, Equatable, Codable {
     case constrained
     case baseline
-    case high
+    case highMemory
 
     static func current(physicalMemoryBytes: UInt64 = ProcessInfo.processInfo.physicalMemory) -> JarvisRuntimeDeviceTier {
-        let physicalMemoryGB = Double(physicalMemoryBytes) / 1_000_000_000
-        if physicalMemoryGB >= 11 {
-            return .high
+        if physicalMemoryBytes >= 12_000_000_000 {
+            return .highMemory
         }
-        if physicalMemoryGB >= 7.5 {
+        if physicalMemoryBytes >= 8_000_000_000 {
             return .baseline
         }
         return .constrained
+    }
+
+    var diagnosticsName: String {
+        switch self {
+        case .constrained:
+            return "constrained"
+        case .baseline:
+            return "baseline"
+        case .highMemory:
+            return "high_memory"
+        }
+    }
+}
+
+public enum JarvisRuntimeMemoryPressureLevel: String, Equatable, Codable {
+    case normal
+    case reduced
+    case critical
+
+    static func current(availableMemoryBytes: UInt64?) -> JarvisRuntimeMemoryPressureLevel {
+        guard let availableMemoryBytes, availableMemoryBytes > 0 else {
+            return .normal
+        }
+        switch availableMemoryBytes {
+        case ..<900_000_000:
+            return .critical
+        case ..<1_400_000_000:
+            return .reduced
+        default:
+            return .normal
+        }
+    }
+}
+
+public enum JarvisRuntimeGenerationStopReason: String, Equatable, Codable {
+    case normal = "normal"
+    case outputCap = "output_cap"
+    case repetitionGuard = "repetition_guard"
+    case thermalGuard = "thermal_guard"
+    case memoryGuard = "memory_guard"
+}
+
+public struct JarvisRuntimeGenerationOutcome: Equatable {
+    public var stopReason: JarvisRuntimeGenerationStopReason
+    public var requestedContextTokenLimit: Int
+    public var effectiveContextTokenLimit: Int
+    public var effectiveOutputTokenLimit: Int
+    public var promptTokenEstimate: Int
+    public var availableMemoryBytesAtStart: UInt64?
+    public var memoryFallbackTriggered: Bool
+    public var thermalFallbackTriggered: Bool
+    public var speculativeDecodingRequested: Bool
+    public var speculativeDecodingEligible: Bool
+    public var gpuOffloadEnabled: Bool
+    public var requestedGPULayerCount: Int
+    public var flashAttentionEnabled: Bool
+    public var estimatedKVCacheBytes: UInt64
+
+    public init(
+        stopReason: JarvisRuntimeGenerationStopReason = .normal,
+        requestedContextTokenLimit: Int,
+        effectiveContextTokenLimit: Int,
+        effectiveOutputTokenLimit: Int,
+        promptTokenEstimate: Int,
+        availableMemoryBytesAtStart: UInt64? = nil,
+        memoryFallbackTriggered: Bool = false,
+        thermalFallbackTriggered: Bool = false,
+        speculativeDecodingRequested: Bool = false,
+        speculativeDecodingEligible: Bool = false,
+        gpuOffloadEnabled: Bool = false,
+        requestedGPULayerCount: Int = 0,
+        flashAttentionEnabled: Bool = false,
+        estimatedKVCacheBytes: UInt64 = 0
+    ) {
+        self.stopReason = stopReason
+        self.requestedContextTokenLimit = requestedContextTokenLimit
+        self.effectiveContextTokenLimit = effectiveContextTokenLimit
+        self.effectiveOutputTokenLimit = effectiveOutputTokenLimit
+        self.promptTokenEstimate = promptTokenEstimate
+        self.availableMemoryBytesAtStart = availableMemoryBytesAtStart
+        self.memoryFallbackTriggered = memoryFallbackTriggered
+        self.thermalFallbackTriggered = thermalFallbackTriggered
+        self.speculativeDecodingRequested = speculativeDecodingRequested
+        self.speculativeDecodingEligible = speculativeDecodingEligible
+        self.gpuOffloadEnabled = gpuOffloadEnabled
+        self.requestedGPULayerCount = requestedGPULayerCount
+        self.flashAttentionEnabled = flashAttentionEnabled
+        self.estimatedKVCacheBytes = estimatedKVCacheBytes
     }
 }
 
@@ -90,10 +199,23 @@ public struct JarvisRuntimeGenerationDiagnostics: Equatable {
     public var groundedResultCount: Int
     public var outputCharacterCount: Int
     public var estimatedOutputTokens: Int
+    public var totalEstimatedTokens: Int
+    public var promptTokenEstimate: Int
+    public var tokensPerSecond: Double
     public var timeToFirstTokenSeconds: Double?
     public var generationDurationSeconds: Double
     public var thermalState: ProcessInfo.ThermalState
     public var usedMemorySafeFallback: Bool
+    public var memoryFallbackTriggered: Bool
+    public var thermalFallbackTriggered: Bool
+    public var stopReason: JarvisRuntimeGenerationStopReason
+    public var availableMemoryBytesAtStart: UInt64?
+    public var effectiveContextTokenLimit: Int
+    public var effectiveOutputTokenLimit: Int
+    public var gpuOffloadEnabled: Bool
+    public var requestedGPULayerCount: Int
+    public var flashAttentionEnabled: Bool
+    public var estimatedKVCacheBytes: UInt64
 
     public init(
         preset: String,
@@ -104,10 +226,23 @@ public struct JarvisRuntimeGenerationDiagnostics: Equatable {
         groundedResultCount: Int,
         outputCharacterCount: Int,
         estimatedOutputTokens: Int,
+        totalEstimatedTokens: Int,
+        promptTokenEstimate: Int,
+        tokensPerSecond: Double,
         timeToFirstTokenSeconds: Double?,
         generationDurationSeconds: Double,
         thermalState: ProcessInfo.ThermalState,
-        usedMemorySafeFallback: Bool
+        usedMemorySafeFallback: Bool,
+        memoryFallbackTriggered: Bool,
+        thermalFallbackTriggered: Bool,
+        stopReason: JarvisRuntimeGenerationStopReason,
+        availableMemoryBytesAtStart: UInt64?,
+        effectiveContextTokenLimit: Int,
+        effectiveOutputTokenLimit: Int,
+        gpuOffloadEnabled: Bool = false,
+        requestedGPULayerCount: Int = 0,
+        flashAttentionEnabled: Bool = false,
+        estimatedKVCacheBytes: UInt64 = 0
     ) {
         self.preset = preset
         self.taskCategory = taskCategory
@@ -117,10 +252,247 @@ public struct JarvisRuntimeGenerationDiagnostics: Equatable {
         self.groundedResultCount = groundedResultCount
         self.outputCharacterCount = outputCharacterCount
         self.estimatedOutputTokens = estimatedOutputTokens
+        self.totalEstimatedTokens = totalEstimatedTokens
+        self.promptTokenEstimate = promptTokenEstimate
+        self.tokensPerSecond = tokensPerSecond
         self.timeToFirstTokenSeconds = timeToFirstTokenSeconds
         self.generationDurationSeconds = generationDurationSeconds
         self.thermalState = thermalState
         self.usedMemorySafeFallback = usedMemorySafeFallback
+        self.memoryFallbackTriggered = memoryFallbackTriggered
+        self.thermalFallbackTriggered = thermalFallbackTriggered
+        self.stopReason = stopReason
+        self.availableMemoryBytesAtStart = availableMemoryBytesAtStart
+        self.effectiveContextTokenLimit = effectiveContextTokenLimit
+        self.effectiveOutputTokenLimit = effectiveOutputTokenLimit
+        self.gpuOffloadEnabled = gpuOffloadEnabled
+        self.requestedGPULayerCount = requestedGPULayerCount
+        self.flashAttentionEnabled = flashAttentionEnabled
+        self.estimatedKVCacheBytes = estimatedKVCacheBytes
+    }
+}
+
+enum JarvisRuntimeHeuristics {
+    static func availableMemoryBytes() -> UInt64? {
+        let bytes = os_proc_available_memory()
+        return bytes > 0 ? UInt64(bytes) : nil
+    }
+
+    static func approximateTokenCount(for text: String) -> Int {
+        max(1, Int((Double(text.utf8.count) / 4.0).rounded(.up)))
+    }
+
+    static func maxContextTokens(fileSizeBytes: Int64, kvBudgetMB: Int) -> Int {
+        return max(384, Int(Double(kvBudgetMB) / kvMegabytesPerToken(fileSizeBytes: fileSizeBytes)))
+    }
+
+    static func kvMegabytesPerToken(fileSizeBytes: Int64) -> Double {
+        switch fileSizeBytes {
+        case 3_200_000_000...:
+            return 1.0
+        case 2_300_000_000...:
+            return 0.75
+        case 1_500_000_000...:
+            return 0.5
+        default:
+            return 0.35
+        }
+    }
+
+    static func estimatedKVCacheBytes(contextTokens: Int, fileSizeBytes: Int64) -> UInt64 {
+        guard contextTokens > 0 else { return 0 }
+        let megabytes = Double(contextTokens) * kvMegabytesPerToken(fileSizeBytes: fileSizeBytes)
+        return UInt64((megabytes * 1_000_000).rounded())
+    }
+
+    static func gpuLayerTarget(
+        for deviceTier: JarvisRuntimeDeviceTier,
+        performanceProfile: JarvisRuntimePerformanceProfile,
+        memoryPressure: JarvisRuntimeMemoryPressureLevel,
+        batterySaverMode: Bool,
+        thermalState: ProcessInfo.ThermalState
+    ) -> Int {
+        guard thermalState != .critical else { return 0 }
+
+        let base: Int
+        switch deviceTier {
+        case .constrained:
+            base = batterySaverMode ? 8 : 12
+        case .baseline:
+            switch performanceProfile {
+            case .efficient:
+                base = 32
+            case .balanced:
+                base = 40
+            case .quality:
+                base = 48
+            }
+        case .highMemory:
+            base = 99
+        }
+
+        if batterySaverMode {
+            return min(base, 32)
+        }
+        if memoryPressure == .reduced {
+            switch deviceTier {
+            case .constrained:
+                return min(base, 8)
+            case .baseline:
+                return min(base, 24)
+            case .highMemory:
+                return min(base, 48)
+            }
+        }
+        if thermalState == .serious {
+            switch deviceTier {
+            case .constrained:
+                return min(base, 8)
+            case .baseline:
+                return min(base, 24)
+            case .highMemory:
+                return min(base, 40)
+            }
+        }
+
+        return base
+    }
+
+    static func microBatchSize(
+        for batchSize: Int,
+        deviceTier: JarvisRuntimeDeviceTier,
+        memoryPressure: JarvisRuntimeMemoryPressureLevel,
+        thermalState: ProcessInfo.ThermalState
+    ) -> Int {
+        if thermalState == .serious || memoryPressure == .reduced {
+            return max(4, min(batchSize, 8))
+        }
+
+        let target: Int
+        switch deviceTier {
+        case .constrained:
+            target = 4
+        case .baseline:
+            target = 8
+        case .highMemory:
+            target = 12
+        }
+        return max(4, min(batchSize, target))
+    }
+
+    static func batchThreadCount(
+        generationThreads: Int,
+        deviceTier: JarvisRuntimeDeviceTier,
+        thermalState: ProcessInfo.ThermalState
+    ) -> Int {
+        if thermalState == .serious {
+            return 1
+        }
+        switch deviceTier {
+        case .constrained:
+            return max(1, min(generationThreads, 1))
+        case .baseline:
+            return max(1, min(generationThreads, 2))
+        case .highMemory:
+            return max(1, min(generationThreads + 1, 4))
+        }
+    }
+
+    static func shouldEnableFlashAttention(
+        for deviceTier: JarvisRuntimeDeviceTier,
+        performanceProfile: JarvisRuntimePerformanceProfile,
+        memoryPressure: JarvisRuntimeMemoryPressureLevel,
+        batterySaverMode: Bool,
+        thermalState: ProcessInfo.ThermalState
+    ) -> Bool {
+        guard deviceTier == .highMemory else { return false }
+        guard performanceProfile != .efficient else { return false }
+        guard memoryPressure == .normal else { return false }
+        guard !batterySaverMode else { return false }
+        return thermalState != .serious && thermalState != .critical
+    }
+
+    static func repeatedSuffixDetected(
+        in text: String,
+        windowCharacters: Int,
+        threshold: Int
+    ) -> Bool {
+        let normalized = text.lowercased()
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let characters = Array(normalized)
+        let maxUnit = min(windowCharacters, max(24, characters.count / max(1, threshold)))
+        guard maxUnit >= 24 else { return false }
+
+        for unitLength in stride(from: maxUnit, through: 24, by: -8) {
+            guard characters.count >= unitLength * threshold else { continue }
+            let repeatedUnit = Array(characters.suffix(unitLength))
+            var matches = 1
+            var offset = unitLength * 2
+
+            while offset <= characters.count, matches < threshold {
+                let start = characters.count - offset
+                let end = start + unitLength
+                guard start >= 0 else { break }
+                if Array(characters[start..<end]) == repeatedUnit {
+                    matches += 1
+                    offset += unitLength
+                } else {
+                    break
+                }
+            }
+
+            if matches >= threshold {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    static func repeatedPhraseDetected(
+        in text: String,
+        maxPhraseWords: Int = 12,
+        threshold: Int
+    ) -> Bool {
+        let normalized = text.lowercased()
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let words = normalized.split(separator: " ").map(String.init)
+        guard words.count >= threshold * 3 else { return false }
+
+        for phraseWordCount in stride(from: min(maxPhraseWords, words.count / max(1, threshold)), through: 3, by: -1) {
+            guard words.count >= phraseWordCount * threshold else { continue }
+            let repeatedPhrase = Array(words.suffix(phraseWordCount))
+            var matches = 1
+            var offset = phraseWordCount * 2
+
+            while offset <= words.count, matches < threshold {
+                let start = words.count - offset
+                let end = start + phraseWordCount
+                guard start >= 0 else { break }
+                if Array(words[start..<end]) == repeatedPhrase {
+                    matches += 1
+                    offset += phraseWordCount
+                } else {
+                    break
+                }
+            }
+
+            if matches >= threshold {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    static func isGreetingLikePrompt(_ prompt: String) -> Bool {
+        let normalized = prompt.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return false }
+        let greetings = ["hi", "hello", "hey", "yo", "good morning", "good afternoon", "good evening"]
+        let wordCount = normalized.split(whereSeparator: \.isWhitespace).count
+        return wordCount <= 6 && greetings.contains(where: { normalized == $0 || normalized.hasPrefix($0 + " ") })
     }
 }
 
@@ -281,7 +653,7 @@ public protocol JarvisGGUFEngine {
     func generate(
         request: JarvisAssistantRequest,
         onToken: @escaping @Sendable (String) -> Void
-    ) async throws
+    ) async throws -> JarvisRuntimeGenerationOutcome
     func cancelGeneration()
 }
 
@@ -314,7 +686,7 @@ public final class StubGGUFEngine: JarvisGGUFEngine {
     public func generate(
         request: JarvisAssistantRequest,
         onToken: @escaping @Sendable (String) -> Void
-    ) async throws {
+    ) async throws -> JarvisRuntimeGenerationOutcome {
         _ = request
         _ = onToken
 
@@ -345,19 +717,35 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
 
     private struct RuntimePolicy: Equatable {
         let deviceTier: JarvisRuntimeDeviceTier
+        let memoryPressure: JarvisRuntimeMemoryPressureLevel
         let contextSize: Int
         let threadCount: Int
+        let batchThreadCount: Int
         let batchSize: Int
+        let microBatchSize: Int
         let kvBudgetMB: Int
+        let estimatedKVCacheBytes: UInt64
         let maxOutputTokens: Int
-        let shouldUseMemorySafeFallback: Bool
+        let softStopDurationSeconds: Double
+        let gpuLayerCount: Int
+        let gpuOffloadEnabled: Bool
+        let flashAttentionEnabled: Bool
+        let availableMemoryBytes: UInt64?
+        let memoryFallbackTriggered: Bool
+        let thermalFallbackTriggered: Bool
+        let speculativeDecodingRequested: Bool
+        let speculativeDecodingEligible: Bool
     }
+
+    private static let hiddenPlanningInstruction =
+        "Think step-by-step internally before answering. Do not expose reasoning. Return only the final answer."
 
     private struct GenerationGuard {
         let maxOutputTokens: Int
-        let maxDurationSeconds: Double
+        let softStopDurationSeconds: Double
         let repetitionWindowCharacters: Int
         let repetitionThreshold: Int
+        let availableMemoryBytesProvider: () -> UInt64?
 
         private(set) var estimatedOutputTokens = 0
         private(set) var outputCharacterCount = 0
@@ -366,14 +754,16 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
 
         init(
             maxOutputTokens: Int,
-            maxDurationSeconds: Double,
+            softStopDurationSeconds: Double,
             repetitionWindowCharacters: Int,
-            repetitionThreshold: Int
+            repetitionThreshold: Int,
+            availableMemoryBytesProvider: @escaping () -> UInt64?
         ) {
             self.maxOutputTokens = maxOutputTokens
-            self.maxDurationSeconds = maxDurationSeconds
+            self.softStopDurationSeconds = softStopDurationSeconds
             self.repetitionWindowCharacters = repetitionWindowCharacters
             self.repetitionThreshold = repetitionThreshold
+            self.availableMemoryBytesProvider = availableMemoryBytesProvider
         }
 
         mutating func ingest(_ chunk: String) throws {
@@ -388,15 +778,26 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
             }
 
             if estimatedOutputTokens > maxOutputTokens {
-                throw JarvisModelError.runtimeFailure("Generation stopped early to protect responsiveness on this device.")
+                throw GuardStop.outputCap
             }
 
-            if CFAbsoluteTimeGetCurrent() - startedAt > maxDurationSeconds && estimatedOutputTokens > (maxOutputTokens / 2) {
-                throw JarvisModelError.runtimeFailure("Generation stopped because the device is under sustained inference load.")
+            if CFAbsoluteTimeGetCurrent() - startedAt > softStopDurationSeconds && estimatedOutputTokens > (maxOutputTokens / 2) {
+                throw GuardStop.thermalGuard
             }
 
-            if Self.hasRepetitionLoop(in: normalizedTail, unitLimit: repetitionWindowCharacters, threshold: repetitionThreshold) {
-                throw JarvisModelError.runtimeFailure("Generation stopped because the model entered a repetition loop.")
+            if JarvisRuntimeMemoryPressureLevel.current(availableMemoryBytes: availableMemoryBytesProvider()) == .critical {
+                throw GuardStop.memoryGuard
+            }
+
+            if JarvisRuntimeHeuristics.repeatedSuffixDetected(
+                in: normalizedTail,
+                windowCharacters: repetitionWindowCharacters,
+                threshold: repetitionThreshold
+            ) || JarvisRuntimeHeuristics.repeatedPhraseDetected(
+                in: normalizedTail,
+                threshold: repetitionThreshold
+            ) {
+                throw GuardStop.repetitionGuard
             }
         }
 
@@ -405,57 +806,38 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
                 .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
+    }
 
-        private static func hasRepetitionLoop(in text: String, unitLimit: Int, threshold: Int) -> Bool {
-            let characters = Array(text)
-            let maxUnit = min(unitLimit, max(24, characters.count / threshold))
-            guard maxUnit >= 24 else { return false }
-
-            for unitLength in stride(from: maxUnit, through: 24, by: -8) {
-                guard characters.count >= unitLength * threshold else { continue }
-                let repeatedUnit = Array(characters.suffix(unitLength))
-                var matches = 1
-                var offset = unitLength * 2
-
-                while offset <= characters.count, matches < threshold {
-                    let start = characters.count - offset
-                    let end = start + unitLength
-                    guard start >= 0 else { break }
-                    let priorUnit = Array(characters[start..<end])
-                    if priorUnit == repeatedUnit {
-                        matches += 1
-                        offset += unitLength
-                    } else {
-                        break
-                    }
-                }
-
-                if matches >= threshold {
-                    return true
-                }
-            }
-
-            return false
-        }
+    private enum GuardStop: Error {
+        case outputCap
+        case repetitionGuard
+        case thermalGuard
+        case memoryGuard
     }
 
     private struct LoadAttempt: Equatable {
         let context: Int
         let threads: Int
+        let batchThreads: Int
         let batch: Int
+        let microBatch: Int
+        let gpuLayerCount: Int
+        let preferGPU: Bool
+        let offloadKQV: Bool
+        let offloadOperations: Bool
+        let flashAttentionEnabled: Bool
+    }
 
-        var parameter: LlamaClient.Parameter {
-            LlamaClient.Parameter(
-                context: context,
-                numberOfThreads: threads,
-                batch: batch,
-                temperature: 0.7,
-                topK: 40,
-                topP: 0.9,
-                penaltyLastN: 64,
-                penaltyRepeat: 1.1
-            )
-        }
+    private struct LoadedSessionProfile: Equatable {
+        let context: Int
+        let threads: Int
+        let batchThreads: Int
+        let batch: Int
+        let microBatch: Int
+        let gpuLayerCount: Int
+        let gpuOffloadEnabled: Bool
+        let flashAttentionEnabled: Bool
+        let estimatedKVCacheBytes: UInt64
     }
 
     private let lock = NSLock()
@@ -465,6 +847,8 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
     private var cancelRequested = false
     private var configuration = JarvisRuntimeConfiguration()
     private var requestTuning: JarvisGenerationTuning?
+    private var loadedContextLimit: Int?
+    private var loadedSessionProfile: LoadedSessionProfile?
 
     public init() {}
 
@@ -508,6 +892,13 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
             throw JarvisModelError.unavailable("Model file appears to be empty (0 bytes).")
         }
 
+        let availableMemoryBytes = JarvisRuntimeHeuristics.availableMemoryBytes()
+        if JarvisRuntimeMemoryPressureLevel.current(availableMemoryBytes: availableMemoryBytes) == .critical {
+            throw JarvisModelError.runtimeFailure(
+                "Available memory is too low to warm the model safely. Unload the current model or retry after closing other apps."
+            )
+        }
+
         let currentPath = withLock { loadedModelPath }
         let currentProjectorPath = withLock { loadedProjectorPath }
         let currentSession = withLock { session }
@@ -523,14 +914,20 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         let fileURL = URL(fileURLWithPath: path)
         let projectorURL = projectorPath.map { URL(fileURLWithPath: $0) }
         let config = withLock { configuration }
-        let attempts = loadAttempts(using: config, fileSizeBytes: fileSize, filename: fileURL.lastPathComponent)
+        let attempts = loadAttempts(
+            using: config,
+            fileSizeBytes: fileSize,
+            filename: fileURL.lastPathComponent,
+            availableMemoryBytes: availableMemoryBytes
+        )
 
         var failureMessages: [String] = []
         for (index, attempt) in attempts.enumerated() {
             let parameter = parameter(for: attempt, configuration: config, tuning: withLock { requestTuning })
             print(
                 "[JarvisRuntime] Load attempt \(index + 1)/\(attempts.count) " +
-                "context=\(attempt.context) threads=\(attempt.threads) batch=\(attempt.batch)"
+                "context=\(attempt.context) threads=\(attempt.threads) batch=\(attempt.batch) " +
+                "ubatch=\(attempt.microBatch) gpu_layers=\(attempt.gpuLayerCount) flash=\(attempt.flashAttentionEnabled)"
             )
 
             let model = LLMSession.LocalModel.llama(
@@ -546,6 +943,21 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
                     session = newSession
                     loadedModelPath = path
                     loadedProjectorPath = projectorPath
+                    loadedContextLimit = attempt.context
+                    loadedSessionProfile = LoadedSessionProfile(
+                        context: attempt.context,
+                        threads: attempt.threads,
+                        batchThreads: attempt.batchThreads,
+                        batch: attempt.batch,
+                        microBatch: attempt.microBatch,
+                        gpuLayerCount: attempt.gpuLayerCount,
+                        gpuOffloadEnabled: attempt.preferGPU && attempt.gpuLayerCount > 0,
+                        flashAttentionEnabled: attempt.flashAttentionEnabled,
+                        estimatedKVCacheBytes: JarvisRuntimeHeuristics.estimatedKVCacheBytes(
+                            contextTokens: attempt.context,
+                            fileSizeBytes: fileSize
+                        )
+                    )
                     cancelRequested = false
                 }
                 print("[JarvisRuntime] Model loaded successfully: \(path)")
@@ -554,7 +966,7 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
                 let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
                 let normalizedMessage = message.isEmpty ? "Unknown runtime error." : message
                 failureMessages.append(
-                    "Attempt \(index + 1): ctx \(attempt.context), threads \(attempt.threads), batch \(attempt.batch) -> \(normalizedMessage)"
+                    "Attempt \(index + 1): ctx \(attempt.context), threads \(attempt.threads), batch \(attempt.batch), ubatch \(attempt.microBatch), gpu \(attempt.gpuLayerCount) -> \(normalizedMessage)"
                 )
                 print("[JarvisRuntime] Load attempt \(index + 1) failed: \(normalizedMessage)")
             }
@@ -573,6 +985,8 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
             session = nil
             loadedModelPath = nil
             loadedProjectorPath = nil
+            loadedContextLimit = nil
+            loadedSessionProfile = nil
             cancelRequested = false
         }
     }
@@ -580,7 +994,7 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
     public func generate(
         request: JarvisAssistantRequest,
         onToken: @escaping @Sendable (String) -> Void
-    ) async throws {
+    ) async throws -> JarvisRuntimeGenerationOutcome {
         guard let session = withLock({ session }) else {
             throw JarvisModelError.unavailable("Model is not loaded. Warm the active model and try again.")
         }
@@ -592,19 +1006,63 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         let config = withLock { configuration }
         let modelPath = withLock { loadedModelPath } ?? ""
         let fileSizeBytes = (try? FileManager.default.attributesOfItem(atPath: modelPath)[.size] as? Int64) ?? 0
+        let availableMemoryBytesAtStart = JarvisRuntimeHeuristics.availableMemoryBytes()
+        let memoryPressure = JarvisRuntimeMemoryPressureLevel.current(availableMemoryBytes: availableMemoryBytesAtStart)
+        if config.memorySafetyGuardsEnabled && memoryPressure == .critical {
+            throw JarvisModelError.runtimeFailure(
+                "Available memory is too low to generate safely. Unload the model or retry after freeing memory."
+            )
+        }
+        if config.thermalProtectionEnabled && ProcessInfo.processInfo.thermalState == .critical {
+            throw JarvisModelError.runtimeFailure(
+                "Device thermal state is critical. Let the phone cool before generating again."
+            )
+        }
         let policy = runtimePolicy(
             using: config,
             fileSizeBytes: fileSizeBytes,
             filename: URL(fileURLWithPath: modelPath).lastPathComponent,
-            tuning: request.tuning
+            tuning: request.tuning,
+            prompt: request.prompt,
+            availableMemoryBytes: availableMemoryBytesAtStart
         )
-        session.messages = mappedMessages(for: request, configuration: config)
+        let mappedPromptMessages = mappedMessages(for: request, configuration: config)
+        session.messages = mappedPromptMessages
+        let blueprint = request.promptBlueprint
+        let blueprintCharacters =
+            blueprint.systemInstruction.count +
+            blueprint.assistantRole.count +
+            blueprint.taskTypeInstruction.count +
+            blueprint.responseInstruction.count
+        let contextBlockCharacters = blueprint.contextBlocks.reduce(0) { partialResult, block in
+            partialResult + block.title.count + block.content.count
+        }
+        let historyCharacters = request.history.reduce(0) { partialResult, message in
+            partialResult + message.text.count
+        }
+        let groundingCharacters = request.groundedResults.reduce(0) { partialResult, result in
+            partialResult + result.item.title.count + result.snippet.count
+        }
+        let replyCharacters = request.replyTargetText?.count ?? 0
+        let promptCharacterEstimate =
+            request.prompt.count +
+            blueprintCharacters +
+            contextBlockCharacters +
+            historyCharacters +
+            groundingCharacters +
+            replyCharacters
+        let promptTokenEstimate = max(1, Int((Double(promptCharacterEstimate) / 4.0).rounded(.up)))
+        let requestedContextLimit = request.tuning.maxContextTokens > 0
+            ? request.tuning.maxContextTokens
+            : (config.contextWindow.explicitContextSize ?? policy.contextSize)
         var guardrail = GenerationGuard(
             maxOutputTokens: policy.maxOutputTokens,
-            maxDurationSeconds: policy.shouldUseMemorySafeFallback ? 14 : 24,
+            softStopDurationSeconds: policy.softStopDurationSeconds,
             repetitionWindowCharacters: request.tuning.repetitionWindowCharacters,
-            repetitionThreshold: request.tuning.repetitionThreshold
+            repetitionThreshold: request.tuning.repetitionThreshold,
+            availableMemoryBytesProvider: JarvisRuntimeHeuristics.availableMemoryBytes
         )
+        var stopReason: JarvisRuntimeGenerationStopReason = .normal
 
         do {
             let stream = session.streamResponse(to: request.prompt)
@@ -614,18 +1072,59 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
                     throw JarvisModelError.cancelled
                 }
                 if config.memorySafetyGuardsEnabled {
-                    try guardrail.ingest(chunk)
+                    do {
+                        try guardrail.ingest(chunk)
+                    } catch let stop as GuardStop {
+                        stopReason = mappedStopReason(for: stop)
+                        break
+                    }
+                }
+                if stopReason != .normal {
+                    break
                 }
                 onToken(chunk)
             }
 
-            if withLock({ cancelRequested }) {
+            if stopReason == .normal, withLock({ cancelRequested }) {
                 throw JarvisModelError.cancelled
             }
+            return JarvisRuntimeGenerationOutcome(
+                stopReason: stopReason,
+                requestedContextTokenLimit: requestedContextLimit,
+                effectiveContextTokenLimit: policy.contextSize,
+                effectiveOutputTokenLimit: policy.maxOutputTokens,
+                promptTokenEstimate: promptTokenEstimate,
+                availableMemoryBytesAtStart: availableMemoryBytesAtStart,
+                memoryFallbackTriggered: policy.memoryFallbackTriggered,
+                thermalFallbackTriggered: policy.thermalFallbackTriggered,
+                speculativeDecodingRequested: policy.speculativeDecodingRequested,
+                speculativeDecodingEligible: policy.speculativeDecodingEligible,
+                gpuOffloadEnabled: policy.gpuOffloadEnabled,
+                requestedGPULayerCount: policy.gpuLayerCount,
+                flashAttentionEnabled: policy.flashAttentionEnabled,
+                estimatedKVCacheBytes: policy.estimatedKVCacheBytes
+            )
         } catch is CancellationError {
             throw JarvisModelError.cancelled
         } catch let modelError as JarvisModelError {
             throw modelError
+        } catch let stop as GuardStop {
+            return JarvisRuntimeGenerationOutcome(
+                stopReason: mappedStopReason(for: stop),
+                requestedContextTokenLimit: requestedContextLimit,
+                effectiveContextTokenLimit: policy.contextSize,
+                effectiveOutputTokenLimit: policy.maxOutputTokens,
+                promptTokenEstimate: promptTokenEstimate,
+                availableMemoryBytesAtStart: availableMemoryBytesAtStart,
+                memoryFallbackTriggered: policy.memoryFallbackTriggered,
+                thermalFallbackTriggered: policy.thermalFallbackTriggered,
+                speculativeDecodingRequested: policy.speculativeDecodingRequested,
+                speculativeDecodingEligible: policy.speculativeDecodingEligible,
+                gpuOffloadEnabled: policy.gpuOffloadEnabled,
+                requestedGPULayerCount: policy.gpuLayerCount,
+                flashAttentionEnabled: policy.flashAttentionEnabled,
+                estimatedKVCacheBytes: policy.estimatedKVCacheBytes
+            )
         } catch {
             let errorMessage = error.localizedDescription.lowercased()
             if errorMessage.contains("memory") || errorMessage.contains("allocation") {
@@ -648,32 +1147,45 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         using configuration: JarvisRuntimeConfiguration,
         fileSizeBytes: Int64,
         filename: String,
-        tuning: JarvisGenerationTuning?
+        tuning: JarvisGenerationTuning?,
+        availableMemoryBytes: UInt64?
     ) -> LoadAttempt {
         let policy = runtimePolicy(
             using: configuration,
             fileSizeBytes: fileSizeBytes,
             filename: filename,
-            tuning: tuning
+            tuning: tuning,
+            prompt: "",
+            availableMemoryBytes: availableMemoryBytes,
+            enforceLoadedContextLimit: false
         )
 
         return LoadAttempt(
             context: policy.contextSize,
             threads: policy.threadCount,
-            batch: policy.batchSize
+            batchThreads: policy.batchThreadCount,
+            batch: policy.batchSize,
+            microBatch: policy.microBatchSize,
+            gpuLayerCount: policy.gpuLayerCount,
+            preferGPU: policy.gpuOffloadEnabled,
+            offloadKQV: policy.gpuOffloadEnabled,
+            offloadOperations: policy.gpuOffloadEnabled,
+            flashAttentionEnabled: policy.flashAttentionEnabled
         )
     }
 
     private func loadAttempts(
         using configuration: JarvisRuntimeConfiguration,
         fileSizeBytes: Int64,
-        filename: String
+        filename: String,
+        availableMemoryBytes: UInt64?
     ) -> [LoadAttempt] {
         let base = deviceAwareParameters(
             using: configuration,
             fileSizeBytes: fileSizeBytes,
             filename: filename,
-            tuning: withLock { requestTuning }
+            tuning: withLock { requestTuning },
+            availableMemoryBytes: availableMemoryBytes
         )
 
         let candidates = [
@@ -681,14 +1193,39 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
             LoadAttempt(
                 context: min(base.context, 768),
                 threads: min(base.threads, 3),
-                batch: min(base.batch, 16)
+                batchThreads: min(base.batchThreads, 2),
+                batch: min(base.batch, 16),
+                microBatch: min(base.microBatch, 8),
+                gpuLayerCount: min(base.gpuLayerCount, max(16, base.gpuLayerCount / 2)),
+                preferGPU: base.preferGPU && base.gpuLayerCount > 0,
+                offloadKQV: base.preferGPU && base.gpuLayerCount > 0,
+                offloadOperations: base.preferGPU && base.gpuLayerCount > 0,
+                flashAttentionEnabled: false
             ),
             LoadAttempt(
                 context: min(base.context, 512),
                 threads: min(base.threads, 2),
-                batch: min(base.batch, 8)
+                batchThreads: 1,
+                batch: min(base.batch, 8),
+                microBatch: min(base.microBatch, 4),
+                gpuLayerCount: min(base.gpuLayerCount, max(8, base.gpuLayerCount / 4)),
+                preferGPU: base.preferGPU && base.gpuLayerCount > 0,
+                offloadKQV: base.preferGPU && base.gpuLayerCount > 0,
+                offloadOperations: base.preferGPU && base.gpuLayerCount > 0,
+                flashAttentionEnabled: false
             ),
-            LoadAttempt(context: 384, threads: 1, batch: 4)
+            LoadAttempt(
+                context: 384,
+                threads: 1,
+                batchThreads: 1,
+                batch: 4,
+                microBatch: 4,
+                gpuLayerCount: 0,
+                preferGPU: false,
+                offloadKQV: false,
+                offloadOperations: false,
+                flashAttentionEnabled: false
+            )
         ]
 
         var uniqueAttempts: [LoadAttempt] = []
@@ -704,118 +1241,192 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         using configuration: JarvisRuntimeConfiguration,
         fileSizeBytes: Int64,
         filename: String,
-        tuning: JarvisGenerationTuning?
+        tuning: JarvisGenerationTuning?,
+        prompt: String,
+        availableMemoryBytes: UInt64? = JarvisRuntimeHeuristics.availableMemoryBytes(),
+        enforceLoadedContextLimit: Bool = true
     ) -> RuntimePolicy {
         let processorCount = ProcessInfo.processInfo.activeProcessorCount
         let thermalState = ProcessInfo.processInfo.thermalState
-        let lowerFilename = filename.lowercased()
         let deviceTier = configuration.adaptiveDeviceTieringEnabled ? JarvisRuntimeDeviceTier.current() : .baseline
-        let isGemma3Family = lowerFilename.contains("gemma") && lowerFilename.contains("3")
-        let isLargeModel = fileSizeBytes >= 2_000_000_000
+        let memoryPressure = JarvisRuntimeMemoryPressureLevel.current(availableMemoryBytes: availableMemoryBytes)
 
         let baseContext: Int
-        switch deviceTier {
-        case .constrained:
-            baseContext = 768
-        case .baseline:
-            baseContext = 1024
-        case .high:
-            baseContext = 1536
-        }
-
         let kvBudgetMB: Int
+        let baseThreads: Int
+        let baseBatch: Int
         switch deviceTier {
         case .constrained:
-            kvBudgetMB = 560
+            kvBudgetMB = 768
+            switch configuration.performanceProfile {
+            case .efficient:
+                baseContext = 512
+                baseThreads = 1
+                baseBatch = 4
+            case .balanced:
+                baseContext = 576
+                baseThreads = min(2, max(1, processorCount / 2))
+                baseBatch = 6
+            case .quality:
+                baseContext = 640
+                baseThreads = min(2, max(1, processorCount / 2))
+                baseBatch = 8
+            }
         case .baseline:
-            kvBudgetMB = 896
-        case .high:
-            kvBudgetMB = 1_280
+            kvBudgetMB = 1_200
+            switch configuration.performanceProfile {
+            case .efficient:
+                baseContext = 768
+                baseThreads = min(2, max(1, processorCount / 2))
+                baseBatch = 8
+            case .balanced:
+                baseContext = 896
+                baseThreads = min(3, max(2, processorCount / 2))
+                baseBatch = 12
+            case .quality:
+                baseContext = 1_024
+                baseThreads = min(3, max(2, processorCount / 2))
+                baseBatch = 16
+            }
+        case .highMemory:
+            kvBudgetMB = 2_000
+            switch configuration.performanceProfile {
+            case .efficient:
+                baseContext = 1_024
+                baseThreads = min(3, max(2, processorCount / 2))
+                baseBatch = 16
+            case .balanced:
+                baseContext = 1_280
+                baseThreads = min(4, max(2, processorCount / 2))
+                baseBatch = 20
+            case .quality:
+                baseContext = 1_536
+                baseThreads = min(5, max(3, (processorCount / 2) + 1))
+                baseBatch = 24
+            }
         }
 
-        var contextSize = configuration.contextWindow.explicitContextSize ?? baseContext
-        contextSize = min(contextSize, tuning?.maxContextTokens ?? contextSize)
-        contextSize = min(contextSize, maxContextFromKVEstimate(fileSizeBytes: fileSizeBytes, kvBudgetMB: kvBudgetMB))
-        if isLargeModel {
-            contextSize = min(contextSize, deviceTier == .high ? 1_280 : 896)
+        let requestedContextLimit = tuning?.maxContextTokens ?? configuration.contextWindow.explicitContextSize ?? baseContext
+        var contextSize = min(
+            requestedContextLimit,
+            baseContext,
+            JarvisRuntimeHeuristics.maxContextTokens(fileSizeBytes: fileSizeBytes, kvBudgetMB: kvBudgetMB)
+        )
+
+        let loadedProfile = withLock { self.loadedSessionProfile }
+        if enforceLoadedContextLimit, let loadedProfile {
+            contextSize = min(contextSize, loadedProfile.context)
         }
-        if isGemma3Family {
-            contextSize = min(contextSize, deviceTier == .high ? 1_024 : 768)
-        }
+
+        var threadCount = max(1, baseThreads)
+        var batchSize = max(4, min(baseBatch, max(4, contextSize / 12)))
+        var batchThreadCount = JarvisRuntimeHeuristics.batchThreadCount(
+            generationThreads: threadCount,
+            deviceTier: deviceTier,
+            thermalState: thermalState
+        )
+        var maxOutputTokens = tuning?.maxOutputTokens ?? 220
+        let defaultGreetingCap = JarvisRuntimeHeuristics.isGreetingLikePrompt(prompt) ? 40 : maxOutputTokens
+        maxOutputTokens = min(maxOutputTokens, defaultGreetingCap)
+        var gpuLayerCount = JarvisRuntimeHeuristics.gpuLayerTarget(
+            for: deviceTier,
+            performanceProfile: configuration.performanceProfile,
+            memoryPressure: memoryPressure,
+            batterySaverMode: configuration.batterySaverMode,
+            thermalState: thermalState
+        )
+        var flashAttentionEnabled = JarvisRuntimeHeuristics.shouldEnableFlashAttention(
+            for: deviceTier,
+            performanceProfile: configuration.performanceProfile,
+            memoryPressure: memoryPressure,
+            batterySaverMode: configuration.batterySaverMode,
+            thermalState: thermalState
+        )
+
+        var memoryFallbackTriggered = false
+        var thermalFallbackTriggered = false
+
         if configuration.batterySaverMode {
             contextSize = min(contextSize, 640)
+            batchSize = min(batchSize, 8)
+            maxOutputTokens = min(maxOutputTokens, 180)
+            gpuLayerCount = min(gpuLayerCount, deviceTier == .constrained ? 8 : 24)
+            flashAttentionEnabled = false
+            memoryFallbackTriggered = true
         }
+
+        if configuration.memorySafetyGuardsEnabled && memoryPressure == .reduced {
+            contextSize = min(contextSize, 512)
+            batchSize = min(batchSize, 8)
+            maxOutputTokens = Int(Double(maxOutputTokens) * 0.75)
+            gpuLayerCount = min(gpuLayerCount, deviceTier == .constrained ? 8 : 24)
+            flashAttentionEnabled = false
+            memoryFallbackTriggered = true
+        }
+
         if configuration.thermalProtectionEnabled && thermalState == .serious {
             contextSize = min(contextSize, 512)
-        }
-        contextSize = max(384, contextSize)
-
-        let desiredThreads: Int
-        switch configuration.performanceProfile {
-        case .efficient:
-            desiredThreads = 1
-        case .balanced:
-            desiredThreads = deviceTier == .high ? min(4, max(2, processorCount / 2)) : min(3, max(2, processorCount / 2))
-        case .quality:
-            desiredThreads = deviceTier == .high ? min(5, max(3, (processorCount / 2) + 1)) : min(3, max(2, processorCount / 2))
-        }
-
-        let desiredBatch: Int
-        switch configuration.performanceProfile {
-        case .efficient:
-            desiredBatch = deviceTier == .constrained ? 8 : 12
-        case .balanced:
-            desiredBatch = deviceTier == .high ? 24 : 16
-        case .quality:
-            desiredBatch = deviceTier == .high ? 32 : 20
-        }
-
-        let threadCount: Int
-        let batchSize: Int
-        if configuration.thermalProtectionEnabled && thermalState == .serious {
             threadCount = 1
             batchSize = 4
-        } else {
-            threadCount = max(1, desiredThreads)
-            batchSize = max(4, min(desiredBatch, max(4, contextSize / 12)))
-        }
-
-        var maxOutputTokens = tuning?.maxOutputTokens ?? 280
-        if configuration.responseStyle == .concise {
-            maxOutputTokens = min(maxOutputTokens, 220)
-        }
-        if configuration.batterySaverMode {
-            maxOutputTokens = min(maxOutputTokens, 220)
-        }
-        if configuration.thermalProtectionEnabled && thermalState == .serious {
             maxOutputTokens = min(maxOutputTokens, 180)
+            batchThreadCount = 1
+            gpuLayerCount = min(gpuLayerCount, deviceTier == .highMemory ? 40 : 16)
+            flashAttentionEnabled = false
+            thermalFallbackTriggered = true
         }
 
+        var microBatchSize = JarvisRuntimeHeuristics.microBatchSize(
+            for: batchSize,
+            deviceTier: deviceTier,
+            memoryPressure: memoryPressure,
+            thermalState: thermalState
+        )
+        let estimatedKVCacheBytes = JarvisRuntimeHeuristics.estimatedKVCacheBytes(
+            contextTokens: max(384, contextSize),
+            fileSizeBytes: fileSizeBytes
+        )
+        if enforceLoadedContextLimit, let loadedProfile {
+            gpuLayerCount = min(gpuLayerCount, loadedProfile.gpuLayerCount)
+            flashAttentionEnabled = flashAttentionEnabled && loadedProfile.flashAttentionEnabled
+            batchThreadCount = min(batchThreadCount, loadedProfile.batchThreads)
+            batchSize = min(batchSize, loadedProfile.batch)
+            microBatchSize = min(microBatchSize, loadedProfile.microBatch)
+        }
+        let gpuOffloadEnabled = gpuLayerCount > 0
+
+        let softStopDurationSeconds: Double
+        switch deviceTier {
+        case .constrained, .baseline:
+            softStopDurationSeconds = thermalFallbackTriggered ? 12 : 20
+        case .highMemory:
+            softStopDurationSeconds = thermalFallbackTriggered ? 18 : 28
+        }
+
+        let speculativeRequested = configuration.experimentalSpeculativeDecodingEnabled
+        let speculativeEligible = speculativeRequested && deviceTier == .highMemory
+
+        _ = filename
         return RuntimePolicy(
             deviceTier: deviceTier,
-            contextSize: contextSize,
+            memoryPressure: memoryPressure,
+            contextSize: max(384, contextSize),
             threadCount: threadCount,
-            batchSize: batchSize,
+            batchThreadCount: max(1, batchThreadCount),
+            batchSize: max(4, batchSize),
+            microBatchSize: max(4, min(microBatchSize, batchSize)),
             kvBudgetMB: kvBudgetMB,
-            maxOutputTokens: max(120, maxOutputTokens),
-            shouldUseMemorySafeFallback: deviceTier == .constrained || configuration.batterySaverMode || thermalState == .serious
+            estimatedKVCacheBytes: estimatedKVCacheBytes,
+            maxOutputTokens: max(40, maxOutputTokens),
+            softStopDurationSeconds: softStopDurationSeconds,
+            gpuLayerCount: max(0, gpuLayerCount),
+            gpuOffloadEnabled: gpuOffloadEnabled,
+            flashAttentionEnabled: flashAttentionEnabled && gpuOffloadEnabled,
+            availableMemoryBytes: availableMemoryBytes,
+            memoryFallbackTriggered: memoryFallbackTriggered,
+            thermalFallbackTriggered: thermalFallbackTriggered,
+            speculativeDecodingRequested: speculativeRequested,
+            speculativeDecodingEligible: speculativeEligible
         )
-    }
-
-    private func maxContextFromKVEstimate(fileSizeBytes: Int64, kvBudgetMB: Int) -> Int {
-        let kvMBPerToken: Double
-        switch fileSizeBytes {
-        case 3_200_000_000...:
-            kvMBPerToken = 1.0
-        case 2_300_000_000...:
-            kvMBPerToken = 0.72
-        case 1_500_000_000...:
-            kvMBPerToken = 0.48
-        default:
-            kvMBPerToken = 0.32
-        }
-
-        return max(384, Int(Double(kvBudgetMB) / kvMBPerToken))
     }
 
     private func parameter(
@@ -823,7 +1434,17 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         configuration: JarvisRuntimeConfiguration,
         tuning: JarvisGenerationTuning?
     ) -> LlamaClient.Parameter {
-        var parameter = attempt.parameter
+        var parameter = LlamaClient.Parameter()
+        parameter.context = attempt.context
+        parameter.numberOfThreads = attempt.threads
+        parameter.numberOfBatchThreads = attempt.batchThreads
+        parameter.batch = attempt.batch
+        parameter.microBatch = attempt.microBatch
+        parameter.gpuLayerCount = attempt.gpuLayerCount
+        parameter.preferGPU = attempt.preferGPU
+        parameter.offloadKQV = attempt.offloadKQV
+        parameter.offloadOperations = attempt.offloadOperations
+        parameter.flashAttention = attempt.flashAttentionEnabled ? .auto : .disabled
         let effectiveTemperature = tuning?.temperature ?? configuration.temperature
         let clampedTemperature = max(0.12, min(effectiveTemperature, 0.95))
         parameter.temperature = Float(clampedTemperature)
@@ -862,6 +1483,12 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
                 parameter.penaltyLastN = 80
             }
         }
+
+        let effectiveOutputCap = tuning?.maxOutputTokens ?? 220
+        if effectiveOutputCap >= 300 {
+            parameter.penaltyRepeat = max(parameter.penaltyRepeat, 1.12)
+            parameter.penaltyLastN = max(parameter.penaltyLastN, 96)
+        }
         parameter.options = .init(verbose: false, disableAutoPause: false)
         return parameter
     }
@@ -890,6 +1517,11 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
             blueprint.assistantRole.isEmpty ? "Act like a capable private iPhone assistant." : blueprint.assistantRole,
             blueprint.taskTypeInstruction.isEmpty ? fallbackTaskInstruction : blueprint.taskTypeInstruction,
             blueprint.responseInstruction.isEmpty ? responseStyleInstruction(for: resolvedResponseStyle) : blueprint.responseInstruction,
+            request.tuning.usesReasoningPlan &&
+                !(blueprint.taskTypeInstruction.contains(Self.hiddenPlanningInstruction) ||
+                  fallbackTaskInstruction.contains(Self.hiddenPlanningInstruction))
+                ? Self.hiddenPlanningInstruction
+                : nil,
             request.tuning.requiresGroundedAnswers
                 ? "Answer with high confidence only where supported by the prompt or local context. If something is uncertain, say so briefly instead of filling gaps."
                 : nil
@@ -920,9 +1552,13 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
             }
         }
 
+        let normalizedCurrentPrompt = request.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         for item in request.history {
             let text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
+            if item.role == .user, text == normalizedCurrentPrompt {
+                continue
+            }
 
             switch item.role {
             case .system:
@@ -1001,10 +1637,34 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         }
     }
 
+    func loadDiagnosticsSelection() -> (gpuOffloadEnabled: Bool, gpuLayerCount: Int, flashAttentionEnabled: Bool)? {
+        withLock {
+            guard let loadedSessionProfile else { return nil }
+            return (
+                gpuOffloadEnabled: loadedSessionProfile.gpuOffloadEnabled,
+                gpuLayerCount: loadedSessionProfile.gpuLayerCount,
+                flashAttentionEnabled: loadedSessionProfile.flashAttentionEnabled
+            )
+        }
+    }
+
     private func withLock<T>(_ body: () -> T) -> T {
         lock.lock()
         defer { lock.unlock() }
         return body()
+    }
+
+    private func mappedStopReason(for guardStop: GuardStop) -> JarvisRuntimeGenerationStopReason {
+        switch guardStop {
+        case .outputCap:
+            return .outputCap
+        case .repetitionGuard:
+            return .repetitionGuard
+        case .thermalGuard:
+            return .thermalGuard
+        case .memoryGuard:
+            return .memoryGuard
+        }
     }
 }
 #endif
@@ -1233,6 +1893,20 @@ public final class JarvisLocalModelRuntime: ObservableObject {
             throw JarvisModelError.runtimeFailure(message)
         }
 
+        let availableMemoryBytes = JarvisRuntimeHeuristics.availableMemoryBytes()
+        if configuration.memorySafetyGuardsEnabled,
+           JarvisRuntimeMemoryPressureLevel.current(availableMemoryBytes: availableMemoryBytes) == .critical {
+            let message = "Available memory is too low to warm the model safely."
+            state = .paused(modelName: model.displayName, detail: message)
+            fileAccessState = restingFileAccessState(for: model)
+            lastFailure = runtimeFailure(
+                kind: .warmupFailed,
+                message: message,
+                suggestion: "Unload the active model or close other apps, then retry warmup."
+            )
+            throw JarvisModelError.runtimeFailure("\(message) Unload and retry.")
+        }
+
         do {
             let resources: JarvisRuntimeResolvedModelResources
             if let loadedResources, loadedModelID == model.id {
@@ -1280,6 +1954,11 @@ public final class JarvisLocalModelRuntime: ObservableObject {
             try await engine.loadModel(
                 at: resources.modelURL.path,
                 projectorPath: resources.projectorURL?.path
+            )
+            lastLoadDiagnostics = makeLoadDiagnostics(
+                modelName: model.displayName,
+                modelURL: resources.modelURL,
+                projectorURL: resources.projectorURL
             )
             state = .warming(modelName: model.displayName, progress: 0.82, detail: "Finishing warm-up")
             try await Task.sleep(nanoseconds: 80_000_000)
@@ -1332,11 +2011,15 @@ public final class JarvisLocalModelRuntime: ObservableObject {
                     let modelName = self.selectedModel?.displayName ?? "model"
                     self.state = .busy(modelName: modelName, detail: "Generating response")
                     self.lastFailure = nil
-                    try await self.engine.generate(request: request) { token in
+                    let outcome = try await self.engine.generate(request: request) { token in
                         metrics.recordToken(token, startedAt: startedAt)
                         continuation.yield(token)
                     }
                     let snapshot = metrics.snapshot()
+                    let generationDuration = CFAbsoluteTimeGetCurrent() - startedAt
+                    let tokensPerSecond = generationDuration > 0
+                        ? Double(snapshot.2) / generationDuration
+                        : 0
                     self.lastGenerationDiagnostics = JarvisRuntimeGenerationDiagnostics(
                         preset: request.tuning.preset.rawValue,
                         taskCategory: request.classification.category.rawValue,
@@ -1346,10 +2029,23 @@ public final class JarvisLocalModelRuntime: ObservableObject {
                         groundedResultCount: request.groundedResults.count,
                         outputCharacterCount: snapshot.1,
                         estimatedOutputTokens: snapshot.2,
+                        totalEstimatedTokens: snapshot.2 + outcome.promptTokenEstimate,
+                        promptTokenEstimate: outcome.promptTokenEstimate,
+                        tokensPerSecond: tokensPerSecond,
                         timeToFirstTokenSeconds: snapshot.0,
-                        generationDurationSeconds: CFAbsoluteTimeGetCurrent() - startedAt,
+                        generationDurationSeconds: generationDuration,
                         thermalState: ProcessInfo.processInfo.thermalState,
-                        usedMemorySafeFallback: self.shouldUseMemorySafeFallback(for: request)
+                        usedMemorySafeFallback: outcome.memoryFallbackTriggered || outcome.thermalFallbackTriggered,
+                        memoryFallbackTriggered: outcome.memoryFallbackTriggered,
+                        thermalFallbackTriggered: outcome.thermalFallbackTriggered,
+                        stopReason: outcome.stopReason,
+                        availableMemoryBytesAtStart: outcome.availableMemoryBytesAtStart,
+                        effectiveContextTokenLimit: outcome.effectiveContextTokenLimit,
+                        effectiveOutputTokenLimit: outcome.effectiveOutputTokenLimit,
+                        gpuOffloadEnabled: outcome.gpuOffloadEnabled,
+                        requestedGPULayerCount: outcome.requestedGPULayerCount,
+                        flashAttentionEnabled: outcome.flashAttentionEnabled,
+                        estimatedKVCacheBytes: outcome.estimatedKVCacheBytes
                     )
                     self.state = .ready(modelName: modelName)
                     if let selectedModel = self.selectedModel {
@@ -1390,17 +2086,6 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         engine.cancelGeneration()
         activeGenerationTask?.cancel()
         restoreIdleState()
-    }
-
-    private func shouldUseMemorySafeFallback(for request: JarvisAssistantRequest) -> Bool {
-        let thermalState = ProcessInfo.processInfo.thermalState
-        let runtimeConfiguration = self.configuration
-        let deviceTier = runtimeConfiguration.adaptiveDeviceTieringEnabled ? JarvisRuntimeDeviceTier.current() : .baseline
-        return runtimeConfiguration.batterySaverMode ||
-            (runtimeConfiguration.thermalProtectionEnabled && thermalState == .serious) ||
-            deviceTier == .constrained ||
-            request.tuning.maxContextTokens <= 640 ||
-            request.tuning.maxOutputTokens <= 220
     }
 
     public func pauseForBackground() {
@@ -1581,6 +2266,24 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: modelURL.path)[.size] as? Int64) ?? 0
         let normalizedPath = modelURL.standardizedFileURL.path
         let documentsRoot = (FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.path ?? "")
+        let availableMemoryBytes = JarvisRuntimeHeuristics.availableMemoryBytes()
+        let deviceTier = configuration.adaptiveDeviceTieringEnabled ? JarvisRuntimeDeviceTier.current() : .baseline
+        let memoryPressure = JarvisRuntimeMemoryPressureLevel.current(availableMemoryBytes: availableMemoryBytes)
+        let predictedGPULayerCount = JarvisRuntimeHeuristics.gpuLayerTarget(
+            for: deviceTier,
+            performanceProfile: configuration.performanceProfile,
+            memoryPressure: memoryPressure,
+            batterySaverMode: configuration.batterySaverMode,
+            thermalState: ProcessInfo.processInfo.thermalState
+        )
+        let predictedFlashAttentionEnabled = JarvisRuntimeHeuristics.shouldEnableFlashAttention(
+            for: deviceTier,
+            performanceProfile: configuration.performanceProfile,
+            memoryPressure: memoryPressure,
+            batterySaverMode: configuration.batterySaverMode,
+            thermalState: ProcessInfo.processInfo.thermalState
+        )
+        let loadedSelection = (engine as? JarvisLocalLLMClientEngine)?.loadDiagnosticsSelection()
         return JarvisRuntimeLoadDiagnostics(
             modelName: modelName,
             modelPath: normalizedPath,
@@ -1595,7 +2298,14 @@ public final class JarvisLocalModelRuntime: ObservableObject {
                 false
                 #endif
             }(),
-            projectorPath: projectorURL?.standardizedFileURL.path
+            projectorPath: projectorURL?.standardizedFileURL.path,
+            availableMemoryBytesAtLoad: availableMemoryBytes,
+            prefersMemoryMapping: true,
+            effectiveMemoryMappingKnown: false,
+            memoryMappingNote: "Jarvis requests mmap-preferred GGUF loading, but LocalLLMClient does not currently expose whether it fell back to heap-backed loading.",
+            requestedGPUOffload: loadedSelection?.gpuOffloadEnabled ?? (predictedGPULayerCount > 0),
+            requestedGPULayerCount: loadedSelection?.gpuLayerCount ?? predictedGPULayerCount,
+            flashAttentionRequested: loadedSelection?.flashAttentionEnabled ?? predictedFlashAttentionEnabled
         )
     }
 }

@@ -137,6 +137,41 @@ public enum JarvisAssistantResponseStyle: String, Codable, CaseIterable, Identif
     }
 }
 
+public enum JarvisAssistantQualityMode: String, Codable, CaseIterable, Identifiable, Sendable {
+    case compact
+    case balanced
+    case highQuality
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .compact:
+            return "Compact"
+        case .balanced:
+            return "Balanced"
+        case .highQuality:
+            return "High Quality"
+        }
+    }
+}
+
+public enum JarvisAssistantPromptMode: String, Codable, CaseIterable, Identifiable, Sendable {
+    case safe
+    case advanced
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .safe:
+            return "Safe"
+        case .advanced:
+            return "Advanced"
+        }
+    }
+}
+
 public struct JarvisRuntimeConfiguration: Equatable, Codable, Sendable {
     public var performanceProfile: JarvisRuntimePerformanceProfile
     public var contextWindow: JarvisContextWindowPreset
@@ -146,6 +181,7 @@ public struct JarvisRuntimeConfiguration: Equatable, Codable, Sendable {
     public var memorySafetyGuardsEnabled: Bool
     public var thermalProtectionEnabled: Bool
     public var adaptiveDeviceTieringEnabled: Bool
+    public var experimentalSpeculativeDecodingEnabled: Bool
 
     public init(
         performanceProfile: JarvisRuntimePerformanceProfile = .balanced,
@@ -155,7 +191,8 @@ public struct JarvisRuntimeConfiguration: Equatable, Codable, Sendable {
         batterySaverMode: Bool = false,
         memorySafetyGuardsEnabled: Bool = true,
         thermalProtectionEnabled: Bool = true,
-        adaptiveDeviceTieringEnabled: Bool = true
+        adaptiveDeviceTieringEnabled: Bool = true,
+        experimentalSpeculativeDecodingEnabled: Bool = false
     ) {
         self.performanceProfile = performanceProfile
         self.contextWindow = contextWindow
@@ -165,6 +202,7 @@ public struct JarvisRuntimeConfiguration: Equatable, Codable, Sendable {
         self.memorySafetyGuardsEnabled = memorySafetyGuardsEnabled
         self.thermalProtectionEnabled = thermalProtectionEnabled
         self.adaptiveDeviceTieringEnabled = adaptiveDeviceTieringEnabled
+        self.experimentalSpeculativeDecodingEnabled = experimentalSpeculativeDecodingEnabled
     }
 }
 
@@ -173,6 +211,9 @@ public struct JarvisAssistantSettings: Codable, Equatable {
     public var preferredModelProfile: JarvisSupportedModelProfileID
     public var autoWarmOnLaunch: Bool
     public var autoWarmOnFirstSend: Bool
+    public var assistantQualityMode: JarvisAssistantQualityMode
+    public var promptMode: JarvisAssistantPromptMode
+    public var memoryEnabled: Bool
     public var performanceProfile: JarvisRuntimePerformanceProfile
     public var contextWindow: JarvisContextWindowPreset
     public var responseStyle: JarvisAssistantResponseStyle
@@ -191,6 +232,9 @@ public struct JarvisAssistantSettings: Codable, Equatable {
         preferredModelProfile: JarvisSupportedModelProfileID = .gemma3_4b_it_q4_0,
         autoWarmOnLaunch: Bool = false,
         autoWarmOnFirstSend: Bool = true,
+        assistantQualityMode: JarvisAssistantQualityMode = .balanced,
+        promptMode: JarvisAssistantPromptMode = .safe,
+        memoryEnabled: Bool = true,
         performanceProfile: JarvisRuntimePerformanceProfile = .balanced,
         contextWindow: JarvisContextWindowPreset = .automatic,
         responseStyle: JarvisAssistantResponseStyle = .balanced,
@@ -208,6 +252,9 @@ public struct JarvisAssistantSettings: Codable, Equatable {
         self.preferredModelProfile = preferredModelProfile
         self.autoWarmOnLaunch = autoWarmOnLaunch
         self.autoWarmOnFirstSend = autoWarmOnFirstSend
+        self.assistantQualityMode = assistantQualityMode
+        self.promptMode = promptMode
+        self.memoryEnabled = memoryEnabled
         self.performanceProfile = performanceProfile
         self.contextWindow = contextWindow
         self.responseStyle = responseStyle
@@ -227,6 +274,9 @@ public struct JarvisAssistantSettings: Codable, Equatable {
         case preferredModelProfile
         case autoWarmOnLaunch
         case autoWarmOnFirstSend
+        case assistantQualityMode
+        case promptMode
+        case memoryEnabled
         case performanceProfile
         case contextWindow
         case responseStyle
@@ -247,6 +297,9 @@ public struct JarvisAssistantSettings: Codable, Equatable {
         preferredModelProfile = try container.decodeIfPresent(JarvisSupportedModelProfileID.self, forKey: .preferredModelProfile) ?? .gemma3_4b_it_q4_0
         autoWarmOnLaunch = try container.decodeIfPresent(Bool.self, forKey: .autoWarmOnLaunch) ?? false
         autoWarmOnFirstSend = try container.decodeIfPresent(Bool.self, forKey: .autoWarmOnFirstSend) ?? true
+        assistantQualityMode = try container.decodeIfPresent(JarvisAssistantQualityMode.self, forKey: .assistantQualityMode) ?? .balanced
+        promptMode = try container.decodeIfPresent(JarvisAssistantPromptMode.self, forKey: .promptMode) ?? .safe
+        memoryEnabled = try container.decodeIfPresent(Bool.self, forKey: .memoryEnabled) ?? true
         performanceProfile = try container.decodeIfPresent(JarvisRuntimePerformanceProfile.self, forKey: .performanceProfile) ?? .balanced
         contextWindow = try container.decodeIfPresent(JarvisContextWindowPreset.self, forKey: .contextWindow) ?? .automatic
         responseStyle = try container.decodeIfPresent(JarvisAssistantResponseStyle.self, forKey: .responseStyle) ?? .balanced

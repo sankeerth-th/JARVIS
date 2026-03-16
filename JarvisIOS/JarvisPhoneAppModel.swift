@@ -3,6 +3,27 @@ import SwiftUI
 import UIKit
 import Combine
 
+private final class JarvisMemoryFlagStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Bool
+
+    init(_ value: Bool) {
+        self.value = value
+    }
+
+    func read() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func write(_ newValue: Bool) {
+        lock.lock()
+        value = newValue
+        lock.unlock()
+    }
+}
+
 enum JarvisAppTab: String, CaseIterable, Hashable, Identifiable {
     case home
     case assistant
@@ -126,6 +147,14 @@ final class JarvisPhoneAppModel: ObservableObject {
         }
     }
 
+    enum AssistantSurfaceState: Equatable {
+        case idle
+        case typing
+        case responding
+        case reviewing
+        case error
+    }
+
     enum AssistantRuntimeGateStatus: Equatable {
         case noModel(String)
         case unsupportedModel(String)
@@ -200,6 +229,7 @@ final class JarvisPhoneAppModel: ObservableObject {
     @Published var isVisualIntelligencePresented = false
     @Published var showSetupFlow = false
     @Published var shouldFocusComposer = false
+    @Published var assistantControlsPresented = false
     @Published var assistantInputMode: AssistantInputMode = .text
     @Published var assistantExperienceState: AssistantExperienceState = .idle
     @Published var assistantLiveTranscript: String = ""
@@ -215,6 +245,8 @@ final class JarvisPhoneAppModel: ObservableObject {
     @Published private(set) var activeAssistantRoute: JarvisAssistantEntryRoute = .assistant
     @Published private(set) var assistantTaskContext = JarvisAssistantTaskContext(task: .chat, source: "launch")
     @Published private(set) var speechState: JarvisSpeechState = .idle
+    @Published private(set) var hasLoadedPersistentState = false
+    @Published private(set) var isAssistantKeyboardActive = false
     @Published private(set) var speechPermissions = JarvisSpeechPermissions(
         microphoneGranted: false,
         speechRecognitionGranted: false
@@ -238,7 +270,42 @@ final class JarvisPhoneAppModel: ObservableObject {
         models.contains(where: \.canActivate)
     }
 
+    var assistantSurfaceState: AssistantSurfaceState {
+        switch assistantExperienceState {
+        case .error, .unavailable:
+            return .error
+        case .thinking, .processing, .grounding, .responding, .transcribing, .listening:
+            return .responding
+        case .answerReady:
+            return .reviewing
+        case .armed, .idle:
+            let hasDraft = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return (isAssistantKeyboardActive || hasDraft) ? .typing : .idle
+        }
+    }
+
+    var shouldExpandAssistantHero: Bool {
+        let hasMessages = !conversation.messages.isEmpty
+        switch assistantExperienceState {
+        case .error, .unavailable, .grounding, .processing, .thinking, .responding, .transcribing, .listening:
+            return true
+        case .answerReady, .armed, .idle:
+            return !hasMessages
+        }
+    }
+
+    var shouldShowAssistantFollowUpChips: Bool {
+        assistantExperienceState == .answerReady &&
+        !conversation.messages.isEmpty &&
+        !isAssistantKeyboardActive
+    }
+
+    var shouldSuppressAssistantChrome: Bool {
+        isAssistantKeyboardActive || assistantSurfaceState == .typing
+    }
+
     var needsModelSetup: Bool {
+        guard hasLoadedPersistentState else { return false }
         guard let activeModel else { return true }
         return !activeModel.canActivate
     }
@@ -389,6 +456,9 @@ final class JarvisPhoneAppModel: ObservableObject {
     private let modelLibrary: JarvisModelLibrary
     private let launchStore: JarvisLaunchRouteStore
     private let settingsStore: JarvisAssistantSettingsStore
+    private let memoryStore: JarvisMemoryStore
+    private let memoryFlagStore: JarvisMemoryFlagStore
+    private let memoryManager: ConversationMemoryManager
     private let runtime: JarvisLocalModelRuntime
     private let speechCoordinator: JarvisSpeechCoordinator
     private var streamTask: Task<Void, Never>?
@@ -399,12 +469,14 @@ final class JarvisPhoneAppModel: ObservableObject {
     private var pendingImportRequest: ModelImportRequest = .primaryModel
     private var pendingAssistantRequest: JarvisAssistantRequest?
     private var latestCompletedRequest: JarvisAssistantRequest?
+    private var didBootstrapPersistentState = false
 
     init(
         store: JarvisConversationStore = JarvisConversationStore(),
         modelLibrary: JarvisModelLibrary = JarvisModelLibrary(),
         launchStore: JarvisLaunchRouteStore = .shared,
         settingsStore: JarvisAssistantSettingsStore = JarvisAssistantSettingsStore(),
+        memoryStore: JarvisMemoryStore = JarvisMemoryStore(),
         speechCoordinator: JarvisSpeechCoordinator? = nil
     ) {
         let loadedSettings = settingsStore.load()
@@ -412,20 +484,39 @@ final class JarvisPhoneAppModel: ObservableObject {
         self.modelLibrary = modelLibrary
         self.launchStore = launchStore
         self.settingsStore = settingsStore
+        self.memoryStore = memoryStore
+        self.memoryFlagStore = JarvisMemoryFlagStore(loadedSettings.memoryEnabled)
         self.settings = loadedSettings
 
         self.runtime = JarvisLocalModelRuntime(configuration: loadedSettings.runtimeConfiguration)
-        self.orchestrator = JarvisTaskOrchestrator(runtime: self.runtime)
+        let conversationMemoryManager = ConversationMemoryManager(store: memoryStore)
+        conversationMemoryManager.longTermMemoryEnabled = loadedSettings.memoryEnabled
+        self.memoryManager = conversationMemoryManager
+        let semanticMemoryProvider = JarvisSemanticMemoryProvider(
+            store: memoryStore,
+            isLongTermMemoryEnabled: { [memoryFlagStore = self.memoryFlagStore] in
+                memoryFlagStore.read()
+            }
+        )
+        let executionPlanner = JarvisExecutionPlanner(
+            capabilityProvider: JarvisSkillCapabilityProvider(),
+            responseStrategy: JarvisDefaultResponseStrategy()
+        )
+        self.orchestrator = JarvisTaskOrchestrator(
+            runtime: self.runtime,
+            memoryManager: conversationMemoryManager,
+            executionPlanner: executionPlanner,
+            memoryProvider: semanticMemoryProvider
+        )
         self.speechCoordinator = speechCoordinator ?? JarvisSpeechCoordinator()
         self.runtimeState = runtime.state
         self.runtimeFailure = runtime.lastFailure
         self.modelFileAccessState = runtime.fileAccessState
         self.runtimeLoadDiagnostics = runtime.lastLoadDiagnostics
 
-        let loadedConversations = store.loadConversations()
-        self.conversations = loadedConversations
-        self.conversation = loadedConversations.first ?? JarvisConversationRecord(title: "Jarvis")
-        self.knowledgeItems = store.loadKnowledgeItems()
+        self.conversations = []
+        self.conversation = JarvisConversationRecord(title: "Jarvis")
+        self.knowledgeItems = []
 
         self.quickLaunchItems = [
             QuickLaunchItem(
@@ -566,19 +657,18 @@ final class JarvisPhoneAppModel: ObservableObject {
     }
 
     func bootstrap() {
-        reloadModelLibrary()
         runtimeState = runtime.state
         runtimeFailure = runtime.lastFailure
-        showSetupFlow = needsModelSetup
-        assistantExperienceState = needsModelSetup ? .unavailable(reason: missingSupportedModelReason()) : .idle
+        assistantExperienceState = .idle
 
         let handledPendingRoute = consumePendingRouteIfNeeded()
         if !handledPendingRoute {
             applyStartupRouteIfNeeded()
         }
 
-        if settings.autoWarmOnLaunch {
-            warmModelIfPossible(source: "launch")
+        if !didBootstrapPersistentState {
+            didBootstrapPersistentState = true
+            loadPersistentStateDeferred()
         }
     }
 
@@ -619,6 +709,7 @@ final class JarvisPhoneAppModel: ObservableObject {
     func handleTabSelection(_ tab: JarvisAppTab) {
         selectedTab = tab
         assistantReturnTab = nil
+        dismissAssistantTransientUI()
 
         if assistantInputMode == .voice, tab != .assistant {
             stopVoicePreview(commit: false)
@@ -674,6 +765,7 @@ final class JarvisPhoneAppModel: ObservableObject {
 
     func returnFromFocusedExperience() {
         let destination = assistantReturnTab ?? .home
+        dismissAssistantTransientUI()
         assistantReturnTab = nil
         if assistantInputMode == .voice {
             stopVoicePreview(commit: false)
@@ -686,6 +778,7 @@ final class JarvisPhoneAppModel: ObservableObject {
     }
 
     func apply(route: JarvisLaunchRoute) {
+        dismissAssistantTransientUI()
         assistantSuggestions = []
         isAssistantPresented = false
         isKnowledgePresented = false
@@ -837,6 +930,7 @@ final class JarvisPhoneAppModel: ObservableObject {
     }
 
     func presentModelLibrary(beginImport: Bool = false) {
+        dismissAssistantTransientUI()
         pendingModelLibraryImport = beginImport
         isModelLibraryPresented = true
     }
@@ -1031,8 +1125,9 @@ final class JarvisPhoneAppModel: ObservableObject {
                 preferredDeliveryMode: .streamingText,
                 prefersStructuredOutput: assistantTask == .summarize || assistantTask == .prioritizeNotifications,
                 allowCapabilityExecution: true,
-                allowMemoryAugmentation: true
-            )
+                allowMemoryAugmentation: settings.memoryEnabled
+            ),
+            settingsSnapshot: settings
         )
         
         // Set up UI state
@@ -1100,11 +1195,16 @@ final class JarvisPhoneAppModel: ObservableObject {
                             self.conversation.messages[index].structuredOutput = JarvisAssistantOutputFormatter.format(
                                 text: self.conversation.messages[index].text,
                                 classification: result.classification,
-                                memoryContext: result.memoryContext
+                                memoryContext: result.memoryContext,
+                                skill: result.selectedSkill?.skill
                             )
                             self.conversation.messages[index].memoryAttribution = JarvisMessageMemoryAttribution(
+                                usedMemory: result.memoryContext.isMemoryInformed,
+                                memorySourceIDs: result.memoryContext.retrievedMemories.map(\.record.id),
+                                sourceKinds: result.memoryContext.sourceKinds,
                                 labels: result.memoryContext.memoryLabels,
-                                usedSummary: result.memoryContext.summary != nil
+                                usedSummary: result.memoryContext.summary != nil,
+                                chosenSkillID: result.selectedSkill?.skill.id
                             )
                         }
                         
@@ -1357,6 +1457,38 @@ final class JarvisPhoneAppModel: ObservableObject {
         refreshKnowledgeResults()
     }
 
+    func clearAssistantMemory() {
+        memoryManager.clearLongTermMemory()
+        assistantContinuityLabel = nil
+        statusText = "Assistant memory cleared"
+    }
+
+    func clearConversationSummaries() {
+        memoryManager.clearConversationSummaries()
+        assistantContinuityLabel = nil
+        statusText = "Conversation summaries cleared"
+    }
+
+    func resetAssistantState() {
+        cancelStreaming()
+        dismissAssistantTransientUI()
+        orchestrator.reset()
+        assistantSuggestions = []
+        assistantContinuityLabel = nil
+        assistantLiveTranscript = ""
+        latestCompletedRequest = nil
+        pendingAssistantRequest = nil
+        lastExecutionPlan = nil
+        lastDecisionTrace = nil
+        lastPromptDebugSummary = ""
+        lastTaskClassification = .default
+        currentAssistantMode = .general
+        statusText = "Assistant state reset"
+        if !needsModelSetup {
+            assistantExperienceState = .armed
+        }
+    }
+
     func askWithKnowledgeResult(_ result: JarvisKnowledgeResult) {
         setAssistantTask(.knowledgeAnswer, source: "knowledge.result", seedText: knowledgeQuery.isEmpty ? result.item.title : knowledgeQuery)
         enterAssistant(mode: .text, status: "Grounded answer", focusComposer: true, source: "knowledge.result")
@@ -1396,9 +1528,41 @@ final class JarvisPhoneAppModel: ObservableObject {
         runtime.updateConfiguration(newValue.runtimeConfiguration)
         runtimeState = runtime.state
         runtimeFailure = runtime.lastFailure
+        memoryFlagStore.write(newValue.memoryEnabled)
+        memoryManager.longTermMemoryEnabled = newValue.memoryEnabled
 
-        if oldValue.autoWarmOnLaunch != newValue.autoWarmOnLaunch, newValue.autoWarmOnLaunch {
-            warmModelIfPossible(source: "settings")
+        if oldValue.memoryEnabled != newValue.memoryEnabled, !newValue.memoryEnabled {
+            clearAssistantMemory()
+        }
+    }
+
+    func setAssistantKeyboardActive(_ isActive: Bool) {
+        isAssistantKeyboardActive = isActive
+    }
+
+    func dismissAssistantTransientUI() {
+        assistantControlsPresented = false
+        shouldFocusComposer = false
+        isAssistantKeyboardActive = false
+    }
+
+    func selectAssistantSurfaceTask(_ task: JarvisAssistantTask) {
+        dismissAssistantTransientUI()
+        switch task {
+        case .knowledgeAnswer:
+            assistantTask = .knowledgeAnswer
+            activeAssistantRoute = .assistant
+            assistantTaskContext = JarvisAssistantTaskContext(
+                task: .knowledgeAnswer,
+                source: "assistant.controls",
+                groundedResults: Array(knowledgeResults.prefix(task.groundingLimit))
+            )
+            assistantExperienceState = .armed
+            statusText = "Grounded assistant mode"
+        default:
+            setAssistantTask(task, source: "assistant.controls")
+            assistantExperienceState = .armed
+            statusText = "Assistant ready"
         }
     }
 
@@ -1432,6 +1596,43 @@ final class JarvisPhoneAppModel: ObservableObject {
         runtimeState = runtime.state
         runtimeFailure = runtime.lastFailure
         modelFileAccessState = runtime.fileAccessState
+    }
+
+    private func loadPersistentStateDeferred() {
+        let store = self.store
+        let modelLibrary = self.modelLibrary
+
+        DispatchQueue.global(qos: .utility).async {
+            let loadedConversations = store.loadConversations()
+            let loadedKnowledge = store.loadKnowledgeItems()
+            let loadedModels = modelLibrary.loadModels()
+            let loadedActiveModelID = modelLibrary.activeModelID()
+
+            DispatchQueue.main.async {
+                self.conversations = loadedConversations
+                self.conversation = loadedConversations.first ?? JarvisConversationRecord(title: "Jarvis")
+                self.knowledgeItems = loadedKnowledge
+                self.refreshKnowledgeResults()
+                self.models = loadedModels
+                self.activeModelID = loadedActiveModelID
+
+                if let activeModel = loadedModels.first(where: { $0.id == loadedActiveModelID && $0.canActivate }) {
+                    let selection = modelLibrary.runtimeSelection(for: activeModel)
+                    self.runtime.setSelectedModel(selection)
+                } else {
+                    self.runtime.setSelectedModel(nil)
+                }
+
+                self.runtimeState = self.runtime.state
+                self.runtimeFailure = self.runtime.lastFailure
+                self.modelFileAccessState = self.runtime.fileAccessState
+                self.hasLoadedPersistentState = true
+                self.showSetupFlow = self.needsModelSetup
+                if self.needsModelSetup {
+                    self.assistantExperienceState = .unavailable(reason: self.missingSupportedModelReason())
+                }
+            }
+        }
     }
 
     private func warmModelIfPossible(source: String) {
@@ -1603,6 +1804,12 @@ final class JarvisPhoneAppModel: ObservableObject {
             statusText = missingSupportedModelStatusText()
             assistantExperienceState = .unavailable(reason: missingSupportedModelReason())
             JarvisHaptics.error()
+            return false
+        }
+
+        if !hasLoadedPersistentState {
+            statusText = "Loading assistant state"
+            assistantExperienceState = .processing
             return false
         }
 

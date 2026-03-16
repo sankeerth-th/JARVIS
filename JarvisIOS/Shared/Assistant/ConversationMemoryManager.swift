@@ -12,6 +12,7 @@ public final class ConversationMemoryManager: ObservableObject {
     private var policy: MemoryRetentionPolicy
     private var messageHistory: [JarvisChatMessage] = []
     private var currentConversationID: UUID?
+    public var longTermMemoryEnabled: Bool = true
 
     public init(
         store: JarvisMemoryStore = JarvisMemoryStore(),
@@ -46,23 +47,28 @@ public final class ConversationMemoryManager: ObservableObject {
     public func prepareContext(
         conversation: JarvisConversationRecord,
         prompt: String,
-        task: JarvisAssistantTask,
+        classification: JarvisTaskClassification,
+        skill: JarvisResolvedSkill,
         taskBudget: Int
     ) -> MemoryContext {
         if currentConversationID != conversation.id || messageHistory.count != conversation.messages.count {
             setConversation(conversation)
         }
 
-        let effectiveRecentCount = min(policy.maxRecentMessages, max(taskBudget, 3))
+        let preferredRecentCount = max(3, min(taskBudget, skill.policy.recentMessageLimit))
+        let effectiveRecentCount = min(policy.maxRecentMessages, preferredRecentCount)
         let recent = Array(messageHistory.suffix(effectiveRecentCount))
         let compressedCount = max(0, messageHistory.count - recent.count)
-        let summary = summaryForConversationIfNeeded(conversation)
-        let memories = retrieveRelevantMemories(
-            prompt: prompt,
-            conversationID: conversation.id,
-            task: task,
-            limit: policy.maxRetrievedMemories
-        )
+        let summary = skill.policy.includeSummary ? summaryForConversationIfNeeded(conversation) : nil
+        let memories = longTermMemoryEnabled
+            ? retrieveRelevantMemories(
+                prompt: prompt,
+                conversationID: conversation.id,
+                classification: classification,
+                skill: skill.skill,
+                limit: min(policy.maxRetrievedMemories, skill.policy.maxMemoryItems)
+            )
+            : []
 
         retrievedMemories = memories
 
@@ -95,6 +101,7 @@ public final class ConversationMemoryManager: ObservableObject {
             task: task,
             classification: classification
         ) {
+            guard longTermMemoryEnabled else { continue }
             store.upsertMemory(resolveExistingMemory(for: memory), maxCount: policy.maxStoredMemories)
         }
 
@@ -103,17 +110,30 @@ public final class ConversationMemoryManager: ObservableObject {
             store.upsertSummary(summary)
             currentSummary = summary
 
-            let summaryMemory = JarvisMemoryRecord(
-                kind: .conversationSummary,
-                title: "Conversation summary",
-                content: summary.summaryText,
-                conversationID: conversationID,
-                confidence: 0.72,
-                importance: 0.7,
-                tags: summary.keyTopics
-            )
-            store.upsertMemory(resolveExistingMemory(for: summaryMemory), maxCount: policy.maxStoredMemories)
+            if longTermMemoryEnabled {
+                let summaryMemory = JarvisMemoryRecord(
+                    kind: .conversationSummary,
+                    title: "Conversation summary",
+                    content: summary.summaryText,
+                    conversationID: conversationID,
+                    confidence: 0.72,
+                    importance: 0.7,
+                    tags: summary.keyTopics,
+                    entityHints: summary.keyTopics
+                )
+                store.upsertMemory(resolveExistingMemory(for: summaryMemory), maxCount: policy.maxStoredMemories)
+            }
         }
+    }
+
+    public func clearLongTermMemory() {
+        store.clearMemories()
+        retrievedMemories = []
+    }
+
+    public func clearConversationSummaries() {
+        store.clearSummaries()
+        currentSummary = nil
     }
 
     public func continuityLabel(from context: MemoryContext) -> String? {
@@ -130,11 +150,18 @@ public final class ConversationMemoryManager: ObservableObject {
     private func retrieveRelevantMemories(
         prompt: String,
         conversationID: UUID,
-        task: JarvisAssistantTask,
+        classification: JarvisTaskClassification,
+        skill: JarvisSkill,
         limit: Int
     ) -> [JarvisMemoryMatch] {
-        let augmentedQuery = "\(prompt) \(task.displayName)"
-        return store.searchMemories(query: augmentedQuery, conversationID: conversationID, limit: limit)
+        let augmentedQuery = "\(prompt) \(classification.category.displayName) \(skill.name) \(skill.followUpActionHints.joined(separator: " "))"
+        return store.searchMemories(
+            query: augmentedQuery,
+            conversationID: conversationID,
+            limit: limit,
+            classification: classification,
+            skill: skill
+        )
     }
 
     private func summaryForConversationIfNeeded(_ conversation: JarvisConversationRecord) -> ConversationSummary? {
@@ -165,6 +192,8 @@ public final class ConversationMemoryManager: ObservableObject {
         let topics = extractTopics(from: archivedMessages)
         let userIntent = inferUserIntent(from: userMessages)
         let assistantActions = inferAssistantActions(from: assistantMessages)
+        let openTasks = inferOpenTasks(from: userMessages + assistantMessages)
+        let unresolvedFollowUps = inferUnresolvedFollowUps(from: archivedMessages)
 
         let summaryLead = topics.isEmpty
             ? "Conversation covered prior requests and assistant responses."
@@ -172,7 +201,9 @@ public final class ConversationMemoryManager: ObservableObject {
         let summaryText = [
             summaryLead,
             userIntent.isEmpty ? nil : "User intent: \(userIntent).",
-            assistantActions.isEmpty ? nil : "Jarvis actions: \(assistantActions.joined(separator: ", "))."
+            openTasks.isEmpty ? nil : "Open tasks: \(openTasks.joined(separator: ", ")).",
+            assistantActions.isEmpty ? nil : "Jarvis actions: \(assistantActions.joined(separator: ", ")).",
+            unresolvedFollowUps.isEmpty ? nil : "Unresolved follow-ups: \(unresolvedFollowUps.joined(separator: ", "))."
         ]
         .compactMap { $0 }
         .joined(separator: " ")
@@ -184,7 +215,9 @@ public final class ConversationMemoryManager: ObservableObject {
             summaryText: summaryText.isEmpty ? "Previous discussion included assistant guidance and follow-up context." : summaryText,
             keyTopics: topics,
             userIntent: userIntent,
-            assistantActions: assistantActions
+            assistantActions: assistantActions,
+            openTasks: openTasks.isEmpty ? nil : openTasks,
+            unresolvedFollowUps: unresolvedFollowUps.isEmpty ? nil : unresolvedFollowUps
         )
     }
 
@@ -201,6 +234,7 @@ public final class ConversationMemoryManager: ObservableObject {
         var records: [JarvisMemoryRecord] = []
         let lowercased = cleanUser.lowercased()
         let tags = Array(extractTopics(from: [JarvisChatMessage(role: .user, text: cleanUser)]).prefix(4))
+        let entities = extractEntities(from: cleanUser)
 
         func append(kind: JarvisMemoryKind, title: String, content: String, confidence: Double, importance: Double, pinned: Bool = false) {
             records.append(
@@ -213,7 +247,7 @@ public final class ConversationMemoryManager: ObservableObject {
                     importance: importance,
                     isPinned: pinned,
                     tags: tags,
-                    entityHints: tags
+                    entityHints: Array(Set(tags + entities)).sorted()
                 )
             )
         }
@@ -329,6 +363,24 @@ public final class ConversationMemoryManager: ObservableObject {
         }
     }
 
+    private func extractEntities(from text: String) -> [String] {
+        let known = [
+            "jarvis", "swift", "swiftui", "ios", "macos", "xcode",
+            "llama", "gguf", "ollama", "testflight", "apple", "offline"
+        ]
+        let lowered = text.lowercased()
+        var entities = known.filter { lowered.contains($0) }
+
+        let capitalized = text
+            .split(whereSeparator: \.isWhitespace)
+            .map(String.init)
+            .filter { $0.first?.isUppercase == true && $0.count > 2 }
+            .map { $0.trimmingCharacters(in: CharacterSet.punctuationCharacters) }
+
+        entities.append(contentsOf: capitalized.map { $0.lowercased() })
+        return Array(Set(entities)).sorted()
+    }
+
     private func inferUserIntent(from userMessages: [String]) -> String {
         let joined = userMessages.joined(separator: " ").lowercased()
         if joined.contains("summar") {
@@ -361,5 +413,26 @@ public final class ConversationMemoryManager: ObservableObject {
             }
         }
         return Array(Set(actions)).sorted()
+    }
+
+    private func inferOpenTasks(from messages: [String]) -> [String] {
+        let candidates = messages.compactMap { message -> String? in
+            let lowercased = message.lowercased()
+            if lowercased.contains("need to") || lowercased.contains("next step") || lowercased.contains("follow up") || lowercased.contains("todo") {
+                return String(message.prefix(120)).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return nil
+        }
+        return Array(NSOrderedSet(array: candidates)) as? [String] ?? []
+    }
+
+    private func inferUnresolvedFollowUps(from messages: [JarvisChatMessage]) -> [String] {
+        let followUps = messages.compactMap { message -> String? in
+            guard message.role == .assistant else { return nil }
+            let trimmed = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.contains("?") || trimmed.lowercased().contains("clarify") else { return nil }
+            return String(trimmed.prefix(120))
+        }
+        return Array(NSOrderedSet(array: followUps)) as? [String] ?? []
     }
 }

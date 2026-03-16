@@ -114,17 +114,19 @@ public final class ContextBuilder {
     public func build(
         request: JarvisOrchestrationRequest,
         classification: JarvisTaskClassification,
-        memoryContext: MemoryContext
+        memoryContext: MemoryContext,
+        resolvedSkill: JarvisResolvedSkill
     ) -> ContextAssembly {
         blocks.removeAll()
 
         addSystemBlock()
         addAssistantRoleBlock()
-        addTaskBlock(classification: classification, mode: request.mode)
-        addConversationBlock(memoryContext: memoryContext)
-        addMemoryBlock(memoryContext: memoryContext)
-        addKnowledgeBlock(knowledgeResults: request.knowledgeResults, classification: classification)
-        addReplyTargetBlock(replyTargetText: request.replyTargetText)
+        addTaskBlock(classification: classification, mode: request.mode, resolvedSkill: resolvedSkill)
+        addConversationBlock(memoryContext: memoryContext, resolvedSkill: resolvedSkill)
+        addKnowledgeBlock(knowledgeResults: request.knowledgeResults, classification: classification, resolvedSkill: resolvedSkill)
+        if resolvedSkill.policy.includeReplyTarget {
+            addReplyTargetBlock(replyTargetText: request.replyTargetText)
+        }
 
         blocks.sort { $0.priority < $1.priority }
         pruneBlocksIfNeeded()
@@ -140,8 +142,8 @@ public final class ContextBuilder {
         return ContextAssembly(
             systemInstruction: JarvisPromptBlueprint.default.systemInstruction,
             assistantRole: "You are Jarvis, a proactive iPhone assistant. Reason cleanly, act on the user's intent, and optimize for usefulness on a phone-sized screen.",
-            taskInstruction: "Task type: \(classification.category.displayName). \(classification.reasoningHint)",
-            responseInstruction: "\(classification.responseHint) \(request.mode.responseHint)",
+            taskInstruction: "Task type: \(classification.category.displayName). Skill: \(resolvedSkill.skill.name). \(classification.reasoningHint)",
+            responseInstruction: ([classification.responseHint, request.mode.responseHint] + resolvedSkill.skill.formattingHints).joined(separator: " "),
             contextBlocks: promptBlocks,
             recentMessages: memoryContext.recentMessages,
             knowledgeResults: request.knowledgeResults,
@@ -173,25 +175,31 @@ public final class ContextBuilder {
         )
     }
 
-    private func addTaskBlock(classification: JarvisTaskClassification, mode: JarvisAssistantMode) {
+    private func addTaskBlock(classification: JarvisTaskClassification, mode: JarvisAssistantMode, resolvedSkill: JarvisResolvedSkill) {
         blocks.append(
             ContextBlock(
                 type: .task,
                 title: "Task",
-                content: "Detected task: \(classification.category.displayName)\nMode: \(mode.displayName)\n\(classification.reasoningHint)"
+                content: "Detected task: \(classification.category.displayName)\nMode: \(mode.displayName)\nSkill: \(resolvedSkill.skill.name)\n\(classification.reasoningHint)"
             )
         )
     }
 
-    private func addConversationBlock(memoryContext: MemoryContext) {
+    private func addConversationBlock(memoryContext: MemoryContext, resolvedSkill: JarvisResolvedSkill) {
         var parts: [String] = []
-        if let summary = memoryContext.summary {
+        if resolvedSkill.policy.includeSummary, let summary = memoryContext.summary {
             parts.append("Prior summary: \(summary.summaryText)")
+            if let openTasks = summary.openTasks, !openTasks.isEmpty {
+                parts.append("Open tasks: \(openTasks.joined(separator: "; "))")
+            }
+            if let followUps = summary.unresolvedFollowUps, !followUps.isEmpty {
+                parts.append("Unresolved follow-ups: \(followUps.joined(separator: "; "))")
+            }
         }
 
         if !memoryContext.recentMessages.isEmpty {
             parts.append("Recent conversation:")
-            for message in memoryContext.recentMessages {
+            for message in memoryContext.recentMessages.suffix(resolvedSkill.policy.recentMessageLimit) {
                 let role = message.role == .assistant ? "Jarvis" : "User"
                 parts.append("\(role): \(String(message.text.prefix(220)))")
             }
@@ -209,29 +217,15 @@ public final class ContextBuilder {
         )
     }
 
-    private func addMemoryBlock(memoryContext: MemoryContext) {
-        guard !memoryContext.retrievedMemories.isEmpty else { return }
-
-        let content = memoryContext.retrievedMemories.map { match in
-            "[\(match.record.kind.promptTitle)] \(match.record.title): \(match.record.content)"
-        }
-        .joined(separator: "\n")
-
-        blocks.append(
-            ContextBlock(
-                type: .memory,
-                title: "Durable Memory",
-                content: content,
-                isOptional: true
-            )
-        )
-    }
-
-    private func addKnowledgeBlock(knowledgeResults: [JarvisKnowledgeResult], classification: JarvisTaskClassification) {
+    private func addKnowledgeBlock(
+        knowledgeResults: [JarvisKnowledgeResult],
+        classification: JarvisTaskClassification,
+        resolvedSkill: JarvisResolvedSkill
+    ) {
         guard classification.shouldInjectKnowledge else { return }
         guard !knowledgeResults.isEmpty else { return }
 
-        let content = knowledgeResults.prefix(4).map { result in
+        let content = knowledgeResults.prefix(max(1, resolvedSkill.policy.knowledgeLimit)).map { result in
             "- \(result.item.title): \(result.snippet)"
         }
         .joined(separator: "\n")

@@ -5,18 +5,21 @@ struct AssistantTabView: View {
     @EnvironmentObject private var appModel: JarvisPhoneAppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var composerFocused: Bool
+    @State private var isTranscriptPinnedToBottom = true
 
     private let transcriptBottomAnchor = "assistant.transcript.bottom"
+    private let transcriptScrollSpace = "assistant.transcript.scroll"
 
     var body: some View {
         NavigationStack {
             ZStack {
                 AssistantBackdrop(state: appModel.assistantExperienceState)
 
-                VStack(spacing: 12) {
+                VStack(spacing: 10) {
                     assistantHeader
                     messagesPanel
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .padding(.horizontal, 14)
                 .padding(.top, 10)
             }
@@ -32,6 +35,8 @@ struct AssistantTabView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     if appModel.shouldShowFocusedBackButton {
                         Button {
+                            composerFocused = false
+                            appModel.setAssistantKeyboardActive(false)
                             appModel.returnFromFocusedExperience()
                         } label: {
                             Label(appModel.focusedBackButtonTitle, systemImage: "chevron.left")
@@ -48,32 +53,52 @@ struct AssistantTabView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button {
-                            appModel.addKnowledgeItemFromConversation()
-                        } label: {
-                            Label("Save to Knowledge", systemImage: "bookmark")
-                        }
-
-                        Button(role: .destructive) {
-                            appModel.startNewConversation()
-                        } label: {
-                            Label("Clear Conversation", systemImage: "trash")
-                        }
+                    Button {
+                        composerFocused = false
+                        appModel.setAssistantKeyboardActive(false)
+                        appModel.assistantControlsPresented = true
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
                 }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        composerFocused = false
+                        appModel.setAssistantKeyboardActive(false)
+                    }
+                }
             }
             .onChange(of: appModel.shouldFocusComposer) { _, shouldFocus in
-                guard shouldFocus else { return }
-                composerFocused = true
-                appModel.shouldFocusComposer = false
+                if shouldFocus {
+                    composerFocused = true
+                    appModel.setAssistantKeyboardActive(true)
+                    appModel.shouldFocusComposer = false
+                } else if !shouldFocus {
+                    composerFocused = false
+                    appModel.setAssistantKeyboardActive(false)
+                }
             }
             .onAppear {
                 if appModel.assistantInputMode == .text {
                     composerFocused = true
+                    appModel.setAssistantKeyboardActive(true)
                 }
+            }
+            .onChange(of: composerFocused) { _, isFocused in
+                appModel.setAssistantKeyboardActive(isFocused)
+            }
+            .onChange(of: appModel.selectedTab) { _, selectedTab in
+                guard selectedTab != .assistant else { return }
+                composerFocused = false
+                appModel.setAssistantKeyboardActive(false)
+            }
+            .sheet(isPresented: $appModel.assistantControlsPresented) {
+                AssistantControlsSheet()
+                    .environmentObject(appModel)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .presentationCornerRadius(24)
             }
             .animation(.spring(response: 0.42, dampingFraction: 0.86), value: appModel.assistantExperienceState)
             .animation(.easeInOut(duration: 0.22), value: appModel.assistantEntryStyle)
@@ -81,48 +106,21 @@ struct AssistantTabView: View {
     }
 
     private var assistantHeader: some View {
-        VStack(spacing: 10) {
-            AssistantPresenceSurface(
-                state: appModel.assistantExperienceState,
-                mode: appModel.assistantInputMode,
-                transcript: appModel.assistantLiveTranscript,
-                reduceMotion: reduceMotion
-            )
+        VStack(spacing: 8) {
+            if appModel.shouldExpandAssistantHero {
+                AssistantPresenceSurface(
+                    state: appModel.assistantExperienceState,
+                    mode: appModel.assistantInputMode,
+                    transcript: appModel.assistantLiveTranscript,
+                    reduceMotion: reduceMotion
+                )
+            } else {
+                compactStatusBanner
+            }
 
-            if let assistantContinuityLabel = appModel.assistantContinuityLabel {
+            if appModel.shouldExpandAssistantHero,
+               let assistantContinuityLabel = appModel.assistantContinuityLabel {
                 continuityBadge(assistantContinuityLabel)
-            }
-
-            if appModel.assistantExperienceState == .answerReady {
-                assistantStateTimeline
-            }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    assistantMetaChip(
-                        title: appModel.assistantTask.displayName,
-                        icon: taskIcon,
-                        tint: .cyan
-                    )
-                    assistantMetaChip(
-                        title: modeTitle,
-                        icon: modeIcon,
-                        tint: .white
-                    )
-                    assistantMetaChip(
-                        title: appModel.runtimeState.title,
-                        icon: runtimeIcon,
-                        tint: runtimeTint
-                    )
-                    if shouldShowEntryContext {
-                        assistantMetaChip(
-                            title: entryTitle,
-                            icon: entryIcon,
-                            tint: .indigo
-                        )
-                    }
-                }
-                .padding(.horizontal, 2)
             }
         }
     }
@@ -147,6 +145,132 @@ struct AssistantTabView: View {
         )
     }
 
+    private var compactStatusBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: runtimeIcon)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(runtimeTint)
+                .frame(width: 28, height: 28)
+                .background(runtimeTint.opacity(0.18), in: Circle())
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(compactStatusTitle)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.92))
+                Text(compactStatusSubtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.68))
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+
+            if let assistantContinuityLabel = appModel.assistantContinuityLabel {
+                continuityBadge(assistantContinuityLabel)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                )
+        )
+    }
+
+    private var compactInlineBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: compactStatusIcon)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(compactStatusTint)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(compactStatusTitle)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.9))
+                Text(compactStatusSubtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.68))
+                    .lineLimit(2)
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.white.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
+        )
+    }
+
+    private var compactStatusTitle: String {
+        switch appModel.assistantTask {
+        case .knowledgeAnswer:
+            return "Knowledge Answer"
+        case .quickCapture:
+            return "Quick Capture"
+        case .reply:
+            return "Draft Reply"
+        case .summarize:
+            return "Summarize"
+        default:
+            return appModel.assistantExperienceState.title
+        }
+    }
+
+    private var compactStatusSubtitle: String {
+        switch appModel.assistantSurfaceState {
+        case .idle:
+            return "Ready for your next message."
+        case .typing:
+            return "Type naturally. Jarvis will keep the conversation in view."
+        case .responding:
+            return appModel.statusText
+        case .reviewing:
+            return "Latest reply is ready with follow-up actions."
+        case .error:
+            return appModel.statusText
+        }
+    }
+
+    private var compactStatusIcon: String {
+        switch appModel.assistantSurfaceState {
+        case .idle:
+            return "sparkles"
+        case .typing:
+            return "keyboard"
+        case .responding:
+            return "waveform.path"
+        case .reviewing:
+            return "checkmark.circle"
+        case .error:
+            return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var compactStatusTint: Color {
+        switch appModel.assistantSurfaceState {
+        case .idle:
+            return .cyan
+        case .typing:
+            return .blue
+        case .responding:
+            return .indigo
+        case .reviewing:
+            return .green
+        case .error:
+            return .orange
+        }
+    }
+
     private func assistantMetaChip(title: String, icon: String, tint: Color) -> some View {
         Label(title, systemImage: icon)
             .font(.caption.weight(.semibold))
@@ -164,28 +288,7 @@ struct AssistantTabView: View {
     }
 
     private var assistantBottomDock: some View {
-        VStack(spacing: 10) {
-            if appModel.assistantInputMode == .voice {
-                voiceTranscriptPanel
-                    .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
-            }
-
-            if showGroundingContext {
-                groundingContextPanel
-                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
-            }
-
-            if !appModel.assistantSuggestions.isEmpty,
-               appModel.assistantExperienceState == .answerReady {
-                suggestionStrip
-                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
-            }
-
-            if shouldShowActionRail {
-                actionRail
-                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
-            }
-
+        VStack(spacing: 8) {
             composerPanel
         }
     }
@@ -535,33 +638,53 @@ struct AssistantTabView: View {
 
     private var messagesPanel: some View {
         let messages = appModel.conversation.messages
-        return ScrollViewReader { proxy in
-            ScrollView {
-                messageList(messages: messages)
-                    .padding(10)
+        return GeometryReader { scrollBounds in
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 10) {
+                        if !appModel.shouldExpandAssistantHero {
+                            compactInlineBanner
+                        }
 
-                Color.clear
-                    .frame(height: 1)
-                    .id(transcriptBottomAnchor)
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(Color.black.opacity(0.22))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .stroke(Color.white.opacity(0.14), lineWidth: 1)
-                    )
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .onAppear {
-                guard appModel.settings.autoScrollConversation else { return }
-                scrollTranscriptToBottom(proxy, animated: false)
-            }
-            .onChange(of: transcriptScrollSignature) { _, _ in
-                guard appModel.settings.autoScrollConversation else { return }
-                scrollTranscriptToBottom(proxy, animated: !reduceMotion)
+                        messageList(messages: messages)
+
+                        GeometryReader { geometry in
+                            Color.clear
+                                .preference(
+                                    key: AssistantTranscriptBottomOffsetPreferenceKey.self,
+                                    value: geometry.frame(in: .named(transcriptScrollSpace)).maxY - scrollBounds.size.height
+                                )
+                        }
+                        .frame(height: 1)
+                        .id(transcriptBottomAnchor)
+                    }
+                    .padding(10)
+                }
+                .coordinateSpace(name: transcriptScrollSpace)
+                .scrollDismissesKeyboard(.interactively)
+                .background(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(Color.black.opacity(0.22))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                        )
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .onAppear {
+                    guard appModel.settings.autoScrollConversation else { return }
+                    scrollTranscriptToBottom(proxy, animated: false)
+                }
+                .onChange(of: transcriptScrollSignature) { _, _ in
+                    guard appModel.settings.autoScrollConversation, isTranscriptPinnedToBottom else { return }
+                    scrollTranscriptToBottom(proxy, animated: !reduceMotion)
+                }
+                .onPreferenceChange(AssistantTranscriptBottomOffsetPreferenceKey.self) { offset in
+                    isTranscriptPinnedToBottom = offset < 96
+                }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder
@@ -572,7 +695,13 @@ struct AssistantTabView: View {
             }
 
             ForEach(messages) { message in
-                AssistantMessageRow(message: message)
+                VStack(alignment: .leading, spacing: 8) {
+                    AssistantMessageRow(message: message)
+                    if shouldAttachFollowUpChips(to: message) {
+                        contextualFollowUpChips
+                            .padding(.leading, 8)
+                    }
+                }
                     .id(message.id)
             }
         }
@@ -639,34 +768,6 @@ struct AssistantTabView: View {
         )
     }
 
-    private var suggestionStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(appModel.assistantSuggestions) { suggestion in
-                    Button {
-                        appModel.performAssistantSuggestion(suggestion)
-                    } label: {
-                        Label(suggestion.title, systemImage: suggestion.icon)
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                            .background(Color.white.opacity(0.12), in: Capsule())
-                            .overlay(
-                                Capsule()
-                                    .stroke(Color.white.opacity(0.20), lineWidth: 1)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 2)
-        }
-    }
-
-    private var shouldShowActionRail: Bool {
-        appModel.assistantExperienceState == .answerReady && latestAssistantText != nil
-    }
-
     private var latestAssistantText: String? {
         let latestAssistant = appModel.conversation.messages.last { message in
             message.role == JarvisChatRole.assistant
@@ -675,25 +776,43 @@ struct AssistantTabView: View {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    private var actionRail: some View {
+    private var latestAssistantMessageID: UUID? {
+        appModel.conversation.messages.last(where: { $0.role == .assistant })?.id
+    }
+
+    private func shouldAttachFollowUpChips(to message: JarvisChatMessage) -> Bool {
+        guard appModel.shouldShowAssistantFollowUpChips,
+              message.role == .assistant,
+              message.id == latestAssistantMessageID else {
+            return false
+        }
+        return latestAssistantText != nil
+    }
+
+    private var contextualFollowUpChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                actionButton("Follow-up", icon: "arrow.turn.down.right") {
-                    appModel.setAssistantInputMode(.text)
-                    appModel.draft = "Can you expand your last answer with one practical next step?"
-                    appModel.shouldFocusComposer = true
-                }
-                actionButton("Rephrase", icon: "textformat.alt") {
-                    appModel.setAssistantInputMode(.text)
-                    appModel.draft = "Rephrase your last answer in simpler language."
-                    appModel.shouldFocusComposer = true
-                }
-                actionButton("Search More", icon: "magnifyingglass") {
-                    let payload = latestAssistantText.map { String($0.prefix(120)) }
-                    appModel.apply(route: JarvisLaunchRoute(action: .knowledge, query: payload, source: JarvisAssistantEntrySource.inApp.rawValue, assistantTask: .knowledgeAnswer))
-                }
-                actionButton("Voice Reply", icon: "waveform") {
-                    appModel.apply(route: .assistant(.voice, task: .chat, source: .inApp, shouldStartListening: true))
+                if !appModel.assistantSuggestions.isEmpty {
+                    ForEach(Array(appModel.assistantSuggestions.prefix(3))) { suggestion in
+                        actionButton(suggestion.title, icon: suggestion.icon) {
+                            appModel.performAssistantSuggestion(suggestion)
+                        }
+                    }
+                } else {
+                    actionButton("Follow-up", icon: "arrow.turn.down.right") {
+                        appModel.setAssistantInputMode(.text)
+                        appModel.draft = "Can you expand your last answer with one practical next step?"
+                        appModel.shouldFocusComposer = true
+                    }
+                    actionButton("Rephrase", icon: "textformat.alt") {
+                        appModel.setAssistantInputMode(.text)
+                        appModel.draft = "Rephrase your last answer in simpler language."
+                        appModel.shouldFocusComposer = true
+                    }
+                    actionButton("Search More", icon: "magnifyingglass") {
+                        let payload = latestAssistantText.map { String($0.prefix(120)) }
+                        appModel.apply(route: JarvisLaunchRoute(action: .knowledge, query: payload, source: JarvisAssistantEntrySource.inApp.rawValue, assistantTask: .knowledgeAnswer))
+                    }
                 }
             }
             .padding(.horizontal, 2)
@@ -715,111 +834,99 @@ struct AssistantTabView: View {
         .buttonStyle(.plain)
     }
 
+    @ViewBuilder
+    private var composerField: some View {
+        switch appModel.assistantInputMode {
+        case .text:
+            TextField(composerPlaceholder, text: $appModel.draft, axis: .vertical)
+                .focused($composerFocused)
+                .lineLimit(1...4)
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        case .voice:
+            TextField("Speak, then review the transcript here", text: $appModel.assistantLiveTranscript, axis: .vertical)
+                .lineLimit(1...4)
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        case .visual:
+            Button {
+                appModel.apply(route: .assistant(.visual, task: .visualDescribe, source: .inApp))
+            } label: {
+                HStack {
+                    Label("Open visual workspace", systemImage: "viewfinder")
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.9))
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 12)
+                .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var composerActionButton: some View {
+        Button {
+            if appModel.assistantInputMode == .voice {
+                if listeningActive {
+                    appModel.stopVoicePreview(commit: true)
+                } else {
+                    appModel.startVoicePreview()
+                }
+            } else if appModel.assistantInputMode == .visual {
+                appModel.apply(route: .assistant(.visual, task: .visualDescribe, source: .inApp))
+            } else {
+                appModel.sendCurrentDraft()
+            }
+        } label: {
+            Image(systemName: sendIcon)
+                .font(.system(size: 21, weight: .bold))
+                .symbolRenderingMode(.hierarchical)
+                .frame(width: 44, height: 44)
+                .background(
+                    Circle()
+                        .fill(canSend ? Color.cyan.opacity(0.22) : Color.white.opacity(0.08))
+                        .overlay(
+                            Circle()
+                                .stroke(canSend ? Color.cyan.opacity(0.5) : Color.white.opacity(0.12), lineWidth: 1)
+                        )
+                )
+        }
+        .disabled(!canSend)
+        .tint(.cyan)
+    }
+
     private var composerPanel: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 8) {
-                modeButton(title: "Text", icon: "text.bubble", mode: .text)
-                modeButton(title: "Voice", icon: "waveform", mode: .voice)
-                modeButton(title: "Visual", icon: "viewfinder", mode: .visual)
-            }
-
-            HStack(spacing: 8) {
-                assistantMetaChip(title: appModel.assistantTask.displayName, icon: taskIcon, tint: .indigo)
-                if let activeModel = appModel.activeModel {
-                    assistantMetaChip(title: activeModel.displayName, icon: "cpu", tint: .white)
-                }
-                Spacer(minLength: 0)
-                if !appModel.conversation.messages.isEmpty {
-                    Button("New Chat") {
-                        appModel.startNewConversation()
+        VStack(spacing: 8) {
+            Picker("Input Mode", selection: Binding(
+                get: { appModel.assistantInputMode },
+                set: { mode in
+                    if mode != .text {
+                        composerFocused = false
+                        appModel.setAssistantKeyboardActive(false)
                     }
-                    .font(.caption.weight(.semibold))
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.cyan)
+                    appModel.setAssistantInputMode(mode)
                 }
+            )) {
+                Label("Text", systemImage: "text.bubble").tag(JarvisPhoneAppModel.AssistantInputMode.text)
+                Label("Voice", systemImage: "waveform").tag(JarvisPhoneAppModel.AssistantInputMode.voice)
+                Label("Visual", systemImage: "viewfinder").tag(JarvisPhoneAppModel.AssistantInputMode.visual)
             }
-
-            if case .unavailable(let reason) = appModel.assistantExperienceState {
-                stateInfoRow(icon: "exclamationmark.triangle.fill", text: reason, tint: .orange)
-                recoveryActionsRow
-            } else if case .error(let message) = appModel.assistantExperienceState {
-                stateInfoRow(icon: "xmark.octagon.fill", text: message, tint: .red)
-                recoveryActionsRow
-            } else if appModel.assistantExperienceState == .grounding {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Searching local context for grounded output")
-                        .font(.caption.weight(.medium))
-                    Spacer()
-                }
-                .foregroundStyle(.white.opacity(0.92))
-                .padding(.horizontal, 10)
-            } else if appModel.isSending {
-                HStack(spacing: 10) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Generating locally")
-                        .font(.caption.weight(.medium))
-                    Spacer()
-                    Button("Cancel") {
-                        appModel.cancelStreaming()
-                    }
-                    .font(.caption.weight(.semibold))
-                }
-                .foregroundStyle(.white.opacity(0.92))
-                .padding(.horizontal, 10)
-            }
-
-            if case .warming(_, let progress, _) = appModel.runtimeState {
-                VStack(alignment: .leading, spacing: 6) {
-                    ProgressView(value: progress)
-                        .tint(.cyan)
-                    Text("Preparing assistant engine")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.82))
-                }
-                .padding(.horizontal, 10)
-            }
-
-            if appModel.settings.showRuntimeDiagnostics {
-                diagnosticsRow
-            }
+            .pickerStyle(.segmented)
 
             HStack(spacing: 10) {
-                TextField(composerPlaceholder, text: $appModel.draft, axis: .vertical)
-                    .focused($composerFocused)
-                    .lineLimit(1...5)
-                    .textFieldStyle(.plain)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 12)
-                    .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-                Button {
-                    if appModel.assistantInputMode == .voice {
-                        appModel.stopVoicePreview(commit: true)
-                    } else {
-                        appModel.sendCurrentDraft()
-                    }
-                } label: {
-                    Image(systemName: sendIcon)
-                        .font(.system(size: 22, weight: .bold))
-                        .symbolRenderingMode(.hierarchical)
-                        .frame(width: 46, height: 46)
-                        .background(
-                            Circle()
-                                .fill(canSend ? Color.cyan.opacity(0.22) : Color.white.opacity(0.08))
-                                .overlay(
-                                    Circle()
-                                        .stroke(canSend ? Color.cyan.opacity(0.5) : Color.white.opacity(0.12), lineWidth: 1)
-                                )
-                        )
-                }
-                .disabled(!canSend)
-                .tint(.cyan)
+                composerField
+                composerActionButton
             }
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
         .background(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .fill(.ultraThinMaterial)
@@ -873,44 +980,12 @@ struct AssistantTabView: View {
         .padding(.horizontal, 10)
     }
 
-    private var recoveryActionsRow: some View {
-        HStack(spacing: 8) {
-            if appModel.needsModelSetup {
-                Button("Set Up") {
-                    appModel.showSetupFlow = true
-                }
-            } else {
-                if !appModel.speechPermissions.isGranted {
-                    Button("Voice Access") {
-                        guard let settingsURL = URL(string: UIApplication.openSettingsURLString) else { return }
-                        UIApplication.shared.open(settingsURL)
-                    }
-                }
-                if appModel.canRunInference,
-                   appModel.runtimeFailure?.kind != .runtimeUnavailable,
-                   appModel.runtimeFailure?.kind != .fileAccess {
-                    Button("Retry Warm") {
-                        appModel.retryRuntimeWarmup()
-                    }
-                }
-                if appModel.runtimeFailure?.kind != .runtimeUnavailable {
-                    Button("Unload") {
-                        appModel.unloadActiveModel()
-                    }
-                }
-                Button("Models") {
-                    appModel.presentModelLibrary()
-                }
-            }
-        }
-        .font(.caption.weight(.semibold))
-        .buttonStyle(.bordered)
-        .padding(.horizontal, 10)
-    }
-
     private var canSend: Bool {
         if appModel.assistantInputMode == .voice {
-            return !appModel.assistantLiveTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return listeningActive || !appModel.assistantLiveTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        if appModel.assistantInputMode == .visual {
+            return true
         }
         return !appModel.needsModelSetup &&
         appModel.canRunInference &&
@@ -942,7 +1017,14 @@ struct AssistantTabView: View {
     }
 
     private var sendIcon: String {
-        appModel.assistantInputMode == .voice ? "waveform.circle.fill" : "arrow.up.circle.fill"
+        switch appModel.assistantInputMode {
+        case .text:
+            return "arrow.up.circle.fill"
+        case .voice:
+            return listeningActive ? "stop.circle.fill" : "waveform.circle.fill"
+        case .visual:
+            return "arrow.up.right.circle.fill"
+        }
     }
 
     private func modeButton(title: String, icon: String, mode: JarvisPhoneAppModel.AssistantInputMode) -> some View {
@@ -1259,6 +1341,20 @@ private struct AssistantStructuredOutputView: View {
             return "questionmark.bubble"
         case .summary:
             return "text.quote"
+        case .codeAnswer:
+            return "chevron.left.forwardslash.chevron.right"
+        case .codeBlock:
+            return "curlybraces"
+        case .knowledgeAnswer:
+            return "books.vertical"
+        case .decisionTree:
+            return "arrow.triangle.branch"
+        case .prosCons:
+            return "scale.3d"
+        case .brainstorm:
+            return "lightbulb"
+        case .multiStepPlan:
+            return "list.number"
         }
     }
 }
@@ -1310,5 +1406,112 @@ private struct AssistantEmptyState: View {
                 )
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct AssistantControlsSheet: View {
+    @EnvironmentObject private var appModel: JarvisPhoneAppModel
+    @Environment(\.dismiss) private var dismiss
+
+    private var selectedTask: JarvisAssistantTask {
+        appModel.assistantTask == .knowledgeAnswer ? .knowledgeAnswer : .chat
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Source") {
+                    Picker("Assistant Source", selection: Binding(
+                        get: { selectedTask },
+                        set: { appModel.selectAssistantSurfaceTask($0) }
+                    )) {
+                        Text("Chat").tag(JarvisAssistantTask.chat)
+                        Text("Knowledge").tag(JarvisAssistantTask.knowledgeAnswer)
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                Section("Model") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(appModel.activeModel?.displayName ?? "No active model")
+                            .font(.subheadline.weight(.semibold))
+                        Text(appModel.runtimeState.title)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Button {
+                        dismiss()
+                        appModel.presentModelLibrary()
+                    } label: {
+                        Label("Open Model Library", systemImage: "cpu")
+                    }
+                }
+
+                Section("Assistant Style") {
+                    Picker("Response Style", selection: $appModel.settings.responseStyle) {
+                        ForEach(JarvisAssistantResponseStyle.allCases) { style in
+                            Text(style.displayName).tag(style)
+                        }
+                    }
+
+                    Toggle("Enable Memory", isOn: $appModel.settings.memoryEnabled)
+                    Toggle("Enable Diagnostics", isOn: $appModel.settings.showRuntimeDiagnostics)
+                }
+
+                Section("Conversation") {
+                    Button {
+                        dismiss()
+                        appModel.startNewConversation()
+                    } label: {
+                        Label("New Conversation", systemImage: "square.and.pencil")
+                    }
+
+                    Button {
+                        dismiss()
+                        appModel.addKnowledgeItemFromConversation()
+                    } label: {
+                        Label("Save Latest Reply", systemImage: "bookmark")
+                    }
+                    .disabled(appModel.conversation.messages.last(where: { $0.role == .assistant }) == nil)
+
+                    Button {
+                        dismiss()
+                        appModel.apply(route: JarvisLaunchRoute(action: .settings, source: "assistant.controls"))
+                    } label: {
+                        Label("Open Full Settings", systemImage: "gearshape")
+                    }
+                }
+
+                if appModel.settings.showRuntimeDiagnostics {
+                    Section("Diagnostics") {
+                        LabeledContent("Runtime", value: appModel.runtimeState.title)
+                        LabeledContent("Task", value: appModel.assistantTask.displayName)
+                        if !appModel.lastPromptDebugSummary.isEmpty {
+                            Text(appModel.lastPromptDebugSummary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Assistant Controls")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct AssistantTranscriptBottomOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }

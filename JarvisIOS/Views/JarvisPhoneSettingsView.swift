@@ -67,6 +67,20 @@ struct JarvisPhoneSettingsView: View {
                         Text("All inference stays local. No hidden network fallback.")
                             .font(.footnote)
                     }
+
+                    Section("Assistant Memory") {
+                        Toggle("Enable Long-Term Memory", isOn: $appModel.settings.memoryEnabled)
+                        Text("When enabled, Jarvis stores durable local facts like preferences, project context, and recurring goals.")
+                            .font(.footnote)
+
+                        Button("Clear Assistant Memory", role: .destructive) {
+                            appModel.clearAssistantMemory()
+                        }
+
+                        Button("Clear Conversation Summaries", role: .destructive) {
+                            appModel.clearConversationSummaries()
+                        }
+                    }
                 }
                 .scrollContentBackground(.hidden)
             }

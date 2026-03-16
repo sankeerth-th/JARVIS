@@ -16,13 +16,15 @@ public final class JarvisExecutionPlanner {
     public func makePlan(
         for request: JarvisNormalizedAssistantRequest,
         classification: JarvisTaskClassification,
-        memoryContextAvailable: Bool
+        memoryContextAvailable: Bool,
+        elevatedRequest: JarvisElevatedRequest
     ) async -> JarvisAssistantExecutionPlan {
         let candidates = await capabilityProvider.candidates(for: request, classification: classification)
         let decision = decideMode(
             for: request,
             classification: classification,
             memoryContextAvailable: memoryContextAvailable,
+            elevatedRequest: elevatedRequest,
             capabilityCandidates: candidates
         )
         let deliveryMode = responseStrategy.deliveryMode(
@@ -35,6 +37,7 @@ public final class JarvisExecutionPlanner {
             request: request,
             detectedTask: classification.task,
             classification: classification,
+            elevatedRequest: elevatedRequest,
             mode: decision.mode,
             responseStyle: request.assistantMode.defaultResponseStyle,
             deliveryMode: deliveryMode,
@@ -45,7 +48,7 @@ public final class JarvisExecutionPlanner {
             ),
             diagnostics: JarvisAssistantDecisionTrace(
                 selectedMode: decision.mode,
-                reasoning: decision.reasons,
+                reasoning: decision.reasons + ["Elevated request: \(elevatedRequest.kind.rawValue) (\(elevatedRequest.elevatedIntent))"],
                 usedExistingPromptPipeline: decision.usesExistingPromptPipeline,
                 usedFallbackDirectResponse: decision.usedFallbackDirectResponse,
                 memoryAugmentationAvailable: memoryContextAvailable,
@@ -58,6 +61,7 @@ public final class JarvisExecutionPlanner {
         for request: JarvisNormalizedAssistantRequest,
         classification: JarvisTaskClassification,
         memoryContextAvailable: Bool,
+        elevatedRequest: JarvisElevatedRequest,
         capabilityCandidates: [JarvisAssistantCapabilityCandidate]
     ) -> Decision {
         var reasons: [String] = []
@@ -68,14 +72,33 @@ public final class JarvisExecutionPlanner {
             return Decision(mode: .visualRoute, reasons: reasons, usesExistingPromptPipeline: true, usedFallbackDirectResponse: false)
         }
 
+        switch elevatedRequest.kind {
+        case .deviceActionRequest:
+            reasons.append("Device action intent was detected, so the request stops at capability routing instead of generic text generation.")
+            return Decision(mode: .capabilityAction, reasons: reasons, usesExistingPromptPipeline: false, usedFallbackDirectResponse: false)
+        case .appActionRequest:
+            reasons.append("App action intent was detected, so the request is routed through capability handling before any response is generated.")
+            return Decision(mode: .capabilityAction, reasons: reasons, usesExistingPromptPipeline: false, usedFallbackDirectResponse: false)
+        case .searchRequest:
+            reasons.append("Search intent was detected, so the request routes through the search capability instead of free-form guessing.")
+            return Decision(mode: .capabilityAction, reasons: reasons, usesExistingPromptPipeline: false, usedFallbackDirectResponse: false)
+        case .planningRequest:
+            reasons.append("Planning intent was detected, so the assistant should produce a plan-first response.")
+            return Decision(mode: .planOnly, reasons: reasons, usesExistingPromptPipeline: true, usedFallbackDirectResponse: false)
+        default:
+            break
+        }
+
         if shouldClarify(request: request, classification: classification) {
             reasons.append("Prompt is too short or ambiguous for a direct answer, so the assistant should clarify before taking a stronger action path.")
             return Decision(mode: .clarify, reasons: reasons, usesExistingPromptPipeline: true, usedFallbackDirectResponse: false)
         }
 
         if !capabilityCandidates.isEmpty && request.executionPreferences.allowCapabilityExecution {
-            reasons.append("Capability placeholders matched this request, so the execution plan reserves a capability stage before the final response.")
-            return Decision(mode: .capabilityThenRespond, reasons: reasons, usesExistingPromptPipeline: true, usedFallbackDirectResponse: false)
+            if capabilityCandidates.contains(where: { $0.kind == .draftEmail }) {
+                reasons.append("Draft email capability was detected, so the request reserves a drafting capability stage before finalizing the response.")
+                return Decision(mode: .capabilityThenRespond, reasons: reasons, usesExistingPromptPipeline: true, usedFallbackDirectResponse: false)
+            }
         }
 
         if request.assistantMode == .plan || classification.category == .planning {
@@ -160,7 +183,7 @@ public final class JarvisExecutionPlanner {
         if mode == .capabilityAction || mode == .capabilityThenRespond {
             let detail = capabilityCandidates.isEmpty
                 ? "Reserve a capability stage for later threads without executing any actions yet."
-                : "Reserve a capability stage for \(capabilityCandidates.map(\.name).joined(separator: ", ")) before generating the response."
+                : "Reserve a capability stage for \(capabilityCandidates.map(\.name).joined(separator: ", "))\(mode == .capabilityAction ? " and stop before generic generation." : " before generating the response.")."
             steps.append(
                 JarvisAssistantExecutionStep(
                     kind: .inspectCapabilities,
@@ -169,6 +192,18 @@ public final class JarvisExecutionPlanner {
                     usesModel: false
                 )
             )
+        }
+
+        if mode == .capabilityAction {
+            steps.append(
+                JarvisAssistantExecutionStep(
+                    kind: .finalizeTurn,
+                    title: "Finalize Routed Turn",
+                    detail: "Return a structured fallback or routed action result without calling the model.",
+                    usesModel: false
+                )
+            )
+            return steps
         }
 
         steps.append(contentsOf: [

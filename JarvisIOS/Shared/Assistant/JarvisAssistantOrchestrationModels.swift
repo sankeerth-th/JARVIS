@@ -127,6 +127,7 @@ public struct JarvisNormalizedAssistantRequest: Equatable, Identifiable {
     public let attachments: [JarvisAssistantAttachmentPlaceholder]
     public let executionPreferences: JarvisAssistantExecutionPreferences
     public let inputMode: String
+    public let settingsSnapshot: JarvisAssistantSettings
 
     public init(
         id: UUID = UUID(),
@@ -143,7 +144,8 @@ public struct JarvisNormalizedAssistantRequest: Equatable, Identifiable {
         replyTargetText: String? = nil,
         attachments: [JarvisAssistantAttachmentPlaceholder] = [],
         executionPreferences: JarvisAssistantExecutionPreferences = .init(),
-        inputMode: String = "text"
+        inputMode: String = "text",
+        settingsSnapshot: JarvisAssistantSettings = .default
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -160,6 +162,7 @@ public struct JarvisNormalizedAssistantRequest: Equatable, Identifiable {
         self.attachments = attachments
         self.executionPreferences = executionPreferences
         self.inputMode = inputMode
+        self.settingsSnapshot = settingsSnapshot
     }
 }
 
@@ -238,6 +241,7 @@ public struct JarvisAssistantExecutionPlan: Equatable, Identifiable {
     public let request: JarvisNormalizedAssistantRequest
     public let detectedTask: JarvisAssistantTask
     public let classification: JarvisTaskClassification
+    public let elevatedRequest: JarvisElevatedRequest
     public let mode: JarvisAssistantExecutionMode
     public let responseStyle: JarvisAssistantResponseStyle
     public let deliveryMode: JarvisAssistantDeliveryMode
@@ -249,6 +253,7 @@ public struct JarvisAssistantExecutionPlan: Equatable, Identifiable {
         request: JarvisNormalizedAssistantRequest,
         detectedTask: JarvisAssistantTask,
         classification: JarvisTaskClassification,
+        elevatedRequest: JarvisElevatedRequest,
         mode: JarvisAssistantExecutionMode,
         responseStyle: JarvisAssistantResponseStyle,
         deliveryMode: JarvisAssistantDeliveryMode,
@@ -259,6 +264,7 @@ public struct JarvisAssistantExecutionPlan: Equatable, Identifiable {
         self.request = request
         self.detectedTask = detectedTask
         self.classification = classification
+        self.elevatedRequest = elevatedRequest
         self.mode = mode
         self.responseStyle = responseStyle
         self.deliveryMode = deliveryMode
@@ -283,14 +289,40 @@ public struct JarvisAssistantMemoryAugmentation: Equatable {
 }
 
 public struct JarvisAssistantCapabilityCandidate: Equatable, Identifiable {
+    public enum Kind: String, Codable, Equatable {
+        case screenshot
+        case openRoute
+        case searchKnowledge
+        case draftEmail
+        case saveContent
+        case copyContent
+        case newChat
+        case generic
+    }
+
+    public enum Availability: String, Codable, Equatable {
+        case placeholder
+        case available
+    }
+
     public let id: UUID
     public let name: String
     public let summary: String
+    public let kind: Kind
+    public let availability: Availability
 
-    public init(id: UUID = UUID(), name: String, summary: String) {
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        summary: String,
+        kind: Kind = .generic,
+        availability: Availability = .placeholder
+    ) {
         self.id = id
         self.name = name
         self.summary = summary
+        self.kind = kind
+        self.availability = availability
     }
 }
 

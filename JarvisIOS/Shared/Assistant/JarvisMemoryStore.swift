@@ -71,7 +71,9 @@ public final class JarvisMemoryStore {
     public func searchMemories(
         query: String,
         conversationID: UUID?,
-        limit: Int
+        limit: Int,
+        classification: JarvisTaskClassification? = nil,
+        skill: JarvisSkill? = nil
     ) -> [JarvisMemoryMatch] {
         let queryTerms = JarvisMemoryText.terms(for: query)
         guard !queryTerms.isEmpty else { return [] }
@@ -82,7 +84,9 @@ public final class JarvisMemoryStore {
                 from: payload.memories,
                 queryTerms: queryTerms,
                 conversationID: conversationID,
-                limit: limit
+                limit: limit,
+                classification: classification,
+                skill: skill
             )
         }
 
@@ -92,6 +96,22 @@ public final class JarvisMemoryStore {
     public func clearAll() {
         queue.sync {
             persist(StorePayload(memories: [], summaries: []))
+        }
+    }
+
+    public func clearMemories() {
+        queue.sync {
+            var payload = loadPayload()
+            payload.memories = []
+            persist(payload)
+        }
+    }
+
+    public func clearSummaries() {
+        queue.sync {
+            var payload = loadPayload()
+            payload.summaries = []
+            persist(payload)
         }
     }
 
@@ -112,7 +132,9 @@ public final class JarvisMemoryStore {
         from memories: [JarvisMemoryRecord],
         queryTerms: [String],
         conversationID: UUID?,
-        limit: Int
+        limit: Int,
+        classification: JarvisTaskClassification?,
+        skill: JarvisSkill?
     ) -> [JarvisMemoryMatch] {
         var matches: [JarvisMemoryMatch] = []
         matches.reserveCapacity(memories.count)
@@ -136,6 +158,7 @@ public final class JarvisMemoryStore {
             let conversationBoost = record.conversationID == conversationID ? 0.7 : 0.0
             let pinnedBoost = record.isPinned ? 0.8 : 0.0
             let overlapScore = Double(titleMatches.count * 3 + contentMatches.count * 2 + tagMatches.count * 4)
+            let taskBoost = taskAwareBoost(for: record, classification: classification, skill: skill)
             let score = overlapScore
                 + record.kind.retrievalWeight
                 + conversationBoost
@@ -143,6 +166,7 @@ public final class JarvisMemoryStore {
                 + record.importance
                 + record.confidence
                 + recencyBoost
+                + taskBoost
 
             var reasons: [String] = []
             if !titleMatches.isEmpty {
@@ -157,6 +181,9 @@ public final class JarvisMemoryStore {
             if record.isPinned {
                 reasons.append("pinned")
             }
+            if taskBoost > 0 {
+                reasons.append("task-aware")
+            }
 
             matches.append(JarvisMemoryMatch(record: record, score: score, reasons: reasons))
         }
@@ -169,5 +196,108 @@ public final class JarvisMemoryStore {
         }
 
         return Array(sorted.prefix(limit))
+    }
+
+    private func taskAwareBoost(
+        for record: JarvisMemoryRecord,
+        classification: JarvisTaskClassification?,
+        skill: JarvisSkill?
+    ) -> Double {
+        guard let classification else { return 0 }
+
+        var boost = 0.0
+
+        if let skill, skill.preferredMemoryKinds.contains(record.kind) {
+            boost += 1.35
+        }
+
+        switch classification.category {
+        case .coding:
+            switch record.kind {
+            case .project:
+                boost += 1.4
+            case .task:
+                boost += 1.2
+            case .recentContext:
+                boost += 1.0
+            case .conversationSummary:
+                boost += 0.8
+            case .personalFact, .preference, .knowledge:
+                boost += 0.15
+            }
+        case .draftingEmail, .draftingMessage, .contextAwareReply, .rewritingText:
+            switch record.kind {
+            case .preference:
+                boost += 1.5
+            case .recentContext:
+                boost += 1.2
+            case .conversationSummary:
+                boost += 0.9
+            case .project, .task:
+                boost += 0.4
+            case .personalFact, .knowledge:
+                boost += 0.2
+            }
+        case .planning:
+            switch record.kind {
+            case .task:
+                boost += 1.5
+            case .project:
+                boost += 1.3
+            case .conversationSummary:
+                boost += 1.0
+            case .recentContext:
+                boost += 0.9
+            case .preference:
+                boost += 0.3
+            case .personalFact, .knowledge:
+                boost += 0.15
+            }
+        case .summarization:
+            switch record.kind {
+            case .conversationSummary:
+                boost += 1.4
+            case .knowledge:
+                boost += 0.9
+            case .recentContext:
+                boost += 0.6
+            case .project, .task:
+                boost += 0.4
+            case .preference, .personalFact:
+                boost += 0.1
+            }
+        case .questionAnswering, .explainingSomething:
+            switch record.kind {
+            case .knowledge:
+                boost += 1.5
+            case .conversationSummary:
+                boost += 1.0
+            case .project:
+                boost += 0.8
+            case .preference:
+                boost += 0.6
+            case .task, .recentContext:
+                boost += 0.4
+            case .personalFact:
+                boost += 0.2
+            }
+        case .generalChat:
+            switch record.kind {
+            case .project:
+                boost += 0.8
+            case .preference:
+                boost += 0.8
+            case .conversationSummary:
+                boost += 0.7
+            case .recentContext:
+                boost += 0.6
+            case .task:
+                boost += 0.5
+            case .personalFact, .knowledge:
+                boost += 0.3
+            }
+        }
+
+        return boost
     }
 }

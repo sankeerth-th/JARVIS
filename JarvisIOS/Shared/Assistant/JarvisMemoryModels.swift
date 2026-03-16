@@ -7,6 +7,7 @@ public enum JarvisMemoryKind: String, Codable, CaseIterable, Equatable {
     case task
     case conversationSummary
     case recentContext
+    case knowledge
 
     public var promptTitle: String {
         switch self {
@@ -22,6 +23,8 @@ public enum JarvisMemoryKind: String, Codable, CaseIterable, Equatable {
             return "Conversation Summary"
         case .recentContext:
             return "Recent Context"
+        case .knowledge:
+            return "Knowledge"
         }
     }
 
@@ -39,6 +42,8 @@ public enum JarvisMemoryKind: String, Codable, CaseIterable, Equatable {
             return 1.7
         case .recentContext:
             return 1.2
+        case .knowledge:
+            return 1.9
         }
     }
 }
@@ -120,6 +125,8 @@ public struct ConversationSummary: Identifiable, Codable, Equatable {
     public let keyTopics: [String]
     public let userIntent: String
     public let assistantActions: [String]
+    public let openTasks: [String]?
+    public let unresolvedFollowUps: [String]?
 
     public init(
         id: UUID = UUID(),
@@ -130,7 +137,9 @@ public struct ConversationSummary: Identifiable, Codable, Equatable {
         summaryText: String,
         keyTopics: [String] = [],
         userIntent: String = "",
-        assistantActions: [String] = []
+        assistantActions: [String] = [],
+        openTasks: [String]? = nil,
+        unresolvedFollowUps: [String]? = nil
     ) {
         self.id = id
         self.conversationID = conversationID
@@ -141,6 +150,8 @@ public struct ConversationSummary: Identifiable, Codable, Equatable {
         self.keyTopics = keyTopics
         self.userIntent = userIntent
         self.assistantActions = assistantActions
+        self.openTasks = openTasks
+        self.unresolvedFollowUps = unresolvedFollowUps
     }
 }
 
@@ -173,6 +184,10 @@ public struct MemoryContext: Equatable {
     public var isMemoryInformed: Bool {
         summary != nil || !retrievedMemories.isEmpty
     }
+
+    public var sourceKinds: [JarvisMemoryKind] {
+        Array(Set(retrievedMemories.map(\.record.kind))).sorted { $0.rawValue < $1.rawValue }
+    }
 }
 
 public struct MemoryRetentionPolicy: Equatable {
@@ -186,7 +201,7 @@ public struct MemoryRetentionPolicy: Equatable {
 
     public init(
         maxRecentMessages: Int = 8,
-        maxSummaryMessages: Int = 18,
+        maxSummaryMessages: Int = 20,
         maxCharactersPerMessage: Int = 800,
         minMessageAgeForCompression: TimeInterval = 300,
         enableSemanticCompression: Bool = true,

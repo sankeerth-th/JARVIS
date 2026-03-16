@@ -175,6 +175,7 @@ public struct JarvisAssistantRequest: Equatable {
     public var promptBlueprint: JarvisPromptBlueprint
     public var tuning: JarvisGenerationTuning
     public var debugSummary: String
+    public var promptMode: JarvisAssistantPromptMode
 
     public init(
         task: JarvisAssistantTask,
@@ -186,7 +187,8 @@ public struct JarvisAssistantRequest: Equatable {
         classification: JarvisTaskClassification = .default,
         promptBlueprint: JarvisPromptBlueprint = .default,
         tuning: JarvisGenerationTuning = .balanced,
-        debugSummary: String = ""
+        debugSummary: String = "",
+        promptMode: JarvisAssistantPromptMode = .safe
     ) {
         self.task = task
         self.prompt = prompt
@@ -198,5 +200,6 @@ public struct JarvisAssistantRequest: Equatable {
         self.promptBlueprint = promptBlueprint
         self.tuning = tuning
         self.debugSummary = debugSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.promptMode = promptMode
     }
 }

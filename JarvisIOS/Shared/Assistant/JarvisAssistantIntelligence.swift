@@ -392,7 +392,7 @@ enum JarvisAssistantIntelligence {
             )
         }
 
-        if containsAny(normalized, in: ["swift", "xcode", "stack trace", "compile", "compiler", "function", "refactor", "debug", "bug", "code", "test case", "unit test", "regex"]) {
+        if containsAny(normalized, in: ["swift", "xcode", "stack trace", "compile", "compiler", "function", "refactor", "debug", "bug", "code", "test case", "unit test", "regex", "python", "javascript", "typescript", "script", "class ", "def ", "func ", "write a script", "write code"]) {
             return JarvisTaskClassification(
                 category: .coding,
                 task: .analyzeText,
@@ -462,6 +462,7 @@ enum JarvisAssistantIntelligence {
         settings: JarvisAssistantSettings
     ) -> JarvisGenerationTuning {
         let settingsStyle = settings.responseStyle
+        let effectiveCreativity = clamp(settings.creativity, min: 0.0, max: 1.0)
 
         func resolvedStyle(_ presetStyle: JarvisAssistantResponseStyle) -> JarvisAssistantResponseStyle {
             switch settingsStyle {
@@ -476,19 +477,21 @@ enum JarvisAssistantIntelligence {
 
         switch classification.preset {
         case .balanced:
+            let isPlanning = classification.category == .planning
+            let isGreetingLike = classification.category == .generalChat && classification.confidence <= 0.65
             return JarvisGenerationTuning(
                 preset: .balanced,
-                temperature: clamp(settings.creativity, min: 0.45, max: 0.68),
+                temperature: isPlanning ? 0.45 : clamp(effectiveCreativity, min: 0.60, max: 0.70),
                 topP: 0.90,
                 topK: 40,
-                typicalP: 0.96,
-                repeatPenalty: 1.08,
-                penaltyLastN: 72,
+                typicalP: isPlanning ? 0.94 : 0.95,
+                repeatPenalty: isPlanning ? 1.12 : 1.10,
+                penaltyLastN: isPlanning ? 96 : 72,
                 maxContextTokens: 768,
-                maxOutputTokens: settings.responseStyle == .concise ? 220 : 320,
+                maxOutputTokens: isGreetingLike ? 40 : (isPlanning ? 250 : 220),
                 maxHistoryCharacters: 2_400,
                 maxKnowledgeCharacters: 520,
-                repetitionWindowCharacters: 280,
+                repetitionWindowCharacters: isPlanning ? 320 : 280,
                 repetitionThreshold: 3,
                 requiresGroundedAnswers: false,
                 usesReasoningPlan: true,
@@ -497,52 +500,54 @@ enum JarvisAssistantIntelligence {
         case .creative:
             return JarvisGenerationTuning(
                 preset: .creative,
-                temperature: clamp(max(settings.creativity, 0.72), min: 0.68, max: 0.92),
-                topP: 0.95,
-                topK: 64,
-                typicalP: 0.98,
-                repeatPenalty: 1.05,
-                penaltyLastN: 56,
+                temperature: clamp(max(effectiveCreativity, 0.68), min: 0.68, max: 0.82),
+                topP: 0.90,
+                topK: 48,
+                typicalP: 0.95,
+                repeatPenalty: 1.10,
+                penaltyLastN: 72,
                 maxContextTokens: 640,
-                maxOutputTokens: settings.responseStyle == .concise ? 200 : 300,
+                maxOutputTokens: 220,
                 maxHistoryCharacters: 2_100,
                 maxKnowledgeCharacters: 320,
                 repetitionWindowCharacters: 240,
-                repetitionThreshold: 4,
+                repetitionThreshold: 3,
                 requiresGroundedAnswers: false,
-                usesReasoningPlan: false,
-                responseStyle: resolvedStyle(.detailed)
+                usesReasoningPlan: true,
+                responseStyle: resolvedStyle(.balanced)
             )
         case .precise:
+            let isSummary = classification.category == .summarization
+            let isQuestion = classification.category == .questionAnswering
             return JarvisGenerationTuning(
                 preset: .precise,
-                temperature: clamp(min(settings.creativity, 0.34), min: 0.18, max: 0.36),
-                topP: 0.82,
+                temperature: isSummary ? 0.35 : 0.45,
+                topP: isSummary ? 0.82 : 0.88,
                 topK: 28,
-                typicalP: 0.92,
-                repeatPenalty: 1.14,
-                penaltyLastN: 96,
+                typicalP: isSummary ? 0.90 : 0.92,
+                repeatPenalty: isSummary ? 1.16 : 1.15,
+                penaltyLastN: isSummary ? 112 : 96,
                 maxContextTokens: 896,
-                maxOutputTokens: settings.responseStyle == .detailed ? 360 : 260,
+                maxOutputTokens: isSummary ? 300 : 200,
                 maxHistoryCharacters: 1_800,
                 maxKnowledgeCharacters: 720,
-                repetitionWindowCharacters: 320,
+                repetitionWindowCharacters: isSummary ? 360 : 320,
                 repetitionThreshold: 3,
-                requiresGroundedAnswers: true,
+                requiresGroundedAnswers: isSummary || isQuestion || classification.shouldInjectKnowledge,
                 usesReasoningPlan: true,
                 responseStyle: resolvedStyle(.balanced)
             )
         case .coding:
             return JarvisGenerationTuning(
                 preset: .coding,
-                temperature: clamp(min(settings.creativity, 0.28), min: 0.12, max: 0.30),
-                topP: 0.78,
+                temperature: 0.20,
+                topP: 0.85,
                 topK: 24,
                 typicalP: 0.90,
                 repeatPenalty: 1.12,
-                penaltyLastN: 112,
+                penaltyLastN: 128,
                 maxContextTokens: 1_024,
-                maxOutputTokens: settings.responseStyle == .detailed ? 420 : 300,
+                maxOutputTokens: 400,
                 maxHistoryCharacters: 2_600,
                 maxKnowledgeCharacters: 420,
                 repetitionWindowCharacters: 360,
@@ -554,14 +559,14 @@ enum JarvisAssistantIntelligence {
         case .drafting:
             return JarvisGenerationTuning(
                 preset: .drafting,
-                temperature: clamp(settings.creativity, min: 0.42, max: 0.62),
-                topP: 0.91,
+                temperature: clamp(effectiveCreativity, min: 0.60, max: 0.70),
+                topP: 0.90,
                 topK: 36,
                 typicalP: 0.95,
                 repeatPenalty: 1.10,
                 penaltyLastN: 72,
                 maxContextTokens: 768,
-                maxOutputTokens: settings.responseStyle == .concise ? 220 : 320,
+                maxOutputTokens: 220,
                 maxHistoryCharacters: 2_100,
                 maxKnowledgeCharacters: 360,
                 repetitionWindowCharacters: 260,
@@ -695,9 +700,15 @@ enum JarvisAssistantIntelligence {
         replyTargetText: String?,
         mode: String
     ) -> JarvisPromptEnvelope {
+        let normalizedPrompt = compactWhitespace(prompt)
+        let filteredHistory = history.filter { message in
+            guard message.role == .user else { return true }
+            return compactWhitespace(message.text) != normalizedPrompt
+        }
+
         var contextBlocks: [JarvisPromptContextBlock] = [
             JarvisPromptContextBlock(
-                title: "Assistant Mode",
+                title: "Mode",
                 content: "Source: \(source)\nInput mode: \(mode)\nDetected task: \(classification.category.displayName)"
             )
         ]
@@ -705,7 +716,7 @@ enum JarvisAssistantIntelligence {
         if let olderMemorySummary, !olderMemorySummary.isEmpty {
             contextBlocks.append(
                 JarvisPromptContextBlock(
-                    title: "Relevant Previous Conversation",
+                    title: "Prior Context",
                     content: olderMemorySummary
                 )
             )
@@ -714,7 +725,7 @@ enum JarvisAssistantIntelligence {
         if let replyTargetText, !replyTargetText.isEmpty {
             contextBlocks.append(
                 JarvisPromptContextBlock(
-                    title: "Reply Target",
+                    title: "Reply",
                     content: replyTargetText
                 )
             )
@@ -727,7 +738,7 @@ enum JarvisAssistantIntelligence {
 
             contextBlocks.append(
                 JarvisPromptContextBlock(
-                    title: "Knowledge Context",
+                    title: "Knowledge",
                     content: knowledgeContent
                 )
             )
@@ -737,7 +748,6 @@ enum JarvisAssistantIntelligence {
             systemInstruction: """
             You are Jarvis, a private on-device iPhone assistant designed for fast reasoning, reliable answers, and strong task execution.
             Treat system instructions as highest priority. Use the supplied context first. If the answer is uncertain or under-specified, say what is missing instead of guessing.
-            Think through the response briefly before writing it, but do not reveal private reasoning or chain-of-thought.
             Avoid filler, avoid repeating the user's wording, and do not claim actions or facts you cannot support.
             """,
             assistantRole: "Act like a calm, highly capable iPhone assistant. Be concise, concrete, and easy to scan on a small screen.",
@@ -759,7 +769,7 @@ enum JarvisAssistantIntelligence {
             tuning: tuning,
             blueprint: blueprint,
             prompt: finalPrompt,
-            history: history,
+            history: filteredHistory,
             groundedResults: groundedResults,
             replyTargetText: replyTargetText,
             debugSummary: debugSummary
@@ -839,7 +849,7 @@ enum JarvisAssistantIntelligence {
         ]
 
         if tuning.usesReasoningPlan {
-            components.append("Internally make a short answer plan before writing the final response.")
+            components.append("Think step-by-step internally before answering. Do not expose reasoning. Return only the final answer.")
         }
 
         if tuning.requiresGroundedAnswers || classification.shouldInjectKnowledge {

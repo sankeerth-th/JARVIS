@@ -139,7 +139,6 @@ struct SettingsTabView: View {
                     }
 
                     Toggle("Auto-warm On First Send", isOn: $appModel.settings.autoWarmOnFirstSend)
-                    Toggle("Warm Active Model On Launch", isOn: $appModel.settings.autoWarmOnLaunch)
                 }
                 
                 Section("Runtime Profile") {
@@ -202,19 +201,37 @@ struct SettingsTabView: View {
                     }
                 }
 
-                Section("Assistant") {
+                Section("Assistant Platform") {
                     Picker("Startup Destination", selection: $appModel.settings.startupRoute) {
                         ForEach(JarvisStartupRoute.allCases) { route in
                             Text(route.displayName).tag(route)
                         }
                     }
 
-                    LabeledContent("Recommended Profile", value: appModel.supportedModelDisplayName)
+                    Picker("Assistant Mode", selection: $appModel.settings.assistantQualityMode) {
+                        ForEach(JarvisAssistantQualityMode.allCases) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
+
+                    Picker("Prompt Mode", selection: $appModel.settings.promptMode) {
+                        ForEach(JarvisAssistantPromptMode.allCases) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
 
                     Picker("Response Style", selection: $appModel.settings.responseStyle) {
                         ForEach(JarvisAssistantResponseStyle.allCases) { style in
                             Text(style.displayName).tag(style)
                         }
+                    }
+
+                    Toggle("Enable Memory", isOn: $appModel.settings.memoryEnabled)
+
+                    Button(role: .destructive) {
+                        appModel.clearAssistantMemory()
+                    } label: {
+                        Label("Clear Memory", systemImage: "trash")
                     }
 
                     Toggle("Auto-start Voice Entry", isOn: $appModel.settings.autoStartListeningForVoiceEntry)
@@ -230,13 +247,20 @@ struct SettingsTabView: View {
 
                 Section("Chat & Device") {
                     Toggle("Auto-scroll Conversation", isOn: $appModel.settings.autoScrollConversation)
-                    Toggle("Show Runtime Diagnostics", isOn: $appModel.settings.showRuntimeDiagnostics)
                     Toggle("Enable Haptics", isOn: $appModel.settings.hapticsEnabled)
                     Toggle("Unload Model In Background", isOn: $appModel.settings.unloadModelOnBackground)
                     Toggle("Battery Saver Mode", isOn: $appModel.settings.batterySaverMode)
                 }
 
-                Section("Diagnostics") {
+                Section("Runtime") {
+                    Toggle("Enable Diagnostics", isOn: $appModel.settings.showRuntimeDiagnostics)
+
+                    Button {
+                        appModel.resetAssistantState()
+                    } label: {
+                        Label("Reset Assistant State", systemImage: "arrow.counterclockwise")
+                    }
+
                     NavigationLink("Runtime Diagnostics") {
                         RuntimeDiagnosticsView()
                     }
@@ -246,6 +270,10 @@ struct SettingsTabView: View {
                             .font(.footnote)
                             .foregroundStyle(.orange)
                     }
+                }
+
+                Section("Diagnostics") {
+                    LabeledContent("Recommended Profile", value: appModel.supportedModelDisplayName)
                 }
             }
             .navigationTitle("Settings")
