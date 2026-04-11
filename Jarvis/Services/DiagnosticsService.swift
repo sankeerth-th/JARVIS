@@ -48,7 +48,14 @@ final class DiagnosticsService: ObservableObject {
     }
 
     func logEvent(feature: String, type: String, summary: String, metadata: [String: String] = [:]) {
-        database.logFeatureEvent(FeatureEvent(feature: feature, type: type, summary: summary, metadata: metadata))
+        database.logFeatureEvent(
+            FeatureEvent(
+                feature: feature,
+                type: type,
+                summary: JarvisSecurityRedactor.redact(summary),
+                metadata: JarvisSecurityRedactor.redact(metadata: metadata)
+            )
+        )
     }
 
     func recentEvents(limit: Int = 20, feature: String? = nil, since: Date? = nil) -> [FeatureEvent] {

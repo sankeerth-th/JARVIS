@@ -38,9 +38,9 @@ enum JarvisAppTab: String, CaseIterable, Hashable, Identifiable {
         case .home:
             return "Home"
         case .assistant:
-            return "Ask"
+            return "Chat"
         case .visual:
-            return "Visual"
+            return "Voice"
         case .knowledge:
             return "Knowledge"
         case .settings:
@@ -55,7 +55,7 @@ enum JarvisAppTab: String, CaseIterable, Hashable, Identifiable {
         case .assistant:
             return "bubble.left.fill"
         case .visual:
-            return "viewfinder.circle.fill"
+            return "waveform.circle.fill"
         case .knowledge:
             return "books.vertical.fill"
         case .settings:
@@ -266,6 +266,19 @@ final class JarvisPhoneAppModel: ObservableObject {
         return models.first(where: { $0.id == activeModelID })
     }
 
+    var usesRemoteOllamaRuntime: Bool {
+        settings.runtimeBackend == .remoteOllama
+    }
+
+    var ollamaConfiguration: JarvisOllamaConfiguration {
+        settings.ollama
+    }
+
+    var remoteRuntimeDisplayName: String {
+        let name = ollamaConfiguration.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? "Ollama" : name
+    }
+
     var hasReadyModel: Bool {
         models.contains(where: \.canActivate)
     }
@@ -304,8 +317,15 @@ final class JarvisPhoneAppModel: ObservableObject {
         isAssistantKeyboardActive || assistantSurfaceState == .typing
     }
 
+    var shouldHideFloatingTabBar: Bool {
+        selectedTab == .assistant && isAssistantKeyboardActive
+    }
+
     var needsModelSetup: Bool {
         guard hasLoadedPersistentState else { return false }
+        if usesRemoteOllamaRuntime {
+            return !ollamaConfiguration.isConfigured
+        }
         guard let activeModel else { return true }
         return !activeModel.canActivate
     }
@@ -361,6 +381,11 @@ final class JarvisPhoneAppModel: ObservableObject {
     }
 
     var activeModelSupportStatusText: String {
+        if usesRemoteOllamaRuntime {
+            return ollamaConfiguration.isConfigured
+                ? "Remote Ollama backend using \(remoteRuntimeDisplayName)"
+                : "Remote Ollama backend is not configured"
+        }
         guard let activeModel else {
             return "No active local model selected"
         }
@@ -371,6 +396,9 @@ final class JarvisPhoneAppModel: ObservableObject {
     }
 
     var activeModelVisualStatusText: String {
+        if usesRemoteOllamaRuntime {
+            return "Remote Ollama chat is enabled. Visual input remains local-only and is not wired through Ollama."
+        }
         guard let activeModel else {
             return "No active model"
         }
@@ -378,6 +406,9 @@ final class JarvisPhoneAppModel: ObservableObject {
     }
 
     var visualAssistantStatusText: String {
+        if usesRemoteOllamaRuntime {
+            return "Visual assistant preview stays on the local runtime path. Ollama remote is currently text-only."
+        }
         if needsModelSetup {
             return missingSupportedModelReason()
         }
@@ -400,6 +431,30 @@ final class JarvisPhoneAppModel: ObservableObject {
     }
 
     var assistantRuntimeGateStatus: AssistantRuntimeGateStatus {
+        if usesRemoteOllamaRuntime {
+            if needsModelSetup {
+                return .noModel(missingSupportedModelReason())
+            }
+            switch runtimeState {
+            case .runtimeUnavailable(let reason):
+                return .failed(reason)
+            case .cold(let modelName):
+                return .runtimeCold("\(modelName) is configured and will connect on demand.")
+            case .warming(let modelName, _, let detail):
+                return .warming("\(modelName): \(detail)")
+            case .ready:
+                return .ready
+            case .busy(let modelName, let detail):
+                return .warming("\(modelName): \(detail)")
+            case .paused(let modelName, let detail):
+                return .runtimeCold("\(modelName ?? remoteRuntimeDisplayName): \(detail)")
+            case .failed(_, let failure):
+                return .failed(failure.message)
+            case .noModel:
+                return .runtimeCold("\(remoteRuntimeDisplayName) will connect on demand.")
+            }
+        }
+
         if let activeModel, activeModel.activationEligibility != .eligible {
             return .unsupportedModel(activeModel.statusMessage ?? "The selected model is not activatable on iPhone.")
         }
@@ -463,6 +518,7 @@ final class JarvisPhoneAppModel: ObservableObject {
     private let speechCoordinator: JarvisSpeechCoordinator
     private var streamTask: Task<Void, Never>?
     private var groundingTransitionTask: Task<Void, Never>?
+    private var thinkingTransitionTask: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
     private var settingsPersistenceEnabled = false
     private var pendingModelLibraryImport = false
@@ -505,7 +561,7 @@ final class JarvisPhoneAppModel: ObservableObject {
         self.orchestrator = JarvisTaskOrchestrator(
             runtime: self.runtime,
             memoryManager: conversationMemoryManager,
-            executionPlanner: executionPlanner,
+            executionPlanner: JarvisExecutionPlannerAdapter(planner: executionPlanner),
             memoryProvider: semanticMemoryProvider
         )
         self.speechCoordinator = speechCoordinator ?? JarvisSpeechCoordinator()
@@ -1102,6 +1158,7 @@ final class JarvisPhoneAppModel: ObservableObject {
     private func sendWithOrchestrator(prompt: String) {
         // Cancel any existing tasks
         streamTask?.cancel()
+        thinkingTransitionTask?.cancel()
         groundingTransitionTask?.cancel()
         orchestrator.cancel()
         
@@ -1133,7 +1190,7 @@ final class JarvisPhoneAppModel: ObservableObject {
         // Set up UI state
         isSending = true
         statusText = pendingWarmupStatusText()
-        assistantExperienceState = .thinking
+        assistantExperienceState = .armed
         assistantSuggestions = []
         assistantContinuityLabel = nil
         JarvisHaptics.softImpact()
@@ -1148,9 +1205,17 @@ final class JarvisPhoneAppModel: ObservableObject {
         persistCurrentConversation()
         pendingAssistantRequest = buildAssistantRequest(prompt: prompt)
         
+        thinkingTransitionTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard let self else { return }
+            guard self.isSending else { return }
+            guard self.assistantExperienceState == .armed || self.assistantExperienceState == .idle else { return }
+            self.assistantExperienceState = .thinking
+        }
+
         // Transition to grounding state after delay
         groundingTransitionTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 420_000_000)
+            try? await Task.sleep(nanoseconds: 320_000_000)
             guard let self else { return }
             guard self.isSending, self.assistantExperienceState == .thinking else { return }
             self.assistantExperienceState = .grounding
@@ -1159,11 +1224,11 @@ final class JarvisPhoneAppModel: ObservableObject {
         // Start orchestration
         orchestrator.orchestrate(
             request: orchestrationRequest,
-            onToken: { [weak self] token in
+            onToken: { [weak self] draftText in
                 Task { @MainActor [weak self] in
                     guard let self = self else { return }
                     if let index = self.conversation.messages.firstIndex(where: { $0.id == streamingID }) {
-                        self.conversation.messages[index].text.append(token)
+                        self.conversation.messages[index].text = draftText
                         self.streamingRevision &+= 1
                     }
                 }
@@ -1172,10 +1237,11 @@ final class JarvisPhoneAppModel: ObservableObject {
                 Task { @MainActor [weak self] in
                     guard let self = self else { return }
                     
+                    self.thinkingTransitionTask?.cancel()
+                    self.thinkingTransitionTask = nil
                     self.groundingTransitionTask?.cancel()
                     self.groundingTransitionTask = nil
                     self.isSending = false
-                    
                     if let error = result.error {
                         self.statusText = error.localizedDescription
                         self.lastExecutionPlan = result.executionPlan
@@ -1191,21 +1257,19 @@ final class JarvisPhoneAppModel: ObservableObject {
                     } else {
                         // Finalize the message
                         if let index = self.conversation.messages.firstIndex(where: { $0.id == streamingID }) {
+                            let finalizedText = result.finalizedResponseText(
+                                runtimeStreamingText: self.orchestrator.streamingText
+                            )
+                            self.conversation.messages[index].text = finalizedText
                             self.conversation.messages[index].isStreaming = false
                             self.conversation.messages[index].structuredOutput = JarvisAssistantOutputFormatter.format(
-                                text: self.conversation.messages[index].text,
+                                text: finalizedText,
                                 classification: result.classification,
                                 memoryContext: result.memoryContext,
-                                skill: result.selectedSkill?.skill
+                                skill: result.selectedSkill?.skill,
+                                capabilitySurfaces: result.turnResult.capabilitySurfaces
                             )
-                            self.conversation.messages[index].memoryAttribution = JarvisMessageMemoryAttribution(
-                                usedMemory: result.memoryContext.isMemoryInformed,
-                                memorySourceIDs: result.memoryContext.retrievedMemories.map(\.record.id),
-                                sourceKinds: result.memoryContext.sourceKinds,
-                                labels: result.memoryContext.memoryLabels,
-                                usedSummary: result.memoryContext.summary != nil,
-                                chosenSkillID: result.selectedSkill?.skill.id
-                            )
+                            self.conversation.messages[index].memoryAttribution = result.resultMessageAttribution
                         }
                         
                         self.statusText = "Ready"
@@ -1213,14 +1277,14 @@ final class JarvisPhoneAppModel: ObservableObject {
                         self.lastTaskClassification = result.classification
                         self.lastGenerationPreset = result.tuning.preset
                         self.lastPromptDebugSummary = result.assistantRequest.debugSummary
-                        self.lastExecutionPlan = result.executionPlan
-                        self.lastDecisionTrace = result.executionPlan.diagnostics
+                        self.lastExecutionPlan = result.resultPlan
+                        self.lastDecisionTrace = result.resultDiagnostics
                         self.pendingAssistantRequest = nil
                         self.latestCompletedRequest = result.assistantRequest
                         self.assistantContinuityLabel = self.buildContinuityLabel(from: result.memoryContext)
                         
                         // Convert and set suggestions
-                        self.assistantSuggestions = result.suggestions.map { self.makeAssistantSuggestion(from: $0) }
+                        self.assistantSuggestions = result.resultSuggestions.map { self.makeAssistantSuggestion(from: $0) }
                         
                         self.persistCurrentConversation()
                         JarvisHaptics.success()
@@ -1239,12 +1303,15 @@ final class JarvisPhoneAppModel: ObservableObject {
             // Keep current state (thinking/grounding)
             break
         case .warmingRuntime:
+            thinkingTransitionTask?.cancel()
             assistantExperienceState = .thinking
         case .generating:
+            thinkingTransitionTask?.cancel()
             groundingTransitionTask?.cancel()
             groundingTransitionTask = nil
             assistantExperienceState = .responding
         case .streaming:
+            thinkingTransitionTask?.cancel()
             groundingTransitionTask?.cancel()
             groundingTransitionTask = nil
             assistantExperienceState = .responding
@@ -1274,6 +1341,7 @@ final class JarvisPhoneAppModel: ObservableObject {
 
     func cancelStreaming() {
         streamTask?.cancel()
+        thinkingTransitionTask?.cancel()
         groundingTransitionTask?.cancel()
         groundingTransitionTask = nil
         orchestrator.cancel()
@@ -1526,6 +1594,7 @@ final class JarvisPhoneAppModel: ObservableObject {
         settingsStore.save(newValue)
         JarvisHaptics.configure(isEnabled: newValue.hapticsEnabled)
         runtime.updateConfiguration(newValue.runtimeConfiguration)
+        reloadModelLibrary()
         runtimeState = runtime.state
         runtimeFailure = runtime.lastFailure
         memoryFlagStore.write(newValue.memoryEnabled)
@@ -1586,7 +1655,9 @@ final class JarvisPhoneAppModel: ObservableObject {
         models = modelLibrary.loadModels()
         activeModelID = modelLibrary.activeModelID()
 
-        if let activeModel, activeModel.canActivate {
+        if usesRemoteOllamaRuntime {
+            runtime.setSelectedModel(nil)
+        } else if let activeModel, activeModel.canActivate {
             let selection = modelLibrary.runtimeSelection(for: activeModel)
             runtime.setSelectedModel(selection)
         } else {
@@ -1616,7 +1687,9 @@ final class JarvisPhoneAppModel: ObservableObject {
                 self.models = loadedModels
                 self.activeModelID = loadedActiveModelID
 
-                if let activeModel = loadedModels.first(where: { $0.id == loadedActiveModelID && $0.canActivate }) {
+                if self.usesRemoteOllamaRuntime {
+                    self.runtime.setSelectedModel(nil)
+                } else if let activeModel = loadedModels.first(where: { $0.id == loadedActiveModelID && $0.canActivate }) {
                     let selection = modelLibrary.runtimeSelection(for: activeModel)
                     self.runtime.setSelectedModel(selection)
                 } else {
@@ -1656,7 +1729,9 @@ final class JarvisPhoneAppModel: ObservableObject {
             return
         }
 
-        let warmTargetName = activeModel?.displayName ?? supportedModelDisplayName
+        let warmTargetName = usesRemoteOllamaRuntime
+            ? remoteRuntimeDisplayName
+            : (activeModel?.displayName ?? supportedModelDisplayName)
         statusText = source == "launch" ? "Auto-warming \(warmTargetName)" : "Warming \(warmTargetName)"
         assistantExperienceState = .thinking
 
@@ -2008,6 +2083,15 @@ final class JarvisPhoneAppModel: ObservableObject {
     }
 
     private func missingSupportedModelReason() -> String {
+        if usesRemoteOllamaRuntime {
+            if ollamaConfiguration.normalizedBaseURL == nil {
+                return "Enter a valid Ollama server URL to continue."
+            }
+            if ollamaConfiguration.modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "Enter the Ollama model name to continue."
+            }
+            return "Configure the Ollama backend to continue."
+        }
         if hasReadyModel {
             return "Activate one of your imported models to continue. Recommended target: \(supportedModelDisplayName)."
         }
@@ -2015,7 +2099,10 @@ final class JarvisPhoneAppModel: ObservableObject {
     }
 
     private func missingSupportedModelStatusText() -> String {
-        hasReadyModel ? "Activate an imported model to continue" : "Import and activate a local model to continue"
+        if usesRemoteOllamaRuntime {
+            return ollamaConfiguration.isConfigured ? "Remote Ollama backend is ready" : "Configure the Ollama backend to continue"
+        }
+        return hasReadyModel ? "Activate an imported model to continue" : "Import and activate a local model to continue"
     }
 
     private func importOutcomeMessage(for model: JarvisImportedModel) -> String {
@@ -2060,13 +2147,21 @@ final class JarvisPhoneAppModel: ObservableObject {
             return
         }
 
+        let hasTransientStreamingPlaceholder = copy.messages.contains {
+            $0.role == .assistant &&
+            $0.isStreaming &&
+            $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
         copy.updatedAt = Date()
         if let firstUser = copy.messages.first(where: { $0.role == .user }) {
             copy.title = String(firstUser.text.prefix(40))
         }
         store.saveConversation(copy)
         conversations = store.loadConversations()
-        conversation = conversations.first(where: { $0.id == copy.id }) ?? copy
+        if !hasTransientStreamingPlaceholder {
+            conversation = conversations.first(where: { $0.id == copy.id }) ?? copy
+        }
     }
 
     private func appendStreamingToken(_ token: String, id: UUID) async {

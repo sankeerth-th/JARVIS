@@ -172,7 +172,52 @@ public enum JarvisAssistantPromptMode: String, Codable, CaseIterable, Identifiab
     }
 }
 
+public enum JarvisRuntimeBackend: String, Codable, CaseIterable, Identifiable, Sendable {
+    case localGGUF
+    case remoteOllama
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .localGGUF:
+            return "Local GGUF"
+        case .remoteOllama:
+            return "Remote Ollama"
+        }
+    }
+}
+
+public struct JarvisOllamaConfiguration: Equatable, Codable, Sendable {
+    public var baseURLString: String
+    public var modelName: String
+    public var requestTimeoutSeconds: Double
+
+    public init(
+        baseURLString: String = "",
+        modelName: String = "",
+        requestTimeoutSeconds: Double = 90
+    ) {
+        self.baseURLString = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.modelName = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.requestTimeoutSeconds = requestTimeoutSeconds
+    }
+
+    public var isConfigured: Bool {
+        normalizedBaseURL != nil && !modelName.isEmpty
+    }
+
+    public var normalizedBaseURL: URL? {
+        let trimmed = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        guard let url = URL(string: trimmed) else { return nil }
+        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return nil }
+        return url
+    }
+}
+
 public struct JarvisRuntimeConfiguration: Equatable, Codable, Sendable {
+    public var backend: JarvisRuntimeBackend
     public var performanceProfile: JarvisRuntimePerformanceProfile
     public var contextWindow: JarvisContextWindowPreset
     public var responseStyle: JarvisAssistantResponseStyle
@@ -182,8 +227,10 @@ public struct JarvisRuntimeConfiguration: Equatable, Codable, Sendable {
     public var thermalProtectionEnabled: Bool
     public var adaptiveDeviceTieringEnabled: Bool
     public var experimentalSpeculativeDecodingEnabled: Bool
+    public var ollama: JarvisOllamaConfiguration
 
     public init(
+        backend: JarvisRuntimeBackend = .localGGUF,
         performanceProfile: JarvisRuntimePerformanceProfile = .balanced,
         contextWindow: JarvisContextWindowPreset = .automatic,
         responseStyle: JarvisAssistantResponseStyle = .balanced,
@@ -192,8 +239,10 @@ public struct JarvisRuntimeConfiguration: Equatable, Codable, Sendable {
         memorySafetyGuardsEnabled: Bool = true,
         thermalProtectionEnabled: Bool = true,
         adaptiveDeviceTieringEnabled: Bool = true,
-        experimentalSpeculativeDecodingEnabled: Bool = false
+        experimentalSpeculativeDecodingEnabled: Bool = false,
+        ollama: JarvisOllamaConfiguration = JarvisOllamaConfiguration()
     ) {
+        self.backend = backend
         self.performanceProfile = performanceProfile
         self.contextWindow = contextWindow
         self.responseStyle = responseStyle
@@ -203,12 +252,15 @@ public struct JarvisRuntimeConfiguration: Equatable, Codable, Sendable {
         self.thermalProtectionEnabled = thermalProtectionEnabled
         self.adaptiveDeviceTieringEnabled = adaptiveDeviceTieringEnabled
         self.experimentalSpeculativeDecodingEnabled = experimentalSpeculativeDecodingEnabled
+        self.ollama = ollama
     }
 }
 
 public struct JarvisAssistantSettings: Codable, Equatable {
     public var startupRoute: JarvisStartupRoute
     public var preferredModelProfile: JarvisSupportedModelProfileID
+    public var runtimeBackend: JarvisRuntimeBackend
+    public var ollama: JarvisOllamaConfiguration
     public var autoWarmOnLaunch: Bool
     public var autoWarmOnFirstSend: Bool
     public var assistantQualityMode: JarvisAssistantQualityMode
@@ -230,6 +282,8 @@ public struct JarvisAssistantSettings: Codable, Equatable {
     public init(
         startupRoute: JarvisStartupRoute = .home,
         preferredModelProfile: JarvisSupportedModelProfileID = .gemma3_4b_it_q4_0,
+        runtimeBackend: JarvisRuntimeBackend = .localGGUF,
+        ollama: JarvisOllamaConfiguration = JarvisOllamaConfiguration(),
         autoWarmOnLaunch: Bool = false,
         autoWarmOnFirstSend: Bool = true,
         assistantQualityMode: JarvisAssistantQualityMode = .balanced,
@@ -250,6 +304,8 @@ public struct JarvisAssistantSettings: Codable, Equatable {
     ) {
         self.startupRoute = startupRoute
         self.preferredModelProfile = preferredModelProfile
+        self.runtimeBackend = runtimeBackend
+        self.ollama = ollama
         self.autoWarmOnLaunch = autoWarmOnLaunch
         self.autoWarmOnFirstSend = autoWarmOnFirstSend
         self.assistantQualityMode = assistantQualityMode
@@ -272,6 +328,8 @@ public struct JarvisAssistantSettings: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case startupRoute
         case preferredModelProfile
+        case runtimeBackend
+        case ollama
         case autoWarmOnLaunch
         case autoWarmOnFirstSend
         case assistantQualityMode
@@ -295,6 +353,8 @@ public struct JarvisAssistantSettings: Codable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         startupRoute = try container.decodeIfPresent(JarvisStartupRoute.self, forKey: .startupRoute) ?? .home
         preferredModelProfile = try container.decodeIfPresent(JarvisSupportedModelProfileID.self, forKey: .preferredModelProfile) ?? .gemma3_4b_it_q4_0
+        runtimeBackend = try container.decodeIfPresent(JarvisRuntimeBackend.self, forKey: .runtimeBackend) ?? .localGGUF
+        ollama = try container.decodeIfPresent(JarvisOllamaConfiguration.self, forKey: .ollama) ?? JarvisOllamaConfiguration()
         autoWarmOnLaunch = try container.decodeIfPresent(Bool.self, forKey: .autoWarmOnLaunch) ?? false
         autoWarmOnFirstSend = try container.decodeIfPresent(Bool.self, forKey: .autoWarmOnFirstSend) ?? true
         assistantQualityMode = try container.decodeIfPresent(JarvisAssistantQualityMode.self, forKey: .assistantQualityMode) ?? .balanced
@@ -318,11 +378,13 @@ public struct JarvisAssistantSettings: Codable, Equatable {
 
     public var runtimeConfiguration: JarvisRuntimeConfiguration {
         JarvisRuntimeConfiguration(
+            backend: runtimeBackend,
             performanceProfile: performanceProfile,
             contextWindow: contextWindow,
             responseStyle: responseStyle,
             temperature: min(max(creativity, 0.0), 1.2),
-            batterySaverMode: batterySaverMode
+            batterySaverMode: batterySaverMode,
+            ollama: ollama
         )
     }
 }
@@ -330,21 +392,32 @@ public struct JarvisAssistantSettings: Codable, Equatable {
 public final class JarvisAssistantSettingsStore {
     private let defaults: UserDefaults
     private let key = "jarvis.ios.assistant.settings"
+    private let securityEnvelope: JarvisIOSSecurityEnvelope
 
-    public init(defaults: UserDefaults = .standard) {
+    public init(defaults: UserDefaults = .standard, securityEnvelope: JarvisIOSSecurityEnvelope = .shared) {
         self.defaults = defaults
+        self.securityEnvelope = securityEnvelope
     }
 
     public func load() -> JarvisAssistantSettings {
         guard let data = defaults.data(forKey: key),
-              let decoded = try? JSONDecoder().decode(JarvisAssistantSettings.self, from: data) else {
+              let decoded = decodeSettings(from: data) else {
             return .default
         }
         return decoded
     }
 
     public func save(_ settings: JarvisAssistantSettings) {
-        guard let data = try? JSONEncoder().encode(settings) else { return }
-        defaults.set(data, forKey: key)
+        guard let data = try? JSONEncoder().encode(settings),
+              let sealed = try? securityEnvelope.seal(data, purpose: key) else { return }
+        defaults.set(sealed, forKey: key)
+    }
+
+    private func decodeSettings(from data: Data) -> JarvisAssistantSettings? {
+        if let opened = try? securityEnvelope.open(data, purpose: key),
+           let decoded = try? JSONDecoder().decode(JarvisAssistantSettings.self, from: opened) {
+            return decoded
+        }
+        return try? JSONDecoder().decode(JarvisAssistantSettings.self, from: data)
     }
 }

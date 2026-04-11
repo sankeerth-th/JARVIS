@@ -134,11 +134,15 @@ public enum JarvisRuntimeMemoryPressureLevel: String, Equatable, Codable {
 }
 
 public enum JarvisRuntimeGenerationStopReason: String, Equatable, Codable {
-    case normal = "normal"
-    case outputCap = "output_cap"
-    case repetitionGuard = "repetition_guard"
-    case thermalGuard = "thermal_guard"
-    case memoryGuard = "memory_guard"
+    case eos = "eos"
+    case stopSequence = "stop_sequence"
+    case maxTokens = "max_tokens"
+    case repetitionAbort = "repetition_abort"
+    case memoryAbort = "memory_abort"
+    case thermalAbort = "thermal_abort"
+    case externalCancel = "external_cancel"
+    case validationFailure = "validation_failure"
+    case unknown = "unknown"
 }
 
 public struct JarvisRuntimeGenerationOutcome: Equatable {
@@ -158,7 +162,7 @@ public struct JarvisRuntimeGenerationOutcome: Equatable {
     public var estimatedKVCacheBytes: UInt64
 
     public init(
-        stopReason: JarvisRuntimeGenerationStopReason = .normal,
+        stopReason: JarvisRuntimeGenerationStopReason = .eos,
         requestedContextTokenLimit: Int,
         effectiveContextTokenLimit: Int,
         effectiveOutputTokenLimit: Int,
@@ -1062,7 +1066,7 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
             repetitionThreshold: request.tuning.repetitionThreshold,
             availableMemoryBytesProvider: JarvisRuntimeHeuristics.availableMemoryBytes
         )
-        var stopReason: JarvisRuntimeGenerationStopReason = .normal
+        var stopReason: JarvisRuntimeGenerationStopReason = .eos
 
         do {
             let stream = session.streamResponse(to: request.prompt)
@@ -1079,13 +1083,13 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
                         break
                     }
                 }
-                if stopReason != .normal {
+                if stopReason != .eos {
                     break
                 }
                 onToken(chunk)
             }
 
-            if stopReason == .normal, withLock({ cancelRequested }) {
+            if stopReason == .eos, withLock({ cancelRequested }) {
                 throw JarvisModelError.cancelled
             }
             return JarvisRuntimeGenerationOutcome(
@@ -1437,14 +1441,7 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
         var parameter = LlamaClient.Parameter()
         parameter.context = attempt.context
         parameter.numberOfThreads = attempt.threads
-        parameter.numberOfBatchThreads = attempt.batchThreads
         parameter.batch = attempt.batch
-        parameter.microBatch = attempt.microBatch
-        parameter.gpuLayerCount = attempt.gpuLayerCount
-        parameter.preferGPU = attempt.preferGPU
-        parameter.offloadKQV = attempt.offloadKQV
-        parameter.offloadOperations = attempt.offloadOperations
-        parameter.flashAttention = attempt.flashAttentionEnabled ? .auto : .disabled
         let effectiveTemperature = tuning?.temperature ?? configuration.temperature
         let clampedTemperature = max(0.12, min(effectiveTemperature, 0.95))
         parameter.temperature = Float(clampedTemperature)
@@ -1657,19 +1654,28 @@ public final class JarvisLocalLLMClientEngine: JarvisGGUFEngine {
     private func mappedStopReason(for guardStop: GuardStop) -> JarvisRuntimeGenerationStopReason {
         switch guardStop {
         case .outputCap:
-            return .outputCap
+            return .maxTokens
         case .repetitionGuard:
-            return .repetitionGuard
+            return .repetitionAbort
         case .thermalGuard:
-            return .thermalGuard
+            return .thermalAbort
         case .memoryGuard:
-            return .memoryGuard
+            return .memoryAbort
         }
     }
 }
 #endif
 
 enum JarvisGGUFEngineFactory {
+    static func makeEngine(for backend: JarvisRuntimeBackend) -> JarvisGGUFEngine {
+        switch backend {
+        case .localGGUF:
+            return makeDefault()
+        case .remoteOllama:
+            return JarvisOllamaRemoteEngine()
+        }
+    }
+
     static func makeDefault() -> JarvisGGUFEngine {
         #if targetEnvironment(simulator)
         print("[JarvisRuntime] Simulator detected - GGUF requires Metal/ANE which is not available in Simulator")
@@ -1743,7 +1749,7 @@ public final class JarvisLocalModelRuntime: ObservableObject {
     @Published public private(set) var lastLoadDiagnostics: JarvisRuntimeLoadDiagnostics?
     @Published public private(set) var lastGenerationDiagnostics: JarvisRuntimeGenerationDiagnostics?
 
-    private let engine: JarvisGGUFEngine
+    private var engine: JarvisGGUFEngine
     private var configuration: JarvisRuntimeConfiguration
     private var selectedModel: JarvisRuntimeModelSelection?
     private var activeGenerationTask: Task<Void, Never>?
@@ -1755,7 +1761,7 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         engine: JarvisGGUFEngine? = nil,
         configuration: JarvisRuntimeConfiguration = JarvisRuntimeConfiguration()
     ) {
-        self.engine = engine ?? JarvisGGUFEngineFactory.makeDefault()
+        self.engine = engine ?? JarvisGGUFEngineFactory.makeEngine(for: configuration.backend)
         self.configuration = configuration
         self.engine.updateConfiguration(configuration)
     }
@@ -1763,10 +1769,14 @@ public final class JarvisLocalModelRuntime: ObservableObject {
     public var engineName: String { engine.name }
 
     public var isInferenceAvailable: Bool {
-        engine.isInstalled && engine.capability == .fullInference
+        if configuration.backend == .remoteOllama {
+            return configuration.ollama.isConfigured && engine.isInstalled && engine.capability == .fullInference
+        }
+        return engine.isInstalled && engine.capability == .fullInference
     }
 
     public var supportsVisualInputs: Bool {
+        guard configuration.backend == .localGGUF else { return false }
         guard let selectedModel else { return false }
         return engine.supportsVisualInputs &&
             selectedModel.capabilities.supportsVisionInputs &&
@@ -1774,6 +1784,18 @@ public final class JarvisLocalModelRuntime: ObservableObject {
     }
 
     public var inferenceUnavailableReason: String {
+        if configuration.backend == .remoteOllama {
+            if configuration.ollama.normalizedBaseURL == nil {
+                return "Configure a valid Ollama server URL to use the remote backend."
+            }
+            if configuration.ollama.modelName.isEmpty {
+                return "Configure the Ollama model name to use the remote backend."
+            }
+            if !engine.isInstalled || engine.capability != .fullInference {
+                return "Ollama remote inference is unavailable in this build."
+            }
+            return ""
+        }
         if !engine.isInstalled {
             return "Local GGUF engine is not installed."
         }
@@ -1785,8 +1807,35 @@ public final class JarvisLocalModelRuntime: ObservableObject {
 
     public func updateConfiguration(_ configuration: JarvisRuntimeConfiguration) {
         guard self.configuration != configuration else { return }
+        let backendChanged = self.configuration.backend != configuration.backend
         self.configuration = configuration
+        if backendChanged {
+            teardownLoadedModel()
+            engine = JarvisGGUFEngineFactory.makeEngine(for: configuration.backend)
+        }
         engine.updateConfiguration(configuration)
+
+        if configuration.backend == .remoteOllama {
+            selectedModel = nil
+            lastGenerationDiagnostics = nil
+            if isInferenceAvailable {
+                state = .cold(modelName: remoteModelName)
+                fileAccessState = .accessGranted(
+                    modelName: remoteModelName,
+                    detail: "Ollama server configured at \(configuration.ollama.normalizedBaseURL?.absoluteString ?? configuration.ollama.baseURLString)."
+                )
+                lastFailure = nil
+            } else {
+                state = .runtimeUnavailable(reason: inferenceUnavailableReason)
+                fileAccessState = .accessPending(modelName: remoteModelName, detail: inferenceUnavailableReason)
+                lastFailure = runtimeFailure(
+                    kind: .runtimeUnavailable,
+                    message: inferenceUnavailableReason,
+                    suggestion: "Update the Ollama server URL and model name in Settings."
+                )
+            }
+            return
+        }
 
         guard let model = selectedModel else {
             state = .noModel
@@ -1817,6 +1866,24 @@ public final class JarvisLocalModelRuntime: ObservableObject {
     }
 
     public func setSelectedModel(_ model: JarvisRuntimeModelSelection?) {
+        guard configuration.backend == .localGGUF else {
+            selectedModel = nil
+            if isInferenceAvailable {
+                state = .cold(modelName: remoteModelName)
+                fileAccessState = .accessGranted(modelName: remoteModelName, detail: "Ollama server configured for remote inference.")
+                lastFailure = nil
+            } else {
+                state = .runtimeUnavailable(reason: inferenceUnavailableReason)
+                fileAccessState = .accessPending(modelName: remoteModelName, detail: inferenceUnavailableReason)
+                lastFailure = runtimeFailure(
+                    kind: .runtimeUnavailable,
+                    message: inferenceUnavailableReason,
+                    suggestion: "Update the Ollama server URL and model name in Settings."
+                )
+            }
+            return
+        }
+
         let previousID = selectedModel?.id
         activeGenerationTask?.cancel()
         selectedModel = model
@@ -1852,6 +1919,37 @@ public final class JarvisLocalModelRuntime: ObservableObject {
     }
 
     public func prepareIfNeeded(tuning: JarvisGenerationTuning? = nil) async throws {
+        if configuration.backend == .remoteOllama {
+            engine.updateGenerationTuning(tuning)
+
+            guard isInferenceAvailable else {
+                state = .runtimeUnavailable(reason: inferenceUnavailableReason)
+                fileAccessState = .accessPending(modelName: remoteModelName, detail: inferenceUnavailableReason)
+                lastFailure = runtimeFailure(
+                    kind: .runtimeUnavailable,
+                    message: inferenceUnavailableReason,
+                    suggestion: "Update the Ollama server URL and model name in Settings."
+                )
+                throw JarvisModelError.runtimeFailure(inferenceUnavailableReason)
+            }
+
+            if didLoadModel {
+                state = .ready(modelName: remoteModelName)
+                fileAccessState = .accessGranted(modelName: remoteModelName, detail: "Connected to Ollama server.")
+                lastFailure = nil
+                return
+            }
+
+            state = .warming(modelName: remoteModelName, progress: 0.3, detail: "Checking Ollama model")
+            try await engine.loadModel(at: configuration.ollama.modelName, projectorPath: nil)
+            didLoadModel = true
+            state = .ready(modelName: remoteModelName)
+            fileAccessState = .accessGranted(modelName: remoteModelName, detail: "Connected to Ollama server.")
+            lastFailure = nil
+            lastLoadDiagnostics = nil
+            return
+        }
+
         guard let model = selectedModel else {
             state = .noModel
             fileAccessState = .noImportedFile
@@ -2090,13 +2188,32 @@ public final class JarvisLocalModelRuntime: ObservableObject {
 
     public func pauseForBackground() {
         cancel()
-        state = .paused(modelName: selectedModel?.displayName, detail: "Runtime paused while Jarvis is backgrounded.")
+        state = .paused(modelName: currentModelName, detail: "Runtime paused while Jarvis is backgrounded.")
         if let selectedModel, loadedResources != nil {
             fileAccessState = accessGrantedState(for: selectedModel)
+        } else if configuration.backend == .remoteOllama {
+            fileAccessState = .accessGranted(modelName: remoteModelName, detail: "Remote runtime paused while Jarvis is backgrounded.")
         }
     }
 
     public func resumeFromForeground() {
+        if configuration.backend == .remoteOllama {
+            if isInferenceAvailable {
+                state = idleRemoteState()
+                fileAccessState = .accessGranted(modelName: remoteModelName, detail: "Ollama server is configured.")
+                lastFailure = nil
+            } else {
+                state = .runtimeUnavailable(reason: inferenceUnavailableReason)
+                fileAccessState = .accessPending(modelName: remoteModelName, detail: inferenceUnavailableReason)
+                lastFailure = runtimeFailure(
+                    kind: .runtimeUnavailable,
+                    message: inferenceUnavailableReason,
+                    suggestion: "Update the Ollama server URL and model name in Settings."
+                )
+            }
+            return
+        }
+
         guard let model = selectedModel else {
             state = .noModel
             fileAccessState = .noImportedFile
@@ -2136,7 +2253,13 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         await engine.unloadModel()
         resources?.release()
 
-        if let model = selectedModel {
+        if configuration.backend == .remoteOllama {
+            state = .cold(modelName: remoteModelName)
+            fileAccessState = isInferenceAvailable
+                ? .accessGranted(modelName: remoteModelName, detail: "Ollama server configured.")
+                : .accessPending(modelName: remoteModelName, detail: inferenceUnavailableReason)
+            lastFailure = nil
+        } else if let model = selectedModel {
             state = .cold(modelName: model.displayName)
             fileAccessState = restingFileAccessState(for: model)
             lastFailure = nil
@@ -2154,7 +2277,30 @@ public final class JarvisLocalModelRuntime: ObservableObject {
         return .cold(modelName: model.displayName)
     }
 
+    private var remoteModelName: String {
+        let configured = configuration.ollama.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return configured.isEmpty ? "Ollama" : configured
+    }
+
+    private var currentModelName: String? {
+        configuration.backend == .remoteOllama ? remoteModelName : selectedModel?.displayName
+    }
+
+    private func idleRemoteState() -> JarvisModelRuntimeState {
+        didLoadModel ? .ready(modelName: remoteModelName) : .cold(modelName: remoteModelName)
+    }
+
     private func restoreIdleState() {
+        if configuration.backend == .remoteOllama {
+            state = isInferenceAvailable ? idleRemoteState() : .runtimeUnavailable(reason: inferenceUnavailableReason)
+            fileAccessState = isInferenceAvailable
+                ? .accessGranted(modelName: remoteModelName, detail: "Ollama server configured.")
+                : .accessPending(modelName: remoteModelName, detail: inferenceUnavailableReason)
+            lastFailure = nil
+            lastLoadDiagnostics = nil
+            return
+        }
+
         guard let model = selectedModel else {
             state = .noModel
             fileAccessState = .noImportedFile

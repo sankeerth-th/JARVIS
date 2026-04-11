@@ -5,6 +5,7 @@ final class JarvisDatabase {
     private let url: URL
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "com.jarvis.database")
+    private let securityEnvelope = JarvisSecurityEnvelope.shared
 
     init(filename: String = "Jarvis.sqlite") {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -16,6 +17,10 @@ final class JarvisDatabase {
         } catch {
             fatalError("Failed to create database directory: \(error)")
         }
+        var directoryValues = URLResourceValues()
+        directoryValues.isExcludedFromBackup = true
+        var mutableDirectory = directory
+        try? mutableDirectory.setResourceValues(directoryValues)
         
         url = directory.appendingPathComponent(filename)
         open()
@@ -32,6 +37,10 @@ final class JarvisDatabase {
         }
         sqlite3_exec(db, "PRAGMA journal_mode=WAL;", nil, nil, nil)
         sqlite3_exec(db, "PRAGMA foreign_keys=ON;", nil, nil, nil)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        var mutableURL = url
+        try? mutableURL.setResourceValues(values)
     }
 
     private func migrate() {
@@ -74,7 +83,7 @@ final class JarvisDatabase {
             sqlite3_bind_double(statement, 4, conversation.createdAt.timeIntervalSince1970)
             sqlite3_bind_double(statement, 5, conversation.updatedAt.timeIntervalSince1970)
             if let data = try? JSONEncoder().encode(conversation.messages) {
-                sqlite3_bind_blob(statement, 6, (data as NSData).bytes, Int32(data.count), SQLITE_TRANSIENT)
+                bindEncryptedBlob(data, to: statement, index: 6, purpose: "conversation.payload")
             } else {
                 sqlite3_bind_null(statement, 6)
             }
@@ -103,7 +112,8 @@ final class JarvisDatabase {
                 if let blobPointer = sqlite3_column_blob(statement, 5) {
                     let length = Int(sqlite3_column_bytes(statement, 5))
                     let data = Data(bytes: blobPointer, count: length)
-                    messages = (try? JSONDecoder().decode([ChatMessage].self, from: data)) ?? []
+                    let payload = openEncryptedBlob(data, purpose: "conversation.payload") ?? data
+                    messages = (try? JSONDecoder().decode([ChatMessage].self, from: payload)) ?? []
                 }
                 let conversation = Conversation(id: id, title: title, model: model, createdAt: created, updatedAt: updated, messages: messages)
                 conversations.append(conversation)
@@ -127,7 +137,7 @@ final class JarvisDatabase {
             sqlite3_bind_text(statement, 1, macro.id.uuidString, -1, SQLITE_TRANSIENT)
             sqlite3_bind_text(statement, 2, macro.name, -1, SQLITE_TRANSIENT)
             if let data = try? JSONEncoder().encode(macro.steps) {
-                sqlite3_bind_blob(statement, 3, (data as NSData).bytes, Int32(data.count), SQLITE_TRANSIENT)
+                bindEncryptedBlob(data, to: statement, index: 3, purpose: "macro.payload")
             }
             sqlite3_step(statement)
             sqlite3_finalize(statement)
@@ -149,7 +159,8 @@ final class JarvisDatabase {
                 if let blobPointer = sqlite3_column_blob(statement, 2) {
                     let length = Int(sqlite3_column_bytes(statement, 2))
                     let data = Data(bytes: blobPointer, count: length)
-                    steps = (try? JSONDecoder().decode([MacroStep].self, from: data)) ?? []
+                    let payload = openEncryptedBlob(data, purpose: "macro.payload") ?? data
+                    steps = (try? JSONDecoder().decode([MacroStep].self, from: payload)) ?? []
                 }
                 macros.append(Macro(id: id, name: name, steps: steps))
             }
@@ -179,7 +190,7 @@ final class JarvisDatabase {
             if let data = try? JSONEncoder().encode(doc.embedding) {
                 sqlite3_bind_blob(statement, 4, (data as NSData).bytes, Int32(data.count), SQLITE_TRANSIENT)
             }
-            sqlite3_bind_text(statement, 5, doc.extractedText, -1, SQLITE_TRANSIENT)
+            bindEncryptedText(doc.extractedText, to: statement, index: 5, purpose: "indexed.document.extractedText")
             if let lastModified = doc.lastModified {
                 sqlite3_bind_double(statement, 6, lastModified.timeIntervalSince1970)
             } else {
@@ -211,7 +222,7 @@ final class JarvisDatabase {
                     let data = Data(bytes: blobPointer, count: length)
                     embedding = (try? JSONDecoder().decode([Double].self, from: data)) ?? []
                 }
-                let extractedText = sqlite3_column_text(statement, 4).map { String(cString: $0) } ?? ""
+                let extractedText = loadEncryptedText(from: statement, index: 4, purpose: "indexed.document.extractedText") ?? ""
                 let lastModified: Date?
                 if sqlite3_column_type(statement, 5) == SQLITE_NULL {
                     lastModified = nil
@@ -524,12 +535,12 @@ final class JarvisDatabase {
             var statement: OpaquePointer?
             sqlite3_prepare_v2(db, sql, -1, &statement, nil)
             sqlite3_bind_text(statement, 1, UUID().uuidString, -1, SQLITE_TRANSIENT)
-            sqlite3_bind_text(statement, 2, run.query, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(statement, 2, JarvisSecurityRedactor.redact(run.query), -1, SQLITE_TRANSIENT)
             sqlite3_bind_text(statement, 3, run.intent.rawValue, -1, SQLITE_TRANSIENT)
             sqlite3_bind_text(statement, 4, run.strategy, -1, SQLITE_TRANSIENT)
             sqlite3_bind_int(statement, 5, Int32(run.resultCount))
             sqlite3_bind_int(statement, 6, Int32(run.latencyMs))
-            sqlite3_bind_text(statement, 7, run.debugSummary, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(statement, 7, JarvisSecurityRedactor.redact(run.debugSummary), -1, SQLITE_TRANSIENT)
             sqlite3_bind_double(statement, 8, run.createdAt.timeIntervalSince1970)
             sqlite3_step(statement)
             sqlite3_finalize(statement)
@@ -661,12 +672,14 @@ final class JarvisDatabase {
             let sql = "REPLACE INTO feature_events (id, feature, type, summary, metadata, createdAt) VALUES (?,?,?,?,?,?)"
             var statement: OpaquePointer?
             sqlite3_prepare_v2(db, sql, -1, &statement, nil)
+            let redactedSummary = JarvisSecurityRedactor.redact(event.summary)
+            let redactedMetadata = JarvisSecurityRedactor.redact(metadata: event.metadata)
             sqlite3_bind_text(statement, 1, event.id.uuidString, -1, SQLITE_TRANSIENT)
             sqlite3_bind_text(statement, 2, event.feature, -1, SQLITE_TRANSIENT)
             sqlite3_bind_text(statement, 3, event.type, -1, SQLITE_TRANSIENT)
-            sqlite3_bind_text(statement, 4, event.summary, -1, SQLITE_TRANSIENT)
-            if let metadata = try? JSONEncoder().encode(event.metadata) {
-                sqlite3_bind_blob(statement, 5, (metadata as NSData).bytes, Int32(metadata.count), SQLITE_TRANSIENT)
+            sqlite3_bind_text(statement, 4, redactedSummary, -1, SQLITE_TRANSIENT)
+            if let metadata = try? JSONEncoder().encode(redactedMetadata) {
+                bindEncryptedBlob(metadata, to: statement, index: 5, purpose: "feature.metadata")
             } else {
                 sqlite3_bind_null(statement, 5)
             }
@@ -706,7 +719,8 @@ final class JarvisDatabase {
                 if let blobPointer = sqlite3_column_blob(statement, 4) {
                     let length = Int(sqlite3_column_bytes(statement, 4))
                     let data = Data(bytes: blobPointer, count: length)
-                    metadata = (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
+                    let payload = openEncryptedBlob(data, purpose: "feature.metadata") ?? data
+                    metadata = (try? JSONDecoder().decode([String: String].self, from: payload)) ?? [:]
                 }
                 let createdAt = Date(timeIntervalSince1970: sqlite3_column_double(statement, 5))
                 events.append(
@@ -746,9 +760,9 @@ final class JarvisDatabase {
             var statement: OpaquePointer?
             sqlite3_prepare_v2(db, sql, -1, &statement, nil)
             sqlite3_bind_text(statement, 1, id.uuidString, -1, SQLITE_TRANSIENT)
-            sqlite3_bind_text(statement, 2, title, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(statement, 2, JarvisSecurityRedactor.redact(title), -1, SQLITE_TRANSIENT)
             if let payload = try? JSONEncoder().encode(items) {
-                sqlite3_bind_blob(statement, 3, (payload as NSData).bytes, Int32(payload.count), SQLITE_TRANSIENT)
+                bindEncryptedBlob(payload, to: statement, index: 3, purpose: "checklist.items")
             } else {
                 sqlite3_bind_null(statement, 3)
             }
@@ -765,13 +779,13 @@ final class JarvisDatabase {
             var statement: OpaquePointer?
             sqlite3_prepare_v2(db, sql, -1, &statement, nil)
             sqlite3_bind_text(statement, 1, session.id.uuidString, -1, SQLITE_TRANSIENT)
-            sqlite3_bind_text(statement, 2, session.title, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(statement, 2, JarvisSecurityRedactor.redact(session.title), -1, SQLITE_TRANSIENT)
             if let payload = try? JSONEncoder().encode(session) {
-                sqlite3_bind_blob(statement, 3, (payload as NSData).bytes, Int32(payload.count), SQLITE_TRANSIENT)
+                bindEncryptedBlob(payload, to: statement, index: 3, purpose: "thinking.payload")
             } else {
                 sqlite3_bind_null(statement, 3)
             }
-            sqlite3_bind_text(statement, 4, session.summary, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(statement, 4, JarvisSecurityRedactor.redact(session.summary), -1, SQLITE_TRANSIENT)
             sqlite3_bind_double(statement, 5, session.createdAt.timeIntervalSince1970)
             sqlite3_bind_double(statement, 6, session.updatedAt.timeIntervalSince1970)
             sqlite3_step(statement)
@@ -790,12 +804,45 @@ final class JarvisDatabase {
                 guard let payload = sqlite3_column_blob(statement, 0) else { continue }
                 let length = Int(sqlite3_column_bytes(statement, 0))
                 let data = Data(bytes: payload, count: length)
-                if let decoded = try? JSONDecoder().decode(ThinkingSessionRecord.self, from: data) {
+                let decrypted = openEncryptedBlob(data, purpose: "thinking.payload") ?? data
+                if let decoded = try? JSONDecoder().decode(ThinkingSessionRecord.self, from: decrypted) {
                     sessions.append(decoded)
                 }
             }
             sqlite3_finalize(statement)
             return sessions
         }
+    }
+
+    private func bindEncryptedBlob(_ data: Data, to statement: OpaquePointer?, index: Int32, purpose: String) {
+        let payload = (try? securityEnvelope.seal(data, purpose: purpose)) ?? data
+        sqlite3_bind_blob(statement, index, (payload as NSData).bytes, Int32(payload.count), SQLITE_TRANSIENT)
+    }
+
+    private func openEncryptedBlob(_ data: Data, purpose: String) -> Data? {
+        try? securityEnvelope.open(data, purpose: purpose)
+    }
+
+    private func bindEncryptedText(_ text: String, to statement: OpaquePointer?, index: Int32, purpose: String) {
+        guard let data = text.data(using: .utf8) else {
+            sqlite3_bind_null(statement, index)
+            return
+        }
+        let payload = (try? securityEnvelope.seal(data, purpose: purpose)) ?? data
+        let encoded = "enc:" + payload.base64EncodedString()
+        sqlite3_bind_text(statement, index, encoded, -1, SQLITE_TRANSIENT)
+    }
+
+    private func loadEncryptedText(from statement: OpaquePointer?, index: Int32, purpose: String) -> String? {
+        guard let raw = sqlite3_column_text(statement, index).map({ String(cString: $0) }) else {
+            return nil
+        }
+        if raw.hasPrefix("enc:"),
+           let decoded = Data(base64Encoded: String(raw.dropFirst(4))),
+           let opened = try? securityEnvelope.open(decoded, purpose: purpose),
+           let string = String(data: opened, encoding: .utf8) {
+            return string
+        }
+        return raw
     }
 }

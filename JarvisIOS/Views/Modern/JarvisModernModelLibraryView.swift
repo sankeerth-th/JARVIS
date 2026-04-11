@@ -1,72 +1,48 @@
 import SwiftUI
 
-/// Modern model library view with improved UX
 struct JarvisModernModelLibraryView: View {
     @EnvironmentObject private var appModel: JarvisPhoneAppModel
     @Environment(\.dismiss) private var dismiss
-    
-    var body: some View {
-        List {
-            Section {
-                SupportedProfileCard()
-            } header: {
-                Text("Recommended on iPhone")
-            } footer: {
-                Text("Jarvis can import and activate any valid GGUF model. Recommended profiles have stronger sizing and performance guidance for iPhone.")
-            }
 
-            Section {
-                ForEach(appModel.models) { model in
-                    ModelRow(model: model)
-                }
-                .onDelete { indexSet in
-                    for index in indexSet {
-                        let model = appModel.models[index]
-                        appModel.removeModel(id: model.id)
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: JarvisModernTheme.sectionSpacing) {
+                JarvisModernSectionHeader(
+                    "Model Library",
+                    eyebrow: "Local Runtime",
+                    subtitle: "Import, activate, and validate local GGUF models without leaving the iPhone shell.",
+                    trailing: AnyView(
+                        Button("Done") { dismiss() }
+                            .buttonStyle(JarvisModernSecondaryButtonStyle())
+                    )
+                )
+
+                SupportedProfileCard()
+                activeModelCard
+                importCard
+
+                if appModel.models.isEmpty {
+                    emptyLibraryCard
+                } else {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Imported Models")
+                            .font(.system(.headline, design: .rounded, weight: .semibold))
+                            .foregroundStyle(JarvisModernTheme.textPrimary)
+
+                        ForEach(appModel.models) { model in
+                            ModelRow(model: model)
+                        }
                     }
                 }
-            } header: {
-                Text("Imported Models")
-            } footer: {
-                Text("Import, activation, and warmup are separate. Activate a model explicitly, then warm it before the first heavy session or let Jarvis auto-warm on first send.")
             }
-            
-            Section {
-                Button {
-                    appModel.beginModelImport()
-                } label: {
-                    Label("Import GGUF Model", systemImage: "plus.circle.fill")
-                        .font(.subheadline.weight(.semibold))
-                }
-                .tint(.indigo)
-            }
+            .padding(.horizontal, JarvisModernTheme.screenPadding)
+            .padding(.top, 18)
+            .padding(.bottom, 32)
         }
-        .listStyle(.insetGrouped)
+        .background(JarvisModernBackground())
         .navigationTitle("Model Library")
-        .navigationBarTitleDisplayMode(.large)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button("Done") {
-                    dismiss()
-                }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                EditButton()
-            }
-        }
-        .overlay {
-            if appModel.models.isEmpty {
-                ContentUnavailableView {
-                    Label("No Models", systemImage: "cpu")
-                } description: {
-                    Text("Import a GGUF model to get started. \(appModel.supportedModelDisplayName) is the recommended iPhone target.")
-                } actions: {
-                    Button("Import GGUF Model") {
-                        appModel.beginModelImport()
-                    }
-                }
-            }
-        }
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .onAppear {
             if appModel.consumePendingModelLibraryImport() {
                 appModel.beginModelImport()
@@ -79,118 +55,144 @@ struct JarvisModernModelLibraryView: View {
             )
         }
     }
+
+    private var activeModelCard: some View {
+        JarvisModernCard {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Active Model")
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
+
+                if let active = appModel.activeModel {
+                    JarvisModernInlineStatusRow(
+                        icon: "cpu.fill",
+                        title: active.displayName,
+                        detail: "\(active.format.displayName) • \(active.importState.displayName) • \(active.activationEligibility.displayName)",
+                        tint: JarvisModernTheme.accentSoft
+                    )
+                } else {
+                    JarvisModernInlineStatusRow(
+                        icon: "tray",
+                        title: "No active model",
+                        detail: "Import a GGUF model and activate it before starting a heavy local session.",
+                        tint: JarvisModernTheme.warning
+                    )
+                }
+            }
+        }
+    }
+
+    private var importCard: some View {
+        JarvisModernCard(secondary: true) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Import and activation")
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
+                Text("Import, activation, and warmup are separate. Jarvis copies the file locally, then you activate and warm it explicitly.")
+                    .font(.system(.footnote, design: .rounded, weight: .medium))
+                    .foregroundStyle(JarvisModernTheme.textSecondary)
+
+                Button {
+                    appModel.beginModelImport()
+                } label: {
+                    Label("Import GGUF Model", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(JarvisModernPrimaryButtonStyle())
+            }
+        }
+    }
+
+    private var emptyLibraryCard: some View {
+        JarvisModernCard(secondary: true) {
+            VStack(spacing: 14) {
+                Image(systemName: "cpu")
+                    .font(.system(size: 30, weight: .semibold))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
+                Text("No imported models")
+                    .font(.system(.headline, design: .rounded, weight: .bold))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
+                Text("Import a GGUF model to get started. Recommended iPhone profiles will guide sizing and performance.")
+                    .font(.system(.footnote, design: .rounded, weight: .medium))
+                    .foregroundStyle(JarvisModernTheme.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
 }
 
 struct ModelRow: View {
     @EnvironmentObject private var appModel: JarvisPhoneAppModel
     let model: JarvisImportedModel
-    
+
     private var isActive: Bool {
         appModel.activeModelID == model.id
     }
-    
+
     var body: some View {
-        HStack(spacing: 12) {
-            // Status indicator
-            Image(systemName: statusIcon)
-                .font(.title3)
-                .foregroundStyle(statusColor)
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text(model.displayName)
-                    .font(.subheadline.weight(.semibold))
-                
-                HStack(spacing: 8) {
-                    Text(model.format.displayName)
-                    Text("•")
-                    Text(ByteCountFormatter.string(fromByteCount: model.fileSizeBytes, countStyle: .file))
+        JarvisModernCard(secondary: true, padding: 16) {
+            HStack(alignment: .top, spacing: 12) {
+                JarvisModernIconBadge(systemName: statusIcon, tint: statusColor)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(model.displayName)
+                            .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                            .foregroundStyle(JarvisModernTheme.textPrimary)
+                        if isActive {
+                            JarvisModernChip(title: "Active", icon: "checkmark", tint: JarvisModernTheme.success, active: true)
+                        }
+                    }
+
+                    Text("\(model.format.displayName) • \(ByteCountFormatter.string(fromByteCount: model.fileSizeBytes, countStyle: .file))")
+                        .font(.system(.caption, design: .rounded, weight: .medium))
+                        .foregroundStyle(JarvisModernTheme.textSecondary)
+
+                    Text("Import: \(model.importState.displayName) • Activation: \(model.activationEligibility.displayName)")
+                        .font(.system(.caption, design: .rounded, weight: .medium))
+                        .foregroundStyle(model.canActivate ? JarvisModernTheme.success : JarvisModernTheme.warning)
+
                     if let family = model.inferredFamily {
-                        Text("•")
                         Text(family)
+                            .font(.system(.caption2, design: .rounded, weight: .semibold))
+                            .foregroundStyle(JarvisModernTheme.textTertiary)
+                    }
+
+                    if let message = model.statusMessage {
+                        Text(message)
+                            .font(.system(.caption2, design: .rounded, weight: .medium))
+                            .foregroundStyle(JarvisModernTheme.warning)
+                    }
+
+                    HStack(spacing: 8) {
+                        if model.canActivate && !isActive {
+                            Button {
+                                appModel.setActiveModel(id: model.id)
+                            } label: {
+                                Label("Activate", systemImage: "checkmark")
+                            }
+                            .buttonStyle(JarvisModernSecondaryButtonStyle())
+                        }
+
+                        Button {
+                            appModel.revalidateModel(id: model.id)
+                        } label: {
+                            Label("Refresh", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(JarvisModernSecondaryButtonStyle())
+
+                        Button(role: .destructive) {
+                            appModel.removeModel(id: model.id)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                        .buttonStyle(JarvisModernSecondaryButtonStyle())
                     }
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-                if let profile = JarvisSupportedModelCatalog.profile(for: model.supportedProfileID) {
-                    Text("\(profile.compatibilityClass.displayName): \(profile.displayName)")
-                        .font(.caption)
-                        .foregroundStyle(profile.compatibilityClass == .primaryRecommended ? .green : .teal)
-                } else {
-                    Text("Generic GGUF: activatable, but not yet profiled for this iPhone path")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-
-                Text("Import: \(model.importState.displayName)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Text("Activation: \(model.activationEligibility.displayName)")
-                    .font(.caption)
-                    .foregroundStyle(model.canActivate ? .green : .orange)
-
-                Text("Access: \(model.primaryAsset.lastFileAccessStatus.displayName)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                if model.capabilities.supportsVisionInputs {
-                    Text(model.visualReadinessDescription)
-                        .font(.caption)
-                        .foregroundStyle(model.hasProjectorAttached ? .teal : .orange)
-                }
-                
-                if let message = model.statusMessage {
-                    Text(message)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-            }
-            
-            Spacer()
-            
-            // Active indicator
-            if isActive {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-            }
-        }
-        .padding(.vertical, 4)
-        .swipeActions(edge: .trailing) {
-            if model.canActivate && !isActive {
-                Button {
-                    appModel.setActiveModel(id: model.id)
-                } label: {
-                    Label("Activate", systemImage: "checkmark")
-                }
-                .tint(.indigo)
-            }
-            
-            Button(role: .destructive) {
-                appModel.removeModel(id: model.id)
-            } label: {
-                Label("Delete", systemImage: "trash")
-            }
-        }
-        .swipeActions(edge: .leading) {
-            Button {
-                appModel.revalidateModel(id: model.id)
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-            }
-            .tint(.blue)
-
-            if model.capabilities.supportsVisionInputs && !model.hasProjectorAttached {
-                Button {
-                    appModel.beginProjectorImport(for: model.id)
-                } label: {
-                    Label("Projector", systemImage: "paperclip")
-                }
-                .tint(.teal)
             }
         }
     }
-    
+
     private var statusIcon: String {
         switch (model.importState, model.activationEligibility) {
         case (.imported, .eligible):
@@ -205,119 +207,50 @@ struct ModelRow: View {
             return "xmark.circle"
         }
     }
-    
+
     private var statusColor: Color {
         switch (model.importState, model.activationEligibility) {
         case (.imported, .eligible):
-            return isActive ? .indigo : .green
+            return isActive ? JarvisModernTheme.accent : JarvisModernTheme.success
         case (.imported, .unsupportedProfile), (.invalid, _):
-            return .orange
+            return JarvisModernTheme.warning
         case (.missing, _), (.failed, _), (.imported, .accessLost), (.imported, .validationFailed):
-            return .red
+            return JarvisModernTheme.danger
         }
     }
 }
 
-// MARK: - Modern Setup View
-
 struct JarvisModernSetupView: View {
     @EnvironmentObject private var appModel: JarvisPhoneAppModel
     @Environment(\.dismiss) private var dismiss
-    
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 ScrollView {
-                    VStack(spacing: 24) {
-                        // Hero
-                        VStack(spacing: 16) {
-                            Image(systemName: "cpu.fill")
-                                .font(.system(size: 64))
-                                .foregroundStyle(.indigo)
-                            
-                            Text("Set Up Local AI")
-                                .font(.largeTitle.weight(.bold))
-                            
-                            Text("Jarvis runs entirely on your device. The recommended foundation path is \(appModel.supportedModelDisplayName), but import, activation, and warmup are all explicit steps.")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                        }
-                        .padding(.top, 20)
-                        
-                        // Import status
-                        if case .importing(let progress, let message) = appModel.modelImportState {
-                            ImportProgressCard(progress: progress, message: message)
-                        } else if case .success(let message) = appModel.modelImportState {
-                            StatusCard(message: message, type: .success)
-                        } else if case .failure(let message) = appModel.modelImportState {
-                            StatusCard(message: message, type: .error)
-                        }
-
+                    VStack(alignment: .leading, spacing: JarvisModernTheme.sectionSpacing) {
+                        hero
+                        importStateSurface
                         SupportedProfileCard()
-                        
-                        // Steps
-                        VStack(alignment: .leading, spacing: 16) {
-                            Text("How it works")
-                                .font(.headline)
-                            
-                            StepRow(number: 1, title: "Download a GGUF model", description: appModel.supportedModelImportGuidance)
-                            StepRow(number: 2, title: "Import and copy it locally", description: "Select the GGUF from Files or iCloud Drive. Jarvis copies it into local app storage before activation.")
-                            StepRow(number: 3, title: "Activate, warm, and chat", description: "Activation is explicit. Warm the model now or let Jarvis auto-warm on the first send.")
-                        }
-                        .padding()
-                        .background(Color(.secondarySystemGroupedBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 16))
-                        
-                        // Simulator warning
+                        setupSteps
+                        currentModels
                         #if targetEnvironment(simulator)
                         SimulatorWarningCard()
                         #endif
-                        
-                        // Current models
-                        if !appModel.models.isEmpty {
-                            VStack(alignment: .leading, spacing: 12) {
-                                Text("Your Models")
-                                    .font(.headline)
-                                
-                                ForEach(appModel.models) { model in
-                                    HStack {
-                                        Image(systemName: "cpu")
-                                        Text(model.displayName)
-                                        Spacer()
-                                        VStack(alignment: .trailing, spacing: 2) {
-                                            if appModel.activeModelID == model.id {
-                                                Text("Active")
-                                                    .font(.caption.weight(.semibold))
-                                                    .foregroundStyle(.green)
-                                            }
-                                            Text("\(model.importState.displayName) • \(model.activationEligibility.displayName)")
-                                                .font(.caption)
-                                                .foregroundStyle(model.canActivate ? .green : .orange)
-                                        }
-                                    }
-                                    .padding(.vertical, 4)
-                                }
-                            }
-                            .padding()
-                            .background(Color(.secondarySystemGroupedBackground))
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
-                        }
                     }
-                    .padding()
+                    .padding(.horizontal, JarvisModernTheme.screenPadding)
+                    .padding(.top, 18)
+                    .padding(.bottom, 24)
                 }
-                
-                // Bottom actions
-                VStack(spacing: 12) {
+
+                VStack(spacing: 10) {
                     Button {
                         appModel.beginModelImport()
                     } label: {
                         Label("Import GGUF Model", systemImage: "square.and.arrow.down")
-                            .font(.headline)
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.indigo)
+                    .buttonStyle(JarvisModernPrimaryButtonStyle())
 
                     if !appModel.models.isEmpty {
                         Button {
@@ -326,27 +259,29 @@ struct JarvisModernSetupView: View {
                             Label("Open Model Library", systemImage: "tray.full")
                                 .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(JarvisModernSecondaryButtonStyle())
                     }
-                    
+
                     if !appModel.needsModelSetup {
                         Button("Continue") {
                             dismiss()
                         }
-                        .font(.subheadline.weight(.semibold))
+                        .buttonStyle(JarvisModernSecondaryButtonStyle())
                     }
                 }
-                .padding()
-                .background(.ultraThinMaterial)
+                .padding(.horizontal, JarvisModernTheme.screenPadding)
+                .padding(.top, 10)
+                .padding(.bottom, 18)
+                .background(Color.black.opacity(0.14))
             }
+            .background(JarvisModernBackground())
             .navigationTitle("Setup")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 if !appModel.needsModelSetup {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("Done") {
-                            dismiss()
-                        }
+                        Button("Done") { dismiss() }
                     }
                 }
             }
@@ -358,40 +293,95 @@ struct JarvisModernSetupView: View {
             )
         }
     }
+
+    private var hero: some View {
+        JarvisModernCard {
+            HStack(spacing: 14) {
+                JarvisModernIconBadge(systemName: "cpu.fill", tint: JarvisModernTheme.accent)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Set up local AI")
+                        .font(.system(.title3, design: .rounded, weight: .bold))
+                        .foregroundStyle(JarvisModernTheme.textPrimary)
+                    Text("Jarvis runs fully on-device. Import one GGUF model from Files, then activate and warm it explicitly.")
+                        .font(.system(.footnote, design: .rounded, weight: .medium))
+                        .foregroundStyle(JarvisModernTheme.textSecondary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var importStateSurface: some View {
+        switch appModel.modelImportState {
+        case .idle:
+            EmptyView()
+        case .importing(let progress, let message):
+            ImportProgressCard(progress: progress, message: message)
+        case .success(let message):
+            StatusCard(message: message, type: .success)
+        case .failure(let message):
+            StatusCard(message: message, type: .error)
+        }
+    }
+
+    private var setupSteps: some View {
+        JarvisModernCard(secondary: true) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("How it works")
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
+                StepRow(number: 1, title: "Choose a GGUF model", description: appModel.supportedModelImportGuidance)
+                StepRow(number: 2, title: "Jarvis copies it locally", description: "The selected file is copied into local app storage before activation.")
+                StepRow(number: 3, title: "Activate, warm, and chat", description: "Keep import, activation, and warmup explicit so the assistant state is always honest.")
+            }
+        }
+    }
+
+    private var currentModels: some View {
+        JarvisModernCard(secondary: true) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Current readiness")
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
+
+                if let active = appModel.activeModel {
+                    Text("Active: \(active.displayName)")
+                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(JarvisModernTheme.textPrimary)
+                    Text("Imported models: \(appModel.models.count)")
+                        .font(.system(.footnote, design: .rounded, weight: .medium))
+                        .foregroundStyle(JarvisModernTheme.textSecondary)
+                } else {
+                    Text("No active model selected")
+                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(JarvisModernTheme.warning)
+                    Text("Imported models: \(appModel.models.count)")
+                        .font(.system(.footnote, design: .rounded, weight: .medium))
+                        .foregroundStyle(JarvisModernTheme.textSecondary)
+                }
+            }
+        }
+    }
 }
 
 private struct SupportedProfileCard: View {
     @EnvironmentObject private var appModel: JarvisPhoneAppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Gold Path", systemImage: "checkmark.seal.fill")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(.green)
-
-            Text(appModel.supportedModelDisplayName)
-                .font(.headline)
-
-            Text(appModel.supportedModelShortDescription)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            Text(appModel.supportedModelImportGuidance)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Text("\(appModel.supportedModelClassificationText) • \(appModel.supportedModelCapabilitySummary)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Text("Gemma 3 4B remains text-ready first. Attach the projector GGUF later to preserve the multimodal path.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        JarvisModernCard(secondary: true) {
+            VStack(alignment: .leading, spacing: 10) {
+                JarvisModernChip(title: "Recommended on iPhone", icon: "checkmark.seal.fill", tint: JarvisModernTheme.success, active: true)
+                Text(appModel.supportedModelDisplayName)
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
+                Text(appModel.supportedModelShortDescription)
+                    .font(.system(.footnote, design: .rounded, weight: .medium))
+                    .foregroundStyle(JarvisModernTheme.textSecondary)
+                Text(appModel.supportedModelImportGuidance)
+                    .font(.system(.caption, design: .rounded, weight: .medium))
+                    .foregroundStyle(JarvisModernTheme.textSecondary)
+            }
         }
-        .padding()
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 }
 
@@ -399,21 +389,22 @@ struct StepRow: View {
     let number: Int
     let title: String
     let description: String
-    
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Text("\(number)")
-                .font(.caption.weight(.bold))
+                .font(.system(.caption, design: .rounded, weight: .bold))
                 .foregroundStyle(.white)
                 .frame(width: 24, height: 24)
-                .background(Circle().fill(.indigo))
-            
-            VStack(alignment: .leading, spacing: 2) {
+                .background(Circle().fill(JarvisModernTheme.accent))
+
+            VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
                 Text(description)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.system(.caption, design: .rounded, weight: .medium))
+                    .foregroundStyle(JarvisModernTheme.textSecondary)
             }
         }
     }
@@ -422,75 +413,58 @@ struct StepRow: View {
 struct ImportProgressCard: View {
     let progress: Double
     let message: String
-    
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("Importing...", systemImage: "arrow.down.circle")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text("\(Int(progress * 100))%")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.secondary)
+        JarvisModernCard(secondary: true) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Importing")
+                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(JarvisModernTheme.textPrimary)
+                    Spacer()
+                    Text("\(Int(progress * 100))%")
+                        .font(.system(.caption, design: .rounded, weight: .bold))
+                        .foregroundStyle(JarvisModernTheme.textSecondary)
+                }
+                ProgressView(value: progress)
+                    .tint(JarvisModernTheme.accent)
+                Text(message)
+                    .font(.system(.caption, design: .rounded, weight: .medium))
+                    .foregroundStyle(JarvisModernTheme.textSecondary)
             }
-            
-            ProgressView(value: progress)
-                .tint(.indigo)
-            
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
-        .padding()
-        .background(Color.indigo.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
 
 struct StatusCard: View {
     let message: String
     let type: StatusType
-    
+
     enum StatusType {
         case success, error
     }
-    
+
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: type == .success ? "checkmark.circle.fill" : "xmark.circle.fill")
-                .font(.title3)
-                .foregroundStyle(type == .success ? .green : .red)
-            
-            Text(message)
-                .font(.subheadline)
-            
-            Spacer()
+        JarvisModernCard(secondary: true) {
+            JarvisModernInlineStatusRow(
+                icon: type == .success ? "checkmark.circle.fill" : "xmark.circle.fill",
+                title: type == .success ? "Import complete" : "Import failed",
+                detail: message,
+                tint: type == .success ? JarvisModernTheme.success : JarvisModernTheme.danger
+            )
         }
-        .padding()
-        .background((type == .success ? Color.green : Color.red).opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
 
 struct SimulatorWarningCard: View {
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.title3)
-                .foregroundStyle(.orange)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Simulator Detected")
-                    .font(.subheadline.weight(.semibold))
-                Text("GGUF models require Metal/ANE which is not available in the iOS Simulator. Test on a physical device for actual inference.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            
-            Spacer()
+        JarvisModernCard(secondary: true) {
+            JarvisModernInlineStatusRow(
+                icon: "exclamationmark.triangle.fill",
+                title: "Simulator detected",
+                detail: "GGUF inference needs a physical iPhone for actual Metal and ANE-backed execution.",
+                tint: JarvisModernTheme.warning
+            )
         }
-        .padding()
-        .background(Color.orange.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }

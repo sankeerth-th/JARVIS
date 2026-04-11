@@ -106,6 +106,21 @@ public final class JarvisRequestElevator {
             )
         }
 
+        if let draftStart = draftStartRequest(for: normalized, requestedTask: requestedTask) {
+            return JarvisElevatedRequest(
+                kind: .draftRequest,
+                elevatedIntent: draftStart.intent,
+                elevatedPrompt: draftStart.elevatedPrompt,
+                responseContract: JarvisResponseContract(
+                    directAnswerFirst: true,
+                    prefersReadyToSend: true,
+                    prefersMinimalExplanation: true
+                ),
+                prefersSafePrompt: true,
+                capabilityHint: .draftEmail
+            )
+        }
+
         if let clarification = clarificationQuestion(for: normalized, requestedTask: requestedTask) {
             return JarvisElevatedRequest(
                 kind: .clarificationNeeded,
@@ -299,7 +314,7 @@ public final class JarvisRequestElevator {
         for normalized: String,
         requestedTask: JarvisAssistantTask
     ) -> (intent: String, question: String, elevatedPrompt: String)? {
-        if requestedTask == .draftEmail || normalized == "mail" || normalized == "email" {
+        if requestedTask == .draftEmail {
             return (
                 "email_assistance",
                 "Do you want help drafting a new email or replying to one?",
@@ -329,6 +344,22 @@ public final class JarvisRequestElevator {
                 "clarification",
                 "What are you referring to exactly?",
                 "The user is referencing missing context. Ask for the missing referent in one short question."
+            )
+        }
+
+        return nil
+    }
+
+    private func draftStartRequest(
+        for normalized: String,
+        requestedTask: JarvisAssistantTask
+    ) -> (intent: String, elevatedPrompt: String)? {
+        if requestedTask == .draftEmail || normalized == "mail" || normalized == "email" {
+            return (
+                "email_assistance",
+                """
+                Start an email draft immediately. Use a neutral professional tone, keep it concise, and leave short placeholders only where the user omitted critical details like recipient or purpose.
+                """
             )
         }
 

@@ -282,7 +282,17 @@ final class ConversationService {
             .ocrCurrentWindow: "ocrCurrentWindow(reason)",
             .listNotifications: "listNotifications(apps,limit)",
             .searchLocalDocs: "searchLocalDocs(query,topK)",
-            .summarize: "summarize(text,style)"
+            .summarize: "summarize(text,style)",
+            .appOpen: "app.open(target)",
+            .appFocus: "app.focus(target)",
+            .finderReveal: "finder.reveal(path)",
+            .systemOpenURL: "system.open_url(url)",
+            .projectOpen: "project.open(path)",
+            .projectScaffold: "project.scaffold(path,template)",
+            .shellRunSafe: "shell.run.safe(command,arguments,workingDirectory,timeout)",
+            .voiceListen: "voice.listen(locale)",
+            .voiceSpeak: "voice.speak(text)",
+            .voiceStop: "voice.stop()"
         ]
         let ordered = available.compactMap { signatures[$0] }
         return "Tool policy: Use offline tools only via <<tool{\"name\":\"toolName\",\"arguments\":{...}}>>. Allowed tools for this route: \(ordered.joined(separator: ", ")). Maintain \(tone.promptValue) tone. Never claim to read files or screens unless given tool output."
@@ -553,7 +563,7 @@ final class RoutePlanner {
                     includeKnowledgeContext: false,
                     includeMacroContext: false
                 ),
-                allowedTools: [.calculate, .summarize],
+                allowedTools: [.calculate, .summarize, .appOpen, .appFocus, .finderReveal, .systemOpenURL, .projectOpen, .projectScaffold, .shellRunSafe, .voiceListen, .voiceSpeak, .voiceStop],
                 fallback: .askClarification,
                 enableStreaming: true
             )
@@ -706,7 +716,7 @@ final class RoutePlanner {
                     includeKnowledgeContext: signal.hasIndexedFolders || signal.selectedSurface == .fileSearch,
                     includeMacroContext: signal.selectedSurface == .macros
                 ),
-                allowedTools: [.calculate, .summarize, .searchLocalDocs],
+                allowedTools: [.calculate, .summarize, .searchLocalDocs, .appOpen, .appFocus, .finderReveal, .systemOpenURL, .projectOpen, .projectScaffold, .shellRunSafe, .voiceListen, .voiceSpeak, .voiceStop],
                 fallback: .fallbackToGeneralChat,
                 enableStreaming: true
             )

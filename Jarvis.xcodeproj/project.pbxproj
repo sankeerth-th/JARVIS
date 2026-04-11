@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		0BA37924A1574DDDA5786ACC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2F91576D8D9348829D2CFDA9 /* Assets.xcassets */; };
 		0C09101A92224B05A9393A7D /* SettingsStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D1CD63C0614279AED9F291 /* SettingsStoreTests.swift */; };
+		0C09101A92224B05A9393A7E /* JarvisMacCapabilityServicesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C09101A92224B05A9393A7F /* JarvisMacCapabilityServicesTests.swift */; };
 		1A42C71E2C784F11B05C49B6 /* ConversationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84D2E82174F34D2481A47DB9 /* ConversationService.swift */; };
 		23903BB4A5D94EB6AC3245D5 /* LocalIndexService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA6E8A2548F4E04BDB77CB8 /* LocalIndexService.swift */; };
 		2903491247F54B5BA549DF99 /* ModernSearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1957C5C21E10425E8850237C /* ModernSearchView.swift */; };
@@ -22,6 +23,7 @@
 		4AB1558E60504C3A8D35EF93 /* DiagnosticsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B808E8847731409CB4EDFAE6 /* DiagnosticsViewModel.swift */; };
 		4D181C6996B145CEA5645DF2 /* HotKeyCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1D05E2FAB6D4E9BB9C343FD /* HotKeyCenter.swift */; };
 		51B06842BE8C44EBAC5DB4E6 /* ClipboardBannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93E28D92B2D84A42B64C6D9B /* ClipboardBannerView.swift */; };
+		5F8010A19A1B4B1F8F01AAA1 /* SecurityServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F8010A09A1B4B1F8F01AAA1 /* SecurityServices.swift */; };
 		62BFA53E86E849AF8E3F0E34 /* MacroService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 511BF4F14B2C42B9B3444332 /* MacroService.swift */; };
 		7325C61DC446499C8F407816 /* OverlayWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBB1805C105844EEBD8697BC /* OverlayWindowController.swift */; };
 		76106ABE9524450EB85923B5 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = E851B73912BD4873908DEAB3 /* AppEnvironment.swift */; };
@@ -29,12 +31,20 @@
 		8711E48B108E42758F2FC29E /* PermissionsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22B29DC37C0A413D904A96E4 /* PermissionsManager.swift */; };
 		89934F100ED643A2B3D973BF /* CommandPaletteViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8F41C9BA06946B8A54F5F12 /* CommandPaletteViewModel.swift */; };
 		90025FF9A5A74FDE87846DAE /* TableExtractorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0597A14198647B0955E0CFA /* TableExtractorTests.swift */; };
+		9010AA100000000000000001 /* JarvisPathSafetyPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9010AA200000000000000001 /* JarvisPathSafetyPolicy.swift */; };
+		9010AA100000000000000002 /* JarvisMacActionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9010AA200000000000000002 /* JarvisMacActionService.swift */; };
+		9010AA100000000000000003 /* JarvisProjectActionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9010AA200000000000000003 /* JarvisProjectActionService.swift */; };
+		9010AA100000000000000004 /* JarvisSafeShellService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9010AA200000000000000004 /* JarvisSafeShellService.swift */; };
+		9010AA100000000000000005 /* JarvisSpeechInputService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9010AA200000000000000005 /* JarvisSpeechInputService.swift */; };
+		9010AA100000000000000006 /* JarvisSpeechOutputService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9010AA200000000000000006 /* JarvisSpeechOutputService.swift */; };
 		9DA1483FD39E47E1818F34D9 /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F49A760AA84D420EAB1E9208 /* DiagnosticsView.swift */; };
 		9E63F9BE8E0D47479380D63D /* ToolExecutionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03B50D48937C470297F0ABD8 /* ToolExecutionService.swift */; };
 		A10000000000000000000011 /* JarvisMailExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* JarvisMailExtension.swift */; };
 		A10000000000000000000012 /* JarvisComposeSessionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* JarvisComposeSessionHandler.swift */; };
 		A10000000000000000000013 /* JarvisMailViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000003 /* JarvisMailViewController.swift */; };
 		A10000000000000000000014 /* JarvisMailExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A10000000000000000000005 /* JarvisMailExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		A10000000000000000000015 /* OllamaClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C991F96CBECC49B1BE14740F /* OllamaClient.swift */; };
+		A10000000000000000000016 /* SecurityServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F8010A09A1B4B1F8F01AAA1 /* SecurityServices.swift */; };
 		A260E0D7788047FDA1481E9F /* NotificationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6995217B39C54812B4282066 /* NotificationViewModel.swift */; };
 		A8DDA8B34B484EBC97A4083B /* TableExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 963DA03E0EDD4D0494C0C3F4 /* TableExtractor.swift */; };
 		AF21D154FED84D84AF196399 /* OllamaClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C991F96CBECC49B1BE14740F /* OllamaClient.swift */; };
@@ -49,6 +59,9 @@
 		BA93113C02724475A872C5B8 /* EmailDraftView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE42DEFC61514F3AAF6A5064 /* EmailDraftView.swift */; };
 		CB9DDA8E24E94129B5C1A931 /* EmailDraftViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89ACC6B594474F54A3778726 /* EmailDraftViewModel.swift */; };
 		CDAE0D07B0E749CABAC9347B /* WorkflowEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CBBD2A8C01F4112AA4E9EF9 /* WorkflowEngine.swift */; };
+		D10000000000000000000002 /* JarvisMailPanelDraftStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000001 /* JarvisMailPanelDraftStore.swift */; };
+		D10000000000000000000003 /* JarvisMailPanelDraftStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000001 /* JarvisMailPanelDraftStore.swift */; };
+		D10000000000000000000004 /* JarvisMailPanelDraftStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000001 /* JarvisMailPanelDraftStore.swift */; };
 		D3CDF9CDC6A2448DA304F540 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56EA3106B91A487EAD013ADF /* NotificationService.swift */; };
 		D67A9728C3B14EDAA0B12890 /* CommandPaletteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349643A4A44043B0BE1597DF /* CommandPaletteView.swift */; };
 		DCF9D6DE040345B6AD71D7CF /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1C3A4F65DC452888112B14 /* SettingsView.swift */; };
@@ -109,6 +122,7 @@
 /* Begin PBXFileReference section */
 		03B50D48937C470297F0ABD8 /* ToolExecutionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolExecutionService.swift; sourceTree = "<group>"; };
 		0A1C3A4F65DC452888112B14 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		0C09101A92224B05A9393A7F /* JarvisMacCapabilityServicesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisMacCapabilityServicesTests.swift; sourceTree = "<group>"; };
 		0CAD082D1BD646D096FAEEE4 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		1957C5C21E10425E8850237C /* ModernSearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModernSearchView.swift; sourceTree = "<group>"; };
 		1B518FB01023475394CBE4AC /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -118,12 +132,19 @@
 		2F91576D8D9348829D2CFDA9 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		349643A4A44043B0BE1597DF /* CommandPaletteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPaletteView.swift; sourceTree = "<group>"; };
 		37D1CD63C0614279AED9F291 /* SettingsStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStoreTests.swift; sourceTree = "<group>"; };
+		9010AA200000000000000001 /* JarvisPathSafetyPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisPathSafetyPolicy.swift; sourceTree = "<group>"; };
+		9010AA200000000000000002 /* JarvisMacActionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisMacActionService.swift; sourceTree = "<group>"; };
+		9010AA200000000000000003 /* JarvisProjectActionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisProjectActionService.swift; sourceTree = "<group>"; };
+		9010AA200000000000000004 /* JarvisSafeShellService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisSafeShellService.swift; sourceTree = "<group>"; };
+		9010AA200000000000000005 /* JarvisSpeechInputService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisSpeechInputService.swift; sourceTree = "<group>"; };
+		9010AA200000000000000006 /* JarvisSpeechOutputService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisSpeechOutputService.swift; sourceTree = "<group>"; };
 		3B3365F8A7D243189DE4CCA1 /* MacroListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacroListView.swift; sourceTree = "<group>"; };
 		3CBBD2A8C01F4112AA4E9EF9 /* WorkflowEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowEngine.swift; sourceTree = "<group>"; };
 		3EA6E8A2548F4E04BDB77CB8 /* LocalIndexService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalIndexService.swift; sourceTree = "<group>"; };
 		511BF4F14B2C42B9B3444332 /* MacroService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacroService.swift; sourceTree = "<group>"; };
 		51BCA15FC7274051AD5E8BAC /* Jarvis.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Jarvis.entitlements; sourceTree = "<group>"; };
 		56EA3106B91A487EAD013ADF /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
+		5F8010A09A1B4B1F8F01AAA1 /* SecurityServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecurityServices.swift; sourceTree = "<group>"; };
 		61764E1200D148809694058F /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		61D00CDB1E084085BBE4C16C /* CaptureServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureServices.swift; sourceTree = "<group>"; };
 		673A20B5F5C2490B892552DB /* Jarvis.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = Jarvis.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -159,6 +180,7 @@
 		C134977B0E2D413B9D9BFD0C /* NotificationsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationsView.swift; sourceTree = "<group>"; };
 		C991F96CBECC49B1BE14740F /* OllamaClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OllamaClient.swift; sourceTree = "<group>"; };
 		D0597A14198647B0955E0CFA /* TableExtractorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableExtractorTests.swift; sourceTree = "<group>"; };
+		D10000000000000000000001 /* JarvisMailPanelDraftStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisMailPanelDraftStore.swift; sourceTree = "<group>"; };
 		DF5494781D2A4460BE400DF5 /* CalculatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalculatorTests.swift; sourceTree = "<group>"; };
 		E0A38A026D494E468A3E0553 /* ClipboardWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardWatcher.swift; sourceTree = "<group>"; };
 		E1D05E2FAB6D4E9BB9C343FD /* HotKeyCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotKeyCenter.swift; sourceTree = "<group>"; };
@@ -258,6 +280,7 @@
 				DF5494781D2A4460BE400DF5 /* CalculatorTests.swift */,
 				D0597A14198647B0955E0CFA /* TableExtractorTests.swift */,
 				37D1CD63C0614279AED9F291 /* SettingsStoreTests.swift */,
+				0C09101A92224B05A9393A7F /* JarvisMacCapabilityServicesTests.swift */,
 				B21000000000000000000007 /* SearchPipelineTests.swift */,
 				1B518FB01023475394CBE4AC /* Info.plist */,
 			);
@@ -335,10 +358,18 @@
 				C991F96CBECC49B1BE14740F /* OllamaClient.swift */,
 				84D2E82174F34D2481A47DB9 /* ConversationService.swift */,
 				03B50D48937C470297F0ABD8 /* ToolExecutionService.swift */,
+				9010AA200000000000000001 /* JarvisPathSafetyPolicy.swift */,
+				9010AA200000000000000002 /* JarvisMacActionService.swift */,
+				9010AA200000000000000003 /* JarvisProjectActionService.swift */,
+				9010AA200000000000000004 /* JarvisSafeShellService.swift */,
+				9010AA200000000000000005 /* JarvisSpeechInputService.swift */,
+				9010AA200000000000000006 /* JarvisSpeechOutputService.swift */,
 				991D21F2EE0C45AE8911CCFF /* DocumentImportService.swift */,
 				963DA03E0EDD4D0494C0C3F4 /* TableExtractor.swift */,
 				61D00CDB1E084085BBE4C16C /* CaptureServices.swift */,
 				56EA3106B91A487EAD013ADF /* NotificationService.swift */,
+				5F8010A09A1B4B1F8F01AAA1 /* SecurityServices.swift */,
+				D10000000000000000000001 /* JarvisMailPanelDraftStore.swift */,
 				E0A38A026D494E468A3E0553 /* ClipboardWatcher.swift */,
 				3EA6E8A2548F4E04BDB77CB8 /* LocalIndexService.swift */,
 				511BF4F14B2C42B9B3444332 /* MacroService.swift */,
@@ -590,6 +621,8 @@
 				3785EE0B89A74C83AA14C7B6 /* CalculatorTests.swift in Sources */,
 				90025FF9A5A74FDE87846DAE /* TableExtractorTests.swift in Sources */,
 				0C09101A92224B05A9393A7D /* SettingsStoreTests.swift in Sources */,
+				0C09101A92224B05A9393A7E /* JarvisMacCapabilityServicesTests.swift in Sources */,
+				D10000000000000000000004 /* JarvisMailPanelDraftStore.swift in Sources */,
 				B20000000000000000000007 /* SearchPipelineTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -601,6 +634,9 @@
 				A10000000000000000000011 /* JarvisMailExtension.swift in Sources */,
 				A10000000000000000000012 /* JarvisComposeSessionHandler.swift in Sources */,
 				A10000000000000000000013 /* JarvisMailViewController.swift in Sources */,
+				A10000000000000000000015 /* OllamaClient.swift in Sources */,
+				A10000000000000000000016 /* SecurityServices.swift in Sources */,
+				D10000000000000000000003 /* JarvisMailPanelDraftStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -617,10 +653,18 @@
 				AF21D154FED84D84AF196399 /* OllamaClient.swift in Sources */,
 				1A42C71E2C784F11B05C49B6 /* ConversationService.swift in Sources */,
 				9E63F9BE8E0D47479380D63D /* ToolExecutionService.swift in Sources */,
+				9010AA100000000000000001 /* JarvisPathSafetyPolicy.swift in Sources */,
+				9010AA100000000000000002 /* JarvisMacActionService.swift in Sources */,
+				9010AA100000000000000003 /* JarvisProjectActionService.swift in Sources */,
+				9010AA100000000000000004 /* JarvisSafeShellService.swift in Sources */,
+				9010AA100000000000000005 /* JarvisSpeechInputService.swift in Sources */,
+				9010AA100000000000000006 /* JarvisSpeechOutputService.swift in Sources */,
 				7B557D742C154D9796F03430 /* DocumentImportService.swift in Sources */,
 				A8DDA8B34B484EBC97A4083B /* TableExtractor.swift in Sources */,
 				33998A027E084E37B2CF1F1F /* CaptureServices.swift in Sources */,
 				D3CDF9CDC6A2448DA304F540 /* NotificationService.swift in Sources */,
+				5F8010A19A1B4B1F8F01AAA1 /* SecurityServices.swift in Sources */,
+				D10000000000000000000002 /* JarvisMailPanelDraftStore.swift in Sources */,
 				E7F6B7EC71454F4691CCB4C0 /* ClipboardWatcher.swift in Sources */,
 				23903BB4A5D94EB6AC3245D5 /* LocalIndexService.swift in Sources */,
 				62BFA53E86E849AF8E3F0E34 /* MacroService.swift in Sources */,
@@ -856,6 +900,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleURLTypes = "{\n    CFBundleTypeRole = Editor;\n    CFBundleURLName = \"com.offline.Jarvis.phone.url\";\n    CFBundleURLSchemes =     (\n        jarvis\n    );\n}";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSAppTransportSecurity = "{\n    NSAllowsLocalNetworking = YES;\n}";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Jarvis can connect to an Ollama server on your Mac or local network when you enable the remote backend.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Jarvis uses the microphone to capture voice prompts for local assistant input.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Jarvis uses speech recognition to transcribe voice prompts into chat input on your iPhone.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -882,7 +928,9 @@
 				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
+				SWIFT_INSTALL_OBJC_HEADER = NO;
 				SWIFT_INTEROP_MODE = Cxx;
+				SWIFT_OBJC_INTERFACE_HEADER_NAME = "";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
@@ -919,6 +967,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleURLTypes = "{\n    CFBundleTypeRole = Editor;\n    CFBundleURLName = \"com.offline.Jarvis.phone.url\";\n    CFBundleURLSchemes =     (\n        jarvis\n    );\n}";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSAppTransportSecurity = "{\n    NSAllowsLocalNetworking = YES;\n}";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Jarvis can connect to an Ollama server on your Mac or local network when you enable the remote backend.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Jarvis uses the microphone to capture voice prompts for local assistant input.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Jarvis uses speech recognition to transcribe voice prompts into chat input on your iPhone.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -944,7 +994,9 @@
 				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
+				SWIFT_INSTALL_OBJC_HEADER = NO;
 				SWIFT_INTEROP_MODE = Cxx;
+				SWIFT_OBJC_INTERFACE_HEADER_NAME = "";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;

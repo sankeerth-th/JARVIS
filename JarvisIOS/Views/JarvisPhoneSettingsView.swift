@@ -16,6 +16,12 @@ struct JarvisPhoneSettingsView: View {
 
                 Form {
                     Section("Model") {
+                        Picker("Backend", selection: $appModel.settings.runtimeBackend) {
+                            ForEach(JarvisRuntimeBackend.allCases) { backend in
+                                Text(backend.displayName).tag(backend)
+                            }
+                        }
+
                         LabeledContent("Runtime", value: appModel.runtimeState.title)
                         LabeledContent("Engine", value: appModel.runtimeEngineName)
                         LabeledContent("Inference") {
@@ -23,15 +29,22 @@ struct JarvisPhoneSettingsView: View {
                                 .foregroundStyle(appModel.canRunInference ? .green : .orange)
                         }
                         LabeledContent("Active") {
-                            Text(appModel.activeModel?.displayName ?? "None")
-                                .foregroundStyle(appModel.activeModel == nil ? .orange : .primary)
+                            Text(appModel.usesRemoteOllamaRuntime ? appModel.remoteRuntimeDisplayName : (appModel.activeModel?.displayName ?? "None"))
+                                .foregroundStyle((appModel.usesRemoteOllamaRuntime || appModel.activeModel != nil) ? Color.primary : Color.orange)
                         }
-                        if let activeModel = appModel.activeModel {
+                        if appModel.usesRemoteOllamaRuntime {
+                            LabeledContent("Server") {
+                                Text(appModel.ollamaConfiguration.baseURLString.isEmpty ? "Not Configured" : appModel.ollamaConfiguration.baseURLString)
+                                    .foregroundStyle(appModel.ollamaConfiguration.baseURLString.isEmpty ? .orange : .primary)
+                            }
+                            Text("Ollama runs on your Mac, server, or LAN device. Jarvis connects over HTTP(S); this is not on-device inference.")
+                                .font(.footnote)
+                        } else if let activeModel = appModel.activeModel {
                             LabeledContent("Import State", value: activeModel.importState.displayName)
                             LabeledContent("Activation", value: activeModel.activationEligibility.displayName)
                         }
                         LabeledContent("Supported") {
-                            Text(appModel.supportedModelFormatText)
+                            Text(appModel.usesRemoteOllamaRuntime ? "Remote Ollama chat backend" : appModel.supportedModelFormatText)
                         }
 
                         if !appModel.canRunInference {
@@ -40,18 +53,39 @@ struct JarvisPhoneSettingsView: View {
                                 .foregroundStyle(.orange)
                         }
 
-                        Button("Import Model from Files") {
-                            appModel.beginModelImport()
-                        }
+                        if appModel.usesRemoteOllamaRuntime {
+                            TextField("Ollama Server URL", text: $appModel.settings.ollama.baseURLString)
+                                .textInputAutocapitalization(.never)
+                                .disableAutocorrection(true)
+                                .keyboardType(.URL)
 
-                        Button("Open Model Library") {
-                            appModel.presentModelLibrary()
+                            TextField("Model Name", text: $appModel.settings.ollama.modelName)
+                                .textInputAutocapitalization(.never)
+                                .disableAutocorrection(true)
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Examples")
+                                    .font(.caption.weight(.semibold))
+                                Text("http://192.168.1.10:11434")
+                                    .font(.caption.monospaced())
+                                Text("qwen2.5:3b-instruct or llama3.2:3b")
+                                    .font(.caption.monospaced())
+                            }
+                            .foregroundStyle(.secondary)
+                        } else {
+                            Button("Import Model from Files") {
+                                appModel.beginModelImport()
+                            }
+
+                            Button("Open Model Library") {
+                                appModel.presentModelLibrary()
+                            }
                         }
 
                         Button("Warm Active Model") {
                             appModel.warmModel()
                         }
-                        .disabled(!appModel.hasReadyModel || !appModel.canRunInference)
+                        .disabled(appModel.needsModelSetup || !appModel.canRunInference)
                     }
 
                     Section("Quick Launch") {
@@ -64,7 +98,9 @@ struct JarvisPhoneSettingsView: View {
                     Section("Behavior") {
                         Text("If no ready model is active, Jarvis routes to setup/import instead of a broken assistant screen.")
                             .font(.footnote)
-                        Text("All inference stays local. No hidden network fallback.")
+                        Text(appModel.usesRemoteOllamaRuntime
+                             ? "Remote mode sends prompts to your configured Ollama server. Jarvis does not silently fall back between local and remote backends."
+                             : "All inference stays local. No hidden network fallback.")
                             .font(.footnote)
                     }
 

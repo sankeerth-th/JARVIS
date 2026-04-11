@@ -383,15 +383,79 @@ struct ToolInvocation: Codable, Equatable {
         case listNotifications
         case searchLocalDocs
         case summarize
+        case appOpen = "app.open"
+        case appFocus = "app.focus"
+        case finderReveal = "finder.reveal"
+        case systemOpenURL = "system.open_url"
+        case projectOpen = "project.open"
+        case projectScaffold = "project.scaffold"
+        case shellRunSafe = "shell.run.safe"
+        case voiceListen = "voice.listen"
+        case voiceSpeak = "voice.speak"
+        case voiceStop = "voice.stop"
     }
 
     var name: ToolName
     var arguments: [String: String]
 }
 
+enum CapabilityExecutionState: String, Codable, Equatable {
+    case pending
+    case executing
+    case success
+    case failed
+    case requiresApproval
+    case unsupported
+}
+
+enum VoiceInteractionState: String, Codable, Equatable {
+    case idle
+    case listening
+    case processing
+    case speaking
+    case interrupted
+    case stopped
+}
+
 struct ToolResult: Codable, Equatable {
     var content: String
+    var state: CapabilityExecutionState
     var metadata: [String: String]
+
+    init(
+        content: String,
+        state: CapabilityExecutionState = .success,
+        metadata: [String: String] = [:]
+    ) {
+        self.content = content
+        self.state = state
+        self.metadata = metadata
+    }
+
+    var voiceState: VoiceInteractionState? {
+        guard let rawValue = metadata["voiceState"] else { return nil }
+        return VoiceInteractionState(rawValue: rawValue)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case content
+        case state
+        case metadata
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        content = try container.decode(String.self, forKey: .content)
+        state = try container.decodeIfPresent(CapabilityExecutionState.self, forKey: .state) ?? .success
+        metadata = try container.decodeIfPresent([String: String].self, forKey: .metadata) ?? [:]
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(content, forKey: .content)
+        try container.encode(state, forKey: .state)
+        try container.encode(metadata, forKey: .metadata)
+    }
 }
 
 enum AssistantIntent: String, Codable, CaseIterable {

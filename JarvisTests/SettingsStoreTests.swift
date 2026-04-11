@@ -11,6 +11,107 @@ final class SettingsStoreTests: XCTestCase {
         store.setTone(.friendly)
         XCTAssertEqual(store.tone(), .friendly)
     }
+
+    func testSettingsBlobIsNotStoredAsPlainJSON() throws {
+        let suite = "com.jarvis.tests.secure.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+
+        let store = SettingsStore(defaults: defaults)
+        store.setSystemPrompt("api_key=super-secret-token and email me at jarvis@example.com")
+
+        let raw = try XCTUnwrap(defaults.data(forKey: "com.jarvis.settings"))
+        XCTAssertNil(try? JSONDecoder().decode(AppSettings.self, from: raw))
+        XCTAssertFalse(String(decoding: raw, as: UTF8.self).contains("super-secret-token"))
+    }
+
+    func testRedactorRemovesSensitivePatterns() {
+        let input = "Reach me at jarvis@example.com, bearer: abcdefghijklmnop, /Users/sanks04/Desktop/file.txt"
+        let output = JarvisSecurityRedactor.redact(input)
+
+        XCTAssertFalse(output.contains("jarvis@example.com"))
+        XCTAssertFalse(output.contains("abcdefghijklmnop"))
+        XCTAssertFalse(output.contains("/Users/sanks04"))
+    }
+
+    func testLoopbackPolicyRejectsUnsupportedHostsAndOversizedBodies() {
+        XCTAssertThrowsError(
+            try JarvisLoopbackSecurityPolicy.validate(
+                url: URL(string: "http://192.168.0.10:11434/api/generate")!,
+                body: Data()
+            )
+        )
+
+        XCTAssertThrowsError(
+            try JarvisLoopbackSecurityPolicy.validate(
+                url: URL(string: "http://127.0.0.1:11434/api/generate")!,
+                body: Data(repeating: 1, count: JarvisLoopbackSecurityPolicy.maxRequestBodyBytes + 1)
+            )
+        )
+    }
+
+    func testLoopbackPolicyAllowsReleaseSafeLoopbackHosts() throws {
+        XCTAssertTrue(JarvisLoopbackSecurityPolicy.allowsLocalInference)
+
+        XCTAssertNoThrow(
+            try JarvisLoopbackSecurityPolicy.validate(
+                url: URL(string: "http://127.0.0.1:11434/api/generate")!,
+                body: Data()
+            )
+        )
+
+        XCTAssertNoThrow(
+            try JarvisLoopbackSecurityPolicy.validate(
+                url: URL(string: "http://localhost:11434/api/generate")!,
+                body: Data()
+            )
+        )
+    }
+
+    func testMailPanelDraftStorePersistsOnlyRecoverableUserWork() throws {
+        let suite = "com.jarvis.tests.maildraft.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let sessionID = UUID()
+        let now = Date()
+        let state = JarvisMailPanelDraftState(
+            modelName: "gemma3:12b",
+            userInstruction: "Reply politely and confirm the timeline.",
+            extractedThreadPreview: "Customer thread excerpt",
+            outputText: "Thanks for the update. We can deliver by Friday.",
+            updatedAt: now
+        )
+
+        JarvisMailPanelDraftStore.save(state, sessionID: sessionID, defaults: defaults)
+
+        let restored = try XCTUnwrap(
+            JarvisMailPanelDraftStore.load(sessionID: sessionID, defaults: defaults)
+        )
+
+        XCTAssertEqual(restored, state)
+    }
+
+    func testMailPanelDraftStorePrunesStaleSessions() throws {
+        let suite = "com.jarvis.tests.maildraftprune.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let sessionID = UUID()
+        let staleState = JarvisMailPanelDraftState(
+            modelName: "gemma3:12b",
+            userInstruction: "Keep this short.",
+            extractedThreadPreview: "Old thread",
+            outputText: "Old output",
+            updatedAt: Date(timeIntervalSince1970: 10)
+        )
+
+        JarvisMailPanelDraftStore.save(staleState, sessionID: sessionID, defaults: defaults)
+        JarvisMailPanelDraftStore.prune(
+            defaults: defaults,
+            now: Date(timeIntervalSince1970: 10 + JarvisMailPanelDraftStore.staleInterval + 1)
+        )
+
+        XCTAssertNil(JarvisMailPanelDraftStore.load(sessionID: sessionID, defaults: defaults))
+    }
 }
 
 final class RoutingIsolationTests: XCTestCase {

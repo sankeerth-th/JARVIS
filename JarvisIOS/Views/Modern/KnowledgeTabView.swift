@@ -1,30 +1,38 @@
 import SwiftUI
 
-/// Modern knowledge base/search tab
 struct KnowledgeTabView: View {
     @EnvironmentObject private var appModel: JarvisPhoneAppModel
-    
+
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    ForEach(filteredResults) { result in
-                        KnowledgeRow(result: result)
-                    }
-                } header: {
-                    Text("Saved Knowledge")
-                } footer: {
-                    if appModel.knowledgeItems.isEmpty {
-                        Text("Save useful responses from conversations to build your knowledge base.")
+            ScrollView {
+                VStack(alignment: .leading, spacing: JarvisModernTheme.sectionSpacing) {
+                    JarvisModernSectionHeader(
+                        "Knowledge",
+                        eyebrow: "Saved",
+                        subtitle: "Search and reuse the answers, notes, and context you have chosen to keep local."
+                    )
+
+                    searchCard
+
+                    if filteredResults.isEmpty {
+                        emptyStateCard
+                    } else {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(filteredResults) { result in
+                                KnowledgeRow(result: result)
+                            }
+                        }
                     }
                 }
+                .padding(.horizontal, JarvisModernTheme.screenPadding)
+                .padding(.top, 18)
+                .padding(.bottom, 132)
             }
-            .listStyle(.insetGrouped)
+            .background(JarvisModernBackground())
             .navigationTitle("Knowledge")
-            .searchable(text: $appModel.knowledgeQuery, prompt: "Search saved knowledge...")
-            .onChange(of: appModel.knowledgeQuery) { _, _ in
-                appModel.refreshKnowledgeResults()
-            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     if appModel.shouldShowFocusedBackButton {
@@ -35,22 +43,63 @@ struct KnowledgeTabView: View {
                         }
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    EditButton()
-                }
-            }
-            .overlay {
-                if appModel.knowledgeItems.isEmpty {
-                    ContentUnavailableView {
-                        Label("No Knowledge Yet", systemImage: "books.vertical")
-                    } description: {
-                        Text("Save helpful responses from conversations to build your personal knowledge base.")
-                    }
-                }
             }
         }
     }
-    
+
+    private var searchCard: some View {
+        JarvisModernCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    JarvisModernIconBadge(systemName: "magnifyingglass", tint: JarvisModernTheme.accentSoft)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Search your local knowledge")
+                            .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                            .foregroundStyle(JarvisModernTheme.textPrimary)
+                        Text("Results stay on-device and match titles and saved content.")
+                            .font(.system(.footnote, design: .rounded, weight: .medium))
+                            .foregroundStyle(JarvisModernTheme.textSecondary)
+                    }
+                }
+
+                TextField("Search saved knowledge...", text: $appModel.knowledgeQuery)
+                    .textInputAutocapitalization(.sentences)
+                    .autocorrectionDisabled(false)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(Color.white.opacity(0.08))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .stroke(JarvisModernTheme.border, lineWidth: 1)
+                            )
+                    )
+                    .onChange(of: appModel.knowledgeQuery) { _, _ in
+                        appModel.refreshKnowledgeResults()
+                    }
+            }
+        }
+    }
+
+    private var emptyStateCard: some View {
+        JarvisModernCard(secondary: true) {
+            VStack(spacing: 14) {
+                Image(systemName: "books.vertical")
+                    .font(.system(size: 30, weight: .semibold))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
+                Text("No knowledge yet")
+                    .font(.system(.headline, design: .rounded, weight: .bold))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
+                Text("Save useful responses from conversations to build a local knowledge base you can search later.")
+                    .font(.system(.footnote, design: .rounded, weight: .medium))
+                    .foregroundStyle(JarvisModernTheme.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
     private var filteredResults: [JarvisKnowledgeItem] {
         if appModel.knowledgeQuery.isEmpty {
             return appModel.knowledgeItems
@@ -64,299 +113,273 @@ struct KnowledgeTabView: View {
 
 struct KnowledgeRow: View {
     let result: JarvisKnowledgeItem
-    
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(result.title)
-                .font(.subheadline.weight(.medium))
-            Text(result.text)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            Text(result.createdAt, style: .date)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+        JarvisModernCard(secondary: true, padding: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(result.title)
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
+                Text(result.text)
+                    .font(.system(.footnote, design: .rounded, weight: .medium))
+                    .foregroundStyle(JarvisModernTheme.textSecondary)
+                    .lineLimit(3)
+                Text(result.createdAt, style: .date)
+                    .font(.system(.caption2, design: .rounded, weight: .semibold))
+                    .foregroundStyle(JarvisModernTheme.textTertiary)
+            }
         }
-        .padding(.vertical, 4)
     }
 }
 
-// MARK: - Settings Tab
-
 struct SettingsTabView: View {
     @EnvironmentObject private var appModel: JarvisPhoneAppModel
-    
+
     var body: some View {
         NavigationStack {
-            List {
-                Section("Model") {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(appModel.supportedModelDisplayName)
-                            .font(.subheadline.weight(.semibold))
-                        Text(appModel.supportedModelShortDescription)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text("\(appModel.supportedModelClassificationText) • \(appModel.supportedModelCapabilitySummary)")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
+            ScrollView {
+                VStack(alignment: .leading, spacing: JarvisModernTheme.sectionSpacing) {
+                    JarvisModernSectionHeader(
+                        "Settings",
+                        eyebrow: "Platform",
+                        subtitle: "Tune the assistant, runtime profile, and local-device behavior without leaving the iPhone shell."
+                    )
 
-                    NavigationLink {
-                        JarvisModernModelLibraryView()
-                    } label: {
-                        HStack {
-                            Image(systemName: "cpu")
-                                .foregroundStyle(.indigo)
-                            VStack(alignment: .leading, spacing: 2) {
-                                if let model = appModel.activeModel {
-                                    Text(model.displayName)
-                                        .font(.subheadline.weight(.medium))
-                                    Text(appModel.activeModelSupportStatusText)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                } else {
-                                    Text("No Model")
-                                        .font(.subheadline)
-                                    Text("Import and activate a local GGUF model")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                    }
+                    overviewCard
+                    modelSection
+                    runtimeSection
+                    assistantSection
+                    deviceSection
+                }
+                .padding(.horizontal, JarvisModernTheme.screenPadding)
+                .padding(.top, 18)
+                .padding(.bottom, 132)
+            }
+            .background(JarvisModernBackground())
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
+        }
+    }
 
+    private var overviewCard: some View {
+        JarvisModernCard {
+            HStack(alignment: .top, spacing: 14) {
+                JarvisModernIconBadge(systemName: "gearshape.fill", tint: JarvisModernTheme.accent)
+                VStack(alignment: .leading, spacing: 6) {
+                    let activeModelName = appModel.activeModel?.displayName ?? "None"
+                    Text(appModel.runtimeState.title)
+                        .font(.system(.title3, design: .rounded, weight: .bold))
+                        .foregroundStyle(JarvisModernTheme.textPrimary)
+                    Text("Engine: \(appModel.runtimeEngineName)\nActive model: \(activeModelName)")
+                        .font(.system(.footnote, design: .rounded, weight: .medium))
+                        .foregroundStyle(JarvisModernTheme.textSecondary)
+                }
+                Spacer()
+            }
+        }
+    }
+
+    private var modelSection: some View {
+        JarvisModernCard(secondary: true) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Model")
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
+
+                settingRow("Recommended Profile") {
                     Picker("Recommended Profile", selection: $appModel.settings.preferredModelProfile) {
                         ForEach(JarvisSupportedModelProfileID.allCases) { profileID in
                             Text(JarvisSupportedModelCatalog.profile(for: profileID)?.displayName ?? profileID.rawValue)
                                 .tag(profileID)
                         }
                     }
-                    
-                    Button {
-                        appModel.presentModelLibrary(beginImport: true)
-                    } label: {
-                        Label("Import GGUF Model", systemImage: "square.and.arrow.down")
-                    }
-
-                    Toggle("Auto-warm On First Send", isOn: $appModel.settings.autoWarmOnFirstSend)
+                    .pickerStyle(.menu)
                 }
-                
-                Section("Runtime Profile") {
-                    HStack {
-                        Label("Status", systemImage: "checkmark.circle")
-                        Spacer()
-                        Text(appModel.runtimeState.title)
-                            .foregroundStyle(.secondary)
-                    }
-                    
-                    HStack {
-                        Label("Engine", systemImage: "gearshape.2")
-                        Spacer()
-                        Text(appModel.runtimeEngineName)
-                            .foregroundStyle(.secondary)
-                    }
 
+                Button {
+                    appModel.presentModelLibrary(beginImport: true)
+                } label: {
+                    Label("Import GGUF Model", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(JarvisModernSecondaryButtonStyle())
+
+                Button {
+                    appModel.presentModelLibrary()
+                } label: {
+                    Label("Open Model Library", systemImage: "cpu")
+                }
+                .buttonStyle(JarvisModernSecondaryButtonStyle())
+
+                Toggle("Auto-warm On First Send", isOn: $appModel.settings.autoWarmOnFirstSend)
+                    .tint(JarvisModernTheme.accent)
+            }
+        }
+    }
+
+    private var runtimeSection: some View {
+        JarvisModernCard(secondary: true) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Runtime")
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
+
+                settingRow("Performance") {
                     Picker("Performance", selection: $appModel.settings.performanceProfile) {
                         ForEach(JarvisRuntimePerformanceProfile.allCases) { profile in
                             Text(profile.displayName).tag(profile)
                         }
                     }
+                    .pickerStyle(.menu)
+                }
 
+                settingRow("Context Window") {
                     Picker("Context Window", selection: $appModel.settings.contextWindow) {
                         ForEach(JarvisContextWindowPreset.allCases) { preset in
                             Text("\(preset.displayName) (\(preset.tokenEstimateLabel))").tag(preset)
                         }
                     }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("Creativity")
-                            Spacer()
-                            Text(appModel.settings.creativity, format: .number.precision(.fractionLength(2)))
-                                .foregroundStyle(.secondary)
-                        }
-                        Slider(value: $appModel.settings.creativity, in: 0.0...1.2, step: 0.05)
-                    }
-
-                    if appModel.hasReadyModel {
-                        Button {
-                            appModel.warmModel()
-                        } label: {
-                            Label("Warm Up Model", systemImage: "flame")
-                        }
-
-                        Button {
-                            appModel.unloadActiveModel()
-                        } label: {
-                            Label("Unload Model", systemImage: "eject")
-                        }
-                    }
-
-                    if case .failed = appModel.runtimeState {
-                        Button {
-                            appModel.retryRuntimeWarmup()
-                        } label: {
-                            Label("Retry Runtime", systemImage: "arrow.clockwise")
-                        }
-                    }
+                    .pickerStyle(.menu)
                 }
 
-                Section("Assistant Platform") {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Creativity")
+                            .foregroundStyle(JarvisModernTheme.textPrimary)
+                        Spacer()
+                        Text(appModel.settings.creativity, format: .number.precision(.fractionLength(2)))
+                            .foregroundStyle(JarvisModernTheme.textSecondary)
+                    }
+                    Slider(value: $appModel.settings.creativity, in: 0.0...1.2, step: 0.05)
+                        .tint(JarvisModernTheme.accent)
+                }
+
+                if appModel.hasReadyModel {
+                    Button {
+                        appModel.warmModel()
+                    } label: {
+                        Label("Warm Up Model", systemImage: "flame")
+                    }
+                    .buttonStyle(JarvisModernSecondaryButtonStyle())
+
+                    Button {
+                        appModel.unloadActiveModel()
+                    } label: {
+                        Label("Unload Model", systemImage: "eject")
+                    }
+                    .buttonStyle(JarvisModernSecondaryButtonStyle())
+                }
+
+                if case .failed = appModel.runtimeState {
+                    Button {
+                        appModel.retryRuntimeWarmup()
+                    } label: {
+                        Label("Retry Runtime", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(JarvisModernSecondaryButtonStyle())
+                }
+            }
+        }
+    }
+
+    private var assistantSection: some View {
+        JarvisModernCard(secondary: true) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Assistant Platform")
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
+
+                settingRow("Startup Destination") {
                     Picker("Startup Destination", selection: $appModel.settings.startupRoute) {
                         ForEach(JarvisStartupRoute.allCases) { route in
                             Text(route.displayName).tag(route)
                         }
                     }
+                    .pickerStyle(.menu)
+                }
 
+                settingRow("Assistant Mode") {
                     Picker("Assistant Mode", selection: $appModel.settings.assistantQualityMode) {
                         ForEach(JarvisAssistantQualityMode.allCases) { mode in
                             Text(mode.displayName).tag(mode)
                         }
                     }
+                    .pickerStyle(.menu)
+                }
 
+                settingRow("Prompt Mode") {
                     Picker("Prompt Mode", selection: $appModel.settings.promptMode) {
                         ForEach(JarvisAssistantPromptMode.allCases) { mode in
                             Text(mode.displayName).tag(mode)
                         }
                     }
+                    .pickerStyle(.menu)
+                }
 
+                settingRow("Response Style") {
                     Picker("Response Style", selection: $appModel.settings.responseStyle) {
                         ForEach(JarvisAssistantResponseStyle.allCases) { style in
                             Text(style.displayName).tag(style)
                         }
                     }
-
-                    Toggle("Enable Memory", isOn: $appModel.settings.memoryEnabled)
-
-                    Button(role: .destructive) {
-                        appModel.clearAssistantMemory()
-                    } label: {
-                        Label("Clear Memory", systemImage: "trash")
-                    }
-
-                    Toggle("Auto-start Voice Entry", isOn: $appModel.settings.autoStartListeningForVoiceEntry)
-                    Toggle("Auto-send After Speech Pause", isOn: $appModel.settings.autoSendVoiceAfterPause)
-
-                    TextField("Speech Locale (optional, e.g. en-US)", text: Binding(
-                        get: { appModel.settings.speechLocaleIdentifier ?? "" },
-                        set: { appModel.settings.speechLocaleIdentifier = $0.isEmpty ? nil : $0 }
-                    ))
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
+                    .pickerStyle(.menu)
                 }
 
-                Section("Chat & Device") {
-                    Toggle("Auto-scroll Conversation", isOn: $appModel.settings.autoScrollConversation)
-                    Toggle("Enable Haptics", isOn: $appModel.settings.hapticsEnabled)
-                    Toggle("Unload Model In Background", isOn: $appModel.settings.unloadModelOnBackground)
-                    Toggle("Battery Saver Mode", isOn: $appModel.settings.batterySaverMode)
+                Toggle("Enable Memory", isOn: $appModel.settings.memoryEnabled)
+                    .tint(JarvisModernTheme.accent)
+
+                Toggle("Auto-start Voice Entry", isOn: $appModel.settings.autoStartListeningForVoiceEntry)
+                    .tint(JarvisModernTheme.accent)
+
+                Toggle("Auto-send After Speech Pause", isOn: $appModel.settings.autoSendVoiceAfterPause)
+                    .tint(JarvisModernTheme.accent)
+
+                Button(role: .destructive) {
+                    appModel.clearAssistantMemory()
+                } label: {
+                    Label("Clear Memory", systemImage: "trash")
                 }
-
-                Section("Runtime") {
-                    Toggle("Enable Diagnostics", isOn: $appModel.settings.showRuntimeDiagnostics)
-
-                    Button {
-                        appModel.resetAssistantState()
-                    } label: {
-                        Label("Reset Assistant State", systemImage: "arrow.counterclockwise")
-                    }
-
-                    NavigationLink("Runtime Diagnostics") {
-                        RuntimeDiagnosticsView()
-                    }
-
-                    if !appModel.canRunInference {
-                        Text(appModel.runtimeBlockedReason)
-                            .font(.footnote)
-                            .foregroundStyle(.orange)
-                    }
-                }
-
-                Section("Diagnostics") {
-                    LabeledContent("Recommended Profile", value: appModel.supportedModelDisplayName)
-                }
+                .buttonStyle(JarvisModernSecondaryButtonStyle())
             }
-            .navigationTitle("Settings")
         }
     }
-}
 
-// MARK: - Runtime Diagnostics
+    private var deviceSection: some View {
+        JarvisModernCard(secondary: true) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Chat & Device")
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
 
-struct RuntimeDiagnosticsView: View {
-    @EnvironmentObject private var appModel: JarvisPhoneAppModel
-    
-    var body: some View {
-        List {
-            Section("Engine Status") {
-                LabeledContent("Engine", value: appModel.runtimeEngineName)
-                LabeledContent("Available", value: appModel.canRunInference ? "Yes" : "No")
-                if !appModel.canRunInference {
-                    LabeledContent("Reason", value: appModel.runtimeBlockedReason)
+                Toggle("Auto-scroll Conversation", isOn: $appModel.settings.autoScrollConversation)
+                    .tint(JarvisModernTheme.accent)
+                Toggle("Enable Haptics", isOn: $appModel.settings.hapticsEnabled)
+                    .tint(JarvisModernTheme.accent)
+                Toggle("Unload Model In Background", isOn: $appModel.settings.unloadModelOnBackground)
+                    .tint(JarvisModernTheme.accent)
+                Toggle("Battery Saver Mode", isOn: $appModel.settings.batterySaverMode)
+                    .tint(JarvisModernTheme.accent)
+                Toggle("Enable Diagnostics", isOn: $appModel.settings.showRuntimeDiagnostics)
+                    .tint(JarvisModernTheme.accent)
+
+                Button {
+                    appModel.resetAssistantState()
+                } label: {
+                    Label("Reset Assistant State", systemImage: "arrow.counterclockwise")
                 }
-            }
-            
-            Section("Model") {
-                if let model = appModel.activeModel {
-                    LabeledContent("Name", value: model.displayName)
-                    LabeledContent("Format", value: model.format.displayName)
-                    LabeledContent("Import", value: model.importState.displayName)
-                    LabeledContent("Activation", value: model.activationEligibility.displayName)
-                    LabeledContent("Profile", value: appModel.activeModelSupportStatusText)
-                    LabeledContent("Family", value: model.inferredFamily ?? "Unknown")
-                    LabeledContent("Modality", value: model.modality.displayName)
-                    LabeledContent("Visual Readiness", value: appModel.activeModelVisualStatusText)
-                    LabeledContent("Projector", value: model.hasProjectorAttached ? "Attached" : "Not attached")
-                    LabeledContent("Size", value: ByteCountFormatter.string(fromByteCount: model.fileSizeBytes, countStyle: .file))
-                } else {
-                    Text("No active model")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            
-            Section("Runtime State") {
-                LabeledContent("State", value: appModel.runtimeState.title)
-                LabeledContent("File Access", value: appModel.modelFileAccessState.title)
-                Text(appModel.modelFileAccessDetail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            if let diagnostics = appModel.runtimeLoadDiagnostics {
-                Section("Load Path") {
-                    LabeledContent("Model", value: diagnostics.modelName)
-                    LabeledContent("Sandbox Copy", value: diagnostics.usesSandboxCopy ? "Yes" : "No")
-                    LabeledContent("Exists", value: diagnostics.fileExists ? "Yes" : "No")
-                    LabeledContent("Extension", value: diagnostics.pathExtension.uppercased())
-                    LabeledContent("Size", value: ByteCountFormatter.string(fromByteCount: diagnostics.fileSizeBytes, countStyle: .file))
-                    Text(diagnostics.modelPath)
-                        .font(.caption2.monospaced())
-                        .textSelection(.enabled)
-                    if let projectorPath = diagnostics.projectorPath {
-                        Text(projectorPath)
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-                }
-            }
-
-            Section("Configured Behavior") {
-                LabeledContent("Startup", value: appModel.settings.startupRoute.displayName)
-                LabeledContent("Recommended Profile", value: appModel.supportedModelDisplayName)
-                LabeledContent("Performance", value: appModel.settings.performanceProfile.displayName)
-                LabeledContent("Context", value: appModel.settings.contextWindow.displayName)
-                LabeledContent("Response Style", value: appModel.settings.responseStyle.displayName)
-                LabeledContent("Creativity", value: appModel.settings.creativity.formatted(.number.precision(.fractionLength(2))))
-                LabeledContent("Auto-Warm On First Send", value: appModel.settings.autoWarmOnFirstSend ? "On" : "Off")
-            }
-            
-            Section("Availability") {
-                Text(JarvisGGUFEngineFactory.availabilityDiagnostics())
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .buttonStyle(JarvisModernSecondaryButtonStyle())
             }
         }
-        .navigationTitle("Diagnostics")
+    }
+
+    private func settingRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack(alignment: .center) {
+            Text(title)
+                .font(.system(.footnote, design: .rounded, weight: .semibold))
+                .foregroundStyle(JarvisModernTheme.textPrimary)
+            Spacer()
+            content()
+                .foregroundStyle(JarvisModernTheme.textSecondary)
+        }
     }
 }

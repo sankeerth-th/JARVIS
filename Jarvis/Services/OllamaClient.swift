@@ -4,12 +4,18 @@ enum OllamaError: LocalizedError {
     case unreachable
     case invalidResponse
     case apiError(String)
+    case productionLoopbackDisabled
+    case invalidLocalHost
+    case responseTooLarge
 
     var errorDescription: String? {
         switch self {
         case .unreachable: return "Ollama server is not reachable on 127.0.0.1:11434 (or localhost:11434)"
         case .invalidResponse: return "Received invalid response from Ollama"
         case .apiError(let message): return message
+        case .productionLoopbackDisabled: return "Local Ollama networking is disabled in production builds."
+        case .invalidLocalHost: return "Only loopback Ollama hosts are allowed."
+        case .responseTooLarge: return "The Ollama response exceeded the allowed size."
         }
     }
 }
@@ -60,8 +66,8 @@ final class OllamaClient {
     private let candidateBaseURLs: [URL]
     var onNetworkRequest: ((URL) -> Void)?
 
-    init(baseURL: URL = URL(string: "http://localhost:11434")!, session: URLSession = .shared) {
-        self.session = session
+    init(baseURL: URL = URL(string: "http://localhost:11434")!, session: URLSession? = nil) {
+        self.session = session ?? JarvisLoopbackSecurityPolicy.makeSession()
         self.candidateBaseURLs = Self.buildCandidateBaseURLs(from: baseURL)
     }
 
@@ -87,6 +93,7 @@ final class OllamaClient {
         let body = try JSONEncoder().encode(request)
         let (data, response) = try await self.request(path: "api/generate", method: "POST", body: body)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw OllamaError.invalidResponse }
+        try validateResponse(data: data, response: response)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any], let responseText = json["response"] as? String else {
             throw OllamaError.invalidResponse
         }
@@ -97,6 +104,7 @@ final class OllamaClient {
         let body = try JSONEncoder().encode(request)
         let (data, response) = try await self.request(path: "api/chat", method: "POST", body: body)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw OllamaError.invalidResponse }
+        try validateResponse(data: data, response: response)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let message = json["message"] as? [String: Any],
               let content = message["content"] as? String else {
@@ -116,6 +124,7 @@ final class OllamaClient {
                     }
                     for try await line in bytes.lines {
                         guard let data = line.data(using: .utf8) else { continue }
+                        try JarvisLoopbackSecurityPolicy.enforceResponseLimit(on: data)
                         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
                         if let response = json["response"] as? String {
                             continuation.yield(response)
@@ -144,6 +153,7 @@ final class OllamaClient {
                     }
                     for try await line in bytes.lines {
                         guard let data = line.data(using: .utf8) else { continue }
+                        try JarvisLoopbackSecurityPolicy.enforceResponseLimit(on: data)
                         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
                         if let message = json["message"] as? [String: Any],
                            let content = message["content"] as? String,
@@ -189,13 +199,10 @@ final class OllamaClient {
         try await withFallback { baseURL in
             let targetURL = baseURL.appendingPathComponent(path)
             self.onNetworkRequest?(targetURL)
-            var urlRequest = URLRequest(url: targetURL)
-            urlRequest.httpMethod = method
-            urlRequest.httpBody = body
-            if body != nil {
-                urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
-            }
-            return try await session.data(for: urlRequest)
+            let urlRequest = try JarvisLoopbackSecurityPolicy.authenticatedRequest(url: targetURL, method: method, body: body)
+            let result = try await session.data(for: urlRequest)
+            try JarvisLoopbackSecurityPolicy.enforceResponseLimit(on: result.0)
+            return result
         }
     }
 
@@ -203,10 +210,7 @@ final class OllamaClient {
         try await withFallback { baseURL in
             let targetURL = baseURL.appendingPathComponent(path)
             self.onNetworkRequest?(targetURL)
-            var urlRequest = URLRequest(url: targetURL)
-            urlRequest.httpMethod = "POST"
-            urlRequest.httpBody = body
-            urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            let urlRequest = try JarvisLoopbackSecurityPolicy.authenticatedRequest(url: targetURL, method: "POST", body: body)
             return try await session.bytes(for: urlRequest)
         }
     }
@@ -217,7 +221,7 @@ final class OllamaClient {
             do {
                 return try await work(baseURL)
             } catch {
-                lastError = error
+                lastError = normalize(error)
                 let shouldTryNext = index < candidateBaseURLs.count - 1 && isConnectionError(error)
                 if !shouldTryNext { break }
             }
@@ -229,6 +233,14 @@ final class OllamaClient {
     }
 
     private func isConnectionError(_ error: Error) -> Bool {
+        if let securityError = error as? JarvisLoopbackSecurityError {
+            switch securityError {
+            case .insecureLoopbackDisabled:
+                return false
+            case .unsupportedHost, .bodyTooLarge, .responseTooLarge:
+                return false
+            }
+        }
         if let urlError = error as? URLError {
             switch urlError.code {
             case .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .timedOut, .networkConnectionLost, .notConnectedToInternet:
@@ -238,6 +250,29 @@ final class OllamaClient {
             }
         }
         return false
+    }
+
+    private func normalize(_ error: Error) -> Error {
+        if let securityError = error as? JarvisLoopbackSecurityError {
+            switch securityError {
+            case .insecureLoopbackDisabled:
+                return OllamaError.productionLoopbackDisabled
+            case .unsupportedHost:
+                return OllamaError.invalidLocalHost
+            case .bodyTooLarge, .responseTooLarge:
+                return OllamaError.responseTooLarge
+            }
+        }
+        return error
+    }
+
+    private func validateResponse(data: Data, response: URLResponse) throws {
+        try JarvisLoopbackSecurityPolicy.enforceResponseLimit(on: data)
+        if let http = response as? HTTPURLResponse,
+           let contentType = http.value(forHTTPHeaderField: "Content-Type"),
+           !contentType.lowercased().contains("application/json") {
+            throw OllamaError.invalidResponse
+        }
     }
 
     private static func buildCandidateBaseURLs(from preferred: URL) -> [URL] {

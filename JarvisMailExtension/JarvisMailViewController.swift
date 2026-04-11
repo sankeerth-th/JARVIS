@@ -67,17 +67,16 @@ private final class JarvisMailPanelViewModel: ObservableObject {
     private let session: MEComposeSession
     private let sessionID: UUID
     private let logger = Logger(subsystem: "com.offline.Jarvis.MailExtension", category: "PanelVM")
+    private let ollamaClient = OllamaClient()
 
     init(session: MEComposeSession, sessionBegan: Bool) {
         self.session = session
         self.sessionID = session.sessionID
-        if let persisted = JarvisMailPanelStateStore.load(sessionID: sessionID) {
+        if let persisted = JarvisMailPanelDraftStore.load(sessionID: sessionID) {
             modelName = persisted.modelName
-            outputText = persisted.outputText
-            statusText = persisted.statusText
             userInstruction = persisted.userInstruction
-            clipboardPreview = persisted.clipboardPreview
             extractedThreadPreview = persisted.extractedThreadPreview
+            outputText = persisted.outputText
         }
         if !sessionBegan {
             troubleshootingMessage = "Compose session not available yet. Open a new compose/reply window and click Jarvis again."
@@ -162,39 +161,22 @@ private final class JarvisMailPanelViewModel: ObservableObject {
         persistDraft()
         defer { isRunning = false }
         do {
-            var request = URLRequest(url: URL(string: "http://127.0.0.1:11434/api/generate")!)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            let payload: [String: Any] = [
-                "model": modelName.trimmingCharacters(in: .whitespacesAndNewlines),
-                "prompt": prompt,
-                "system": "You are Jarvis Mail Assistant. Be concise, practical, and avoid placeholders.",
-                "stream": true,
-                "options": ["temperature": 0.25, "num_predict": 500]
-            ]
-            request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
             logger.info("Starting Ollama call for action \(action.rawValue, privacy: .public)")
-            let (bytes, response) = try await URLSession.shared.bytes(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                statusText = "Ollama returned an invalid response."
-                logger.error("Ollama call failed with non-200 response")
-                return
-            }
             var aggregated = ""
-            for try await line in bytes.lines {
-                guard let data = line.data(using: .utf8),
-                      let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                    continue
-                }
-                if let token = json["response"] as? String, !token.isEmpty {
-                    aggregated.append(token)
-                    outputText = aggregated
-                    statusText = "Generating..."
-                    persistDraft()
-                }
-                if let done = json["done"] as? Bool, done {
-                    break
-                }
+            let stream = ollamaClient.streamGenerate(
+                request: GenerateRequest(
+                    model: modelName.trimmingCharacters(in: .whitespacesAndNewlines),
+                    prompt: prompt,
+                    system: "You are Jarvis Mail Assistant. Be concise, practical, and avoid placeholders.",
+                    stream: true,
+                    options: ["temperature": 0.25, "num_predict": 500]
+                )
+            )
+            for try await token in stream {
+                guard !token.isEmpty else { continue }
+                aggregated.append(token)
+                outputText = aggregated
+                statusText = "Generating..."
             }
             statusText = aggregated.isEmpty ? "No output generated. Try a different model." : "Done. Copy the output into Mail."
             logger.info("Ollama call completed. chars=\(aggregated.count, privacy: .public)")
@@ -314,6 +296,8 @@ private final class JarvisMailPanelViewModel: ObservableObject {
             extractedThreadPreview = draft
         } else if !clipboardPreview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             extractedThreadPreview = clipboardPreview
+        } else if !extractedThreadPreview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // Preserve previously restored user work when MailKit recreates the panel without body data.
         } else {
             extractedThreadPreview = ""
             statusText = "MailKit did not provide thread body. Copy thread text and click Paste from clipboard."
@@ -350,16 +334,14 @@ private final class JarvisMailPanelViewModel: ObservableObject {
     }
 
     func persistDraft() {
-        let state = JarvisMailPanelStateStore.State(
+        let state = JarvisMailPanelDraftState(
             modelName: modelName,
-            outputText: outputText,
-            statusText: statusText,
             userInstruction: userInstruction,
-            clipboardPreview: clipboardPreview,
             extractedThreadPreview: extractedThreadPreview,
+            outputText: outputText,
             updatedAt: Date()
         )
-        JarvisMailPanelStateStore.save(state, sessionID: sessionID)
+        JarvisMailPanelDraftStore.save(state, sessionID: sessionID)
     }
 }
 
@@ -494,54 +476,6 @@ private struct JarvisMailPanelView: View {
         .onChange(of: viewModel.outputText) { viewModel.persistDraft() }
         .padding(12)
         .frame(minWidth: 480, minHeight: 560)
-    }
-}
-
-enum JarvisMailPanelStateStore {
-    struct State: Codable {
-        var modelName: String
-        var outputText: String
-        var statusText: String
-        var userInstruction: String
-        var clipboardPreview: String
-        var extractedThreadPreview: String
-        var updatedAt: Date
-    }
-
-    private static let defaults = UserDefaults.standard
-    private static let keyPrefix = "jarvis_mail_session_"
-    private static let staleInterval: TimeInterval = 7 * 24 * 3600
-
-    static func save(_ state: State, sessionID: UUID) {
-        guard let data = try? JSONEncoder().encode(state) else { return }
-        defaults.set(data, forKey: keyPrefix + sessionID.uuidString)
-        prune()
-    }
-
-    static func load(sessionID: UUID) -> State? {
-        guard let data = defaults.data(forKey: keyPrefix + sessionID.uuidString),
-              let state = try? JSONDecoder().decode(State.self, from: data) else {
-            return nil
-        }
-        return state
-    }
-
-    static func remove(sessionID: UUID) {
-        defaults.removeObject(forKey: keyPrefix + sessionID.uuidString)
-    }
-
-    private static func prune() {
-        let now = Date()
-        for (key, value) in defaults.dictionaryRepresentation() where key.hasPrefix(keyPrefix) {
-            guard let data = value as? Data,
-                  let state = try? JSONDecoder().decode(State.self, from: data) else {
-                defaults.removeObject(forKey: key)
-                continue
-            }
-            if now.timeIntervalSince(state.updatedAt) > staleInterval {
-                defaults.removeObject(forKey: key)
-            }
-        }
     }
 }
 

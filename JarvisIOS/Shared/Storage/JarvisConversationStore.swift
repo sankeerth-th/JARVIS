@@ -8,28 +8,31 @@ public final class JarvisConversationStore {
 
     private let fileURL: URL
     private let queue = DispatchQueue(label: "jarvis.phone.conversation.store", qos: .utility)
+    private let securityEnvelope: JarvisIOSSecurityEnvelope
 
-    public init(filename: String = "JarvisPhoneStore.json") {
+    public init(filename: String = "JarvisPhoneStore.json", securityEnvelope: JarvisIOSSecurityEnvelope = .shared) {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         let directory = appSupport.appendingPathComponent("JarvisPhone", isDirectory: true)
-        if !FileManager.default.fileExists(atPath: directory.path) {
-            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        }
+        JarvisIOSStorageProtection.prepareSensitiveDirectory(directory)
         self.fileURL = directory.appendingPathComponent(filename)
+        self.securityEnvelope = securityEnvelope
     }
 
     public func loadConversations() -> [JarvisConversationRecord] {
         queue.sync {
-            loadPayload().conversations.sorted { $0.updatedAt > $1.updatedAt }
+            loadPayload().conversations
+                .map(Self.sanitizedConversation)
+                .sorted { $0.updatedAt > $1.updatedAt }
         }
     }
 
     public func saveConversation(_ conversation: JarvisConversationRecord) {
         queue.sync {
             var payload = loadPayload()
-            payload.conversations.removeAll { $0.id == conversation.id }
-            payload.conversations.append(conversation)
+            let sanitizedConversation = Self.sanitizedConversation(conversation)
+            payload.conversations.removeAll { $0.id == sanitizedConversation.id }
+            payload.conversations.append(sanitizedConversation)
             persist(payload)
         }
     }
@@ -91,16 +94,24 @@ public final class JarvisConversationStore {
     }
 
     private func loadPayload() -> StorePayload {
-        guard let data = try? Data(contentsOf: fileURL),
-              let decoded = try? JSONDecoder().decode(StorePayload.self, from: data) else {
+        guard let data = try? Data(contentsOf: fileURL) else {
             return StorePayload(conversations: [], knowledgeItems: [])
         }
-        return decoded
+        if let opened = try? securityEnvelope.open(data, purpose: fileURL.lastPathComponent),
+           let decoded = try? JSONDecoder().decode(StorePayload.self, from: opened) {
+            return decoded
+        }
+        if let decoded = try? JSONDecoder().decode(StorePayload.self, from: data) {
+            return decoded
+        }
+        return StorePayload(conversations: [], knowledgeItems: [])
     }
 
     private func persist(_ payload: StorePayload) {
-        guard let encoded = try? JSONEncoder().encode(payload) else { return }
-        try? encoded.write(to: fileURL, options: [.atomic])
+        guard let encoded = try? JSONEncoder().encode(payload),
+              let sealed = try? securityEnvelope.seal(encoded, purpose: fileURL.lastPathComponent) else { return }
+        try? sealed.write(to: fileURL, options: [.atomic, .completeFileProtection])
+        JarvisIOSStorageProtection.protectSensitiveFile(at: fileURL)
     }
 
     private static func queryTerms(for query: String) -> [String] {
@@ -120,5 +131,15 @@ public final class JarvisConversationStore {
         let startIndex = text.index(text.startIndex, offsetBy: min(location, max(0, text.count - 1)))
         let preview = String(text[startIndex...])
         return String(preview.prefix(180))
+    }
+
+    private static func sanitizedConversation(_ conversation: JarvisConversationRecord) -> JarvisConversationRecord {
+        var copy = conversation
+        copy.messages.removeAll { message in
+            message.role == .assistant &&
+            message.isStreaming &&
+            message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return copy
     }
 }

@@ -13,7 +13,8 @@ struct AssistantTabView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                AssistantBackdrop(state: appModel.assistantExperienceState)
+                JarvisModernBackground()
+                    .overlay(AssistantBackdrop(state: appModel.assistantExperienceState))
 
                 VStack(spacing: 10) {
                     assistantHeader
@@ -22,14 +23,15 @@ struct AssistantTabView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .padding(.horizontal, 14)
                 .padding(.top, 10)
+                .padding(.bottom, 4)
             }
             .safeAreaInset(edge: .bottom) {
                 assistantBottomDock
                     .padding(.horizontal, 14)
                     .padding(.top, 8)
-                    .padding(.bottom, 8)
+                    .padding(.bottom, appModel.isAssistantKeyboardActive ? 8 : 6)
             }
-            .navigationTitle("Ask Jarvis")
+            .navigationTitle("JARVIS")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -45,11 +47,11 @@ struct AssistantTabView: View {
                 }
                 ToolbarItem(placement: .principal) {
                     VStack(spacing: 2) {
-                        Text("Assistant")
-                            .font(.subheadline.weight(.semibold))
+                        Text("Chat")
+                            .font(.system(.subheadline, design: .rounded, weight: .semibold))
                         Text(appModel.assistantExperienceState.title)
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(.secondary)
+                            .font(.system(.caption2, design: .rounded, weight: .medium))
+                            .foregroundStyle(JarvisModernTheme.textSecondary)
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -59,13 +61,6 @@ struct AssistantTabView: View {
                         appModel.assistantControlsPresented = true
                     } label: {
                         Image(systemName: "ellipsis.circle")
-                    }
-                }
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") {
-                        composerFocused = false
-                        appModel.setAssistantKeyboardActive(false)
                     }
                 }
             }
@@ -100,8 +95,16 @@ struct AssistantTabView: View {
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(24)
             }
-            .animation(.spring(response: 0.42, dampingFraction: 0.86), value: appModel.assistantExperienceState)
-            .animation(.easeInOut(duration: 0.22), value: appModel.assistantEntryStyle)
+            .simultaneousGesture(
+                TapGesture().onEnded {
+                    guard composerFocused else { return }
+                    composerFocused = false
+                    appModel.setAssistantKeyboardActive(false)
+                }
+            )
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .animation(JarvisModernMotion.stateChange, value: appModel.assistantExperienceState)
+            .animation(JarvisModernMotion.contentUpdate, value: appModel.assistantEntryStyle)
         }
     }
 
@@ -122,6 +125,24 @@ struct AssistantTabView: View {
                let assistantContinuityLabel = appModel.assistantContinuityLabel {
                 continuityBadge(assistantContinuityLabel)
             }
+
+            if appModel.shouldExpandAssistantHero {
+                assistantHeroMetaRow
+            }
+        }
+    }
+
+    private var assistantHeroMetaRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                assistantMetaChip(title: modeTitle, icon: modeIcon, tint: JarvisModernTheme.accentSoft)
+                assistantMetaChip(title: appModel.assistantTask.displayName, icon: taskIcon, tint: .cyan)
+                assistantMetaChip(title: compactStatusTitle, icon: runtimeIcon, tint: runtimeTint)
+                if let activeModel = appModel.activeModel?.displayName {
+                    assistantMetaChip(title: activeModel, icon: "cpu.fill", tint: JarvisModernTheme.success)
+                }
+            }
+            .padding(.horizontal, 2)
         }
     }
 
@@ -132,15 +153,15 @@ struct AssistantTabView: View {
             Text(text)
                 .font(.caption2.weight(.semibold))
         }
-        .foregroundStyle(.white.opacity(0.84))
+        .foregroundStyle(JarvisModernTheme.textPrimary)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(
             Capsule(style: .continuous)
-                .fill(Color.white.opacity(0.08))
+                .fill(Color.white.opacity(0.54))
                 .overlay(
                     Capsule(style: .continuous)
-                        .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                        .stroke(JarvisModernTheme.borderStrong, lineWidth: 1)
                 )
         )
     }
@@ -151,15 +172,15 @@ struct AssistantTabView: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(runtimeTint)
                 .frame(width: 28, height: 28)
-                .background(runtimeTint.opacity(0.18), in: Circle())
+                .background(runtimeTint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(compactStatusTitle)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.92))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
                 Text(compactStatusSubtitle)
                     .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.68))
+                    .foregroundStyle(JarvisModernTheme.textSecondary)
                     .lineLimit(1)
             }
 
@@ -172,11 +193,11 @@ struct AssistantTabView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.white.opacity(0.08))
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(JarvisModernTheme.cardElevated)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(JarvisModernTheme.border, lineWidth: 1)
                 )
         )
     }
@@ -190,10 +211,10 @@ struct AssistantTabView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(compactStatusTitle)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
                 Text(compactStatusSubtitle)
                     .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.68))
+                    .foregroundStyle(JarvisModernTheme.textSecondary)
                     .lineLimit(2)
             }
 
@@ -202,11 +223,11 @@ struct AssistantTabView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.white.opacity(0.06))
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(JarvisModernTheme.cardElevated)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(JarvisModernTheme.border, lineWidth: 1)
                 )
         )
     }
@@ -274,12 +295,12 @@ struct AssistantTabView: View {
     private func assistantMetaChip(title: String, icon: String, tint: Color) -> some View {
         Label(title, systemImage: icon)
             .font(.caption.weight(.semibold))
-            .foregroundStyle(.white.opacity(0.9))
+            .foregroundStyle(JarvisModernTheme.textPrimary)
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
             .background(
                 Capsule(style: .continuous)
-                    .fill(tint.opacity(0.18))
+                    .fill(tint.opacity(0.12))
                     .overlay(
                         Capsule(style: .continuous)
                             .stroke(tint.opacity(0.32), lineWidth: 1)
@@ -296,16 +317,16 @@ struct AssistantTabView: View {
     private var voiceTranscriptPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label("Live transcript", systemImage: "waveform")
+                Label("Voice session", systemImage: "waveform")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JarvisModernTheme.textSecondary)
                 Spacer()
                 Text(voiceStateLabel)
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.78))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(Color.white.opacity(0.10), in: Capsule())
+                    .background(JarvisModernTheme.panelGlass, in: Capsule())
                 Button(listeningActive ? "Stop" : "Listen") {
                     if listeningActive {
                         appModel.stopVoicePreview(commit: false)
@@ -318,14 +339,18 @@ struct AssistantTabView: View {
                 .padding(.vertical, 4)
                 .background((listeningActive ? Color.orange : Color.cyan).opacity(0.16), in: Capsule())
             }
+            AssistantVoiceMeter(
+                state: appModel.assistantExperienceState,
+                speechState: appModel.speechState
+            )
             TextField("Transcript appears here (voice pipeline can feed this directly)", text: $appModel.assistantLiveTranscript, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(2...4)
                 .padding(10)
-                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .background(JarvisModernTheme.panelGlass, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                        .stroke(JarvisModernTheme.borderStrong, lineWidth: 1)
                 )
 
             if !appModel.speechPermissions.isGranted {
@@ -337,10 +362,10 @@ struct AssistantTabView: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(JarvisModernTheme.cardSecondary)
                 .overlay(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                        .stroke(JarvisModernTheme.borderStrong, lineWidth: 1)
                 )
         )
     }
@@ -646,6 +671,22 @@ struct AssistantTabView: View {
                             compactInlineBanner
                         }
 
+                        if shouldShowExecutionSnapshot {
+                            executionSnapshotPanel
+                        }
+
+                        if shouldShowVoiceSupportPanel {
+                            voiceTranscriptPanel
+                        }
+
+                        if showGroundingContext {
+                            groundingContextPanel
+                        }
+
+                        if appModel.settings.showRuntimeDiagnostics && shouldShowDiagnosticsPanel {
+                            diagnosticsPanel
+                        }
+
                         messageList(messages: messages)
 
                         GeometryReader { geometry in
@@ -663,24 +704,30 @@ struct AssistantTabView: View {
                 .coordinateSpace(name: transcriptScrollSpace)
                 .scrollDismissesKeyboard(.interactively)
                 .background(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(Color.black.opacity(0.22))
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .fill(JarvisModernTheme.cardElevated.opacity(0.84))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                                .stroke(JarvisModernTheme.border, lineWidth: 1)
                         )
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
                 .onAppear {
                     guard appModel.settings.autoScrollConversation else { return }
                     scrollTranscriptToBottom(proxy, animated: false)
                 }
                 .onChange(of: transcriptScrollSignature) { _, _ in
-                    guard appModel.settings.autoScrollConversation, isTranscriptPinnedToBottom else { return }
+                    guard appModel.settings.autoScrollConversation,
+                          isTranscriptPinnedToBottom || appModel.isSending || composerFocused else { return }
                     scrollTranscriptToBottom(proxy, animated: !reduceMotion)
                 }
                 .onPreferenceChange(AssistantTranscriptBottomOffsetPreferenceKey.self) { offset in
                     isTranscriptPinnedToBottom = offset < 96
+                }
+                .onTapGesture {
+                    guard composerFocused else { return }
+                    composerFocused = false
+                    appModel.setAssistantKeyboardActive(false)
                 }
             }
         }
@@ -733,7 +780,7 @@ struct AssistantTabView: View {
                     .foregroundStyle(.white.opacity(0.85))
                 Spacer()
                 Button("Open Knowledge") {
-                    appModel.apply(route: .assistant(.knowledge, source: .inApp))
+                    appModel.apply(route: JarvisLaunchRoute.assistant(.knowledge, source: .inApp))
                 }
                 .font(.caption2.weight(.semibold))
                 .buttonStyle(.plain)
@@ -819,16 +866,149 @@ struct AssistantTabView: View {
         }
     }
 
+    private var shouldShowExecutionSnapshot: Bool {
+        switch appModel.assistantExperienceState {
+        case .thinking, .processing, .grounding, .responding, .answerReady, .error:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private var shouldShowVoiceSupportPanel: Bool {
+        appModel.assistantInputMode == .voice || listeningActive
+    }
+
+    private var shouldShowDiagnosticsPanel: Bool {
+        appModel.assistantExperienceState != .idle || appModel.runtimeFailure != nil
+    }
+
+    private var executionSnapshotPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                JarvisModernIconBadge(systemName: executionSnapshotIcon, tint: executionSnapshotTint)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(executionSnapshotTitle)
+                        .font(.system(.subheadline, design: .rounded, weight: .bold))
+                        .foregroundStyle(JarvisModernTheme.textPrimary)
+                    Text(executionSnapshotSubtitle)
+                        .font(.system(.caption, design: .rounded, weight: .medium))
+                        .foregroundStyle(JarvisModernTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            assistantStateTimeline
+
+            if let plan = appModel.lastExecutionPlan {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        executionTag(title: plan.mode.rawValue.replacingOccurrences(of: "_", with: " ").capitalized, icon: "point.topleft.down.curvedto.point.bottomright.up")
+                        if let lane = plan.selectedModelLane?.rawValue {
+                            executionTag(title: lane.replacingOccurrences(of: "_", with: " ").capitalized, icon: "cpu")
+                        }
+                        executionTag(title: "\(plan.steps.count) step\(plan.steps.count == 1 ? "" : "s")", icon: "list.number")
+                    }
+                    .padding(.horizontal, 2)
+                }
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(JarvisModernTheme.cardPrimary.opacity(0.96))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(JarvisModernTheme.borderStrong, lineWidth: 1)
+                )
+        )
+    }
+
+    private func executionTag(title: String, icon: String) -> some View {
+        Label(title, systemImage: icon)
+            .font(.system(.caption2, design: .rounded, weight: .semibold))
+            .foregroundStyle(JarvisModernTheme.textPrimary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(JarvisModernTheme.panelGlass)
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(JarvisModernTheme.border, lineWidth: 1)
+                    )
+            )
+    }
+
+    private var executionSnapshotTitle: String {
+        switch appModel.assistantExperienceState {
+        case .thinking:
+            return "Planning the response"
+        case .processing:
+            return "Preparing the turn"
+        case .grounding:
+            return "Gathering local context"
+        case .responding:
+            return "Streaming the answer"
+        case .answerReady:
+            return "Turn completed"
+        case .error:
+            return "Turn needs attention"
+        default:
+            return "Assistant status"
+        }
+    }
+
+    private var executionSnapshotSubtitle: String {
+        if !appModel.statusText.isEmpty {
+            return appModel.statusText
+        }
+        return "The assistant is coordinating response, context, and output."
+    }
+
+    private var executionSnapshotIcon: String {
+        switch appModel.assistantExperienceState {
+        case .thinking, .processing:
+            return "brain.head.profile"
+        case .grounding:
+            return "books.vertical.fill"
+        case .responding:
+            return "sparkles.rectangle.stack.fill"
+        case .answerReady:
+            return "checkmark.circle.fill"
+        case .error:
+            return "exclamationmark.triangle.fill"
+        default:
+            return "sparkles"
+        }
+    }
+
+    private var executionSnapshotTint: Color {
+        switch appModel.assistantExperienceState {
+        case .thinking, .processing, .grounding, .responding:
+            return JarvisModernTheme.accent
+        case .answerReady:
+            return JarvisModernTheme.success
+        case .error:
+            return JarvisModernTheme.warning
+        default:
+            return JarvisModernTheme.accentSoft
+        }
+    }
+
     private func actionButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: icon)
-                .font(.caption.weight(.semibold))
+                .font(.system(.caption, design: .rounded, weight: .semibold))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
-                .background(Color.white.opacity(0.10), in: Capsule())
+                .background(Color.white.opacity(0.08), in: Capsule())
                 .overlay(
                     Capsule()
-                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                        .stroke(JarvisModernTheme.border, lineWidth: 1)
                 )
         }
         .buttonStyle(.plain)
@@ -844,17 +1024,23 @@ struct AssistantTabView: View {
                 .textFieldStyle(.plain)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
-                .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         case .voice:
             TextField("Speak, then review the transcript here", text: $appModel.assistantLiveTranscript, axis: .vertical)
                 .lineLimit(1...4)
                 .textFieldStyle(.plain)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
-                .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         case .visual:
             Button {
-                appModel.apply(route: .assistant(.visual, task: .visualDescribe, source: .inApp))
+                appModel.apply(
+                    route: JarvisLaunchRoute.assistant(
+                        .visual,
+                        task: .visualDescribe,
+                        source: .inApp
+                    )
+                )
             } label: {
                 HStack {
                     Label("Open visual workspace", systemImage: "viewfinder")
@@ -864,7 +1050,7 @@ struct AssistantTabView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 12)
-                .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
             .buttonStyle(.plain)
         }
@@ -879,7 +1065,13 @@ struct AssistantTabView: View {
                     appModel.startVoicePreview()
                 }
             } else if appModel.assistantInputMode == .visual {
-                appModel.apply(route: .assistant(.visual, task: .visualDescribe, source: .inApp))
+                appModel.apply(
+                    route: JarvisLaunchRoute.assistant(
+                        .visual,
+                        task: .visualDescribe,
+                        source: .inApp
+                    )
+                )
             } else {
                 appModel.sendCurrentDraft()
             }
@@ -889,37 +1081,33 @@ struct AssistantTabView: View {
                 .symbolRenderingMode(.hierarchical)
                 .frame(width: 44, height: 44)
                 .background(
-                    Circle()
-                        .fill(canSend ? Color.cyan.opacity(0.22) : Color.white.opacity(0.08))
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(canSend ? JarvisModernTheme.accent.opacity(0.22) : Color.white.opacity(0.06))
                         .overlay(
-                            Circle()
-                                .stroke(canSend ? Color.cyan.opacity(0.5) : Color.white.opacity(0.12), lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(canSend ? JarvisModernTheme.accent.opacity(0.42) : JarvisModernTheme.border, lineWidth: 1)
                         )
                 )
         }
         .disabled(!canSend)
-        .tint(.cyan)
+        .tint(canSend ? JarvisModernTheme.accent : JarvisModernTheme.textSecondary)
+        .opacity(1)
     }
 
     private var composerPanel: some View {
         VStack(spacing: 8) {
-            Picker("Input Mode", selection: Binding(
-                get: { appModel.assistantInputMode },
-                set: { mode in
-                    if mode != .text {
-                        composerFocused = false
-                        appModel.setAssistantKeyboardActive(false)
-                    }
-                    appModel.setAssistantInputMode(mode)
-                }
-            )) {
-                Label("Text", systemImage: "text.bubble").tag(JarvisPhoneAppModel.AssistantInputMode.text)
-                Label("Voice", systemImage: "waveform").tag(JarvisPhoneAppModel.AssistantInputMode.voice)
-                Label("Visual", systemImage: "viewfinder").tag(JarvisPhoneAppModel.AssistantInputMode.visual)
+            HStack(spacing: 8) {
+                modeButton(title: "Text", icon: "text.bubble", mode: .text)
+                modeButton(title: "Voice", icon: "waveform", mode: .voice)
+                modeButton(title: "Visual", icon: "viewfinder", mode: .visual)
             }
-            .pickerStyle(.segmented)
+
+            if !appModel.shouldShowAssistantFollowUpChips {
+                quickCommandRail
+            }
 
             HStack(spacing: 10) {
+                voiceShortcutButton
                 composerField
                 composerActionButton
             }
@@ -928,11 +1116,83 @@ struct AssistantTabView: View {
         .padding(.top, 10)
         .padding(.bottom, 12)
         .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(JarvisModernTheme.cardPrimary.opacity(0.98))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .stroke(JarvisModernTheme.borderStrong, lineWidth: 1)
+                )
+                .shadow(color: JarvisModernTheme.shadow, radius: 22, x: 0, y: 16)
+        )
+    }
+
+    private var voiceShortcutButton: some View {
+        Button {
+            if appModel.assistantInputMode == .voice {
+                if listeningActive {
+                    appModel.stopVoicePreview(commit: false)
+                } else {
+                    appModel.startVoicePreview()
+                }
+            } else {
+                composerFocused = false
+                appModel.setAssistantKeyboardActive(false)
+                appModel.setAssistantInputMode(.voice)
+                appModel.startVoicePreview()
+            }
+        } label: {
+            ZStack {
+                Circle()
+                    .fill((listeningActive ? Color.cyan : JarvisModernTheme.accentSoft).opacity(0.20))
+                    .frame(width: 50, height: 50)
+                Circle()
+                    .stroke((listeningActive ? Color.cyan : JarvisModernTheme.accentSoft).opacity(0.48), lineWidth: 1)
+                    .frame(width: 44, height: 44)
+                Image(systemName: listeningActive ? "waveform.circle.fill" : "mic.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var quickCommandRail: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                actionButton("Talk to Jarvis", icon: "waveform") {
+                    composerFocused = false
+                    appModel.setAssistantKeyboardActive(false)
+                    appModel.setAssistantInputMode(.voice)
+                    appModel.startVoicePreview()
+                }
+                actionButton("Summarize", icon: "text.quote") {
+                    appModel.apply(route: JarvisLaunchRoute(action: .summarize, source: "assistant.composer", assistantTask: .summarize, shouldFocusComposer: true))
+                }
+                actionButton("Capture", icon: "square.and.pencil") {
+                    appModel.apply(route: JarvisLaunchRoute(action: .quickCapture, source: "assistant.composer", assistantTask: .quickCapture, shouldFocusComposer: true))
+                }
+                actionButton("Knowledge", icon: "books.vertical") {
+                    appModel.apply(route: JarvisLaunchRoute.assistant(.knowledge, source: .inApp))
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+    }
+
+    private var diagnosticsPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Runtime diagnostics")
+                .font(.system(.caption, design: .rounded, weight: .bold))
+                .foregroundStyle(JarvisModernTheme.textPrimary)
+            diagnosticsRow
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(JarvisModernTheme.cardSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(JarvisModernTheme.border, lineWidth: 1)
                 )
         )
     }
@@ -953,30 +1213,30 @@ struct AssistantTabView: View {
                     .foregroundStyle(.cyan.opacity(0.85))
                 Text(appModel.runtimeEngineName)
                     .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(JarvisModernTheme.textSecondary)
             }
 
             Text("\(appModel.modelFileAccessState.title): \(appModel.modelFileAccessDetail)")
                 .font(.caption2)
-                .foregroundStyle(.white.opacity(0.72))
+                .foregroundStyle(JarvisModernTheme.textSecondary)
 
             Text("Assistant gate: \(appModel.assistantRuntimeGateStatus.detail)")
                 .font(.caption2)
-                .foregroundStyle(.white.opacity(0.72))
+                .foregroundStyle(JarvisModernTheme.textSecondary)
 
             if !appModel.lastPromptDebugSummary.isEmpty {
                 Text("Prompt pipeline: \(appModel.lastPromptDebugSummary)")
                     .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(JarvisModernTheme.textSecondary)
             }
 
             if let failure = appModel.runtimeFailure {
                 Text("Failure: \(failure.kind.rawValue) - \(failure.message)")
                     .font(.caption2)
-                    .foregroundStyle(.orange.opacity(0.9))
+                .foregroundStyle(.orange.opacity(0.9))
             }
         }
-        .foregroundStyle(.white.opacity(0.88))
+        .foregroundStyle(JarvisModernTheme.textPrimary)
         .padding(.horizontal, 10)
     }
 
@@ -1033,6 +1293,7 @@ struct AssistantTabView: View {
             appModel.setAssistantInputMode(mode)
             if mode == .text {
                 composerFocused = true
+                appModel.setAssistantKeyboardActive(true)
             }
         } label: {
             Label(title, systemImage: icon)
@@ -1040,10 +1301,10 @@ struct AssistantTabView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .frame(maxWidth: .infinity)
-                .background(isActive ? Color.cyan.opacity(0.22) : Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                .background(isActive ? JarvisModernTheme.accent.opacity(0.20) : JarvisModernTheme.panelMuted, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .stroke(isActive ? Color.cyan.opacity(0.6) : Color.white.opacity(0.16), lineWidth: 1)
+                        .stroke(isActive ? JarvisModernTheme.accent.opacity(0.56) : JarvisModernTheme.border, lineWidth: 1)
                 )
         }
         .buttonStyle(.plain)
@@ -1067,22 +1328,11 @@ private struct AssistantBackdrop: View {
     let state: JarvisPhoneAppModel.AssistantExperienceState
 
     var body: some View {
-        LinearGradient(
-            colors: [
-                Color.black,
-                Color(red: 0.05, green: 0.08, blue: 0.16),
-                Color(red: 0.03, green: 0.04, blue: 0.12)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-        .overlay(
-            RadialGradient(
-                colors: [topColor, .clear],
-                center: .top,
-                startRadius: 16,
-                endRadius: 380
-            )
+        RadialGradient(
+            colors: [topColor, .clear],
+            center: .top,
+            startRadius: 16,
+            endRadius: 380
         )
         .ignoresSafeArea()
     }
@@ -1090,13 +1340,13 @@ private struct AssistantBackdrop: View {
     private var topColor: Color {
         switch state {
         case .listening, .transcribing:
-            return Color.cyan.opacity(0.28)
+            return Color.cyan.opacity(0.18)
         case .thinking, .processing, .grounding, .responding:
-            return Color.indigo.opacity(0.30)
+            return JarvisModernTheme.accent.opacity(0.18)
         case .error:
-            return Color.red.opacity(0.24)
+            return JarvisModernTheme.danger.opacity(0.16)
         default:
-            return Color.blue.opacity(0.20)
+            return JarvisModernTheme.accentSoft.opacity(0.15)
         }
     }
 }
@@ -1109,57 +1359,84 @@ private struct AssistantPresenceSurface: View {
     @State private var pulse = false
 
     var body: some View {
-        HStack(spacing: 14) {
-            ZStack {
-                Circle()
-                    .fill(orbTint.opacity(0.22))
-                    .frame(width: pulse ? 96 : 84, height: pulse ? 96 : 84)
-                    .blur(radius: 10)
-                Circle()
-                    .stroke(orbTint.opacity(0.55), lineWidth: 1.4)
-                    .frame(width: pulse ? 88 : 76, height: pulse ? 88 : 76)
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [orbTint.opacity(0.92), orbTint.opacity(0.34)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 16) {
+                ZStack {
+                    Circle()
+                        .fill(orbTint.opacity(0.12))
+                        .frame(width: pulse ? 116 : 98, height: pulse ? 116 : 98)
+                        .blur(radius: 14)
+                    Circle()
+                        .stroke(orbTint.opacity(0.30), lineWidth: 1.2)
+                        .frame(width: pulse ? 96 : 84, height: pulse ? 96 : 84)
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [orbTint.opacity(0.96), orbTint.opacity(0.58)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
                         )
-                    )
-                    .frame(width: 54, height: 54)
-                    .overlay(
-                        Image(systemName: icon)
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.95))
-                    )
+                        .frame(width: 60, height: 60)
+                        .overlay(
+                            Image(systemName: icon)
+                                .font(.system(size: 22, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.95))
+                        )
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(headline)
+                        .font(.system(.title3, design: .rounded, weight: .bold))
+                        .foregroundStyle(JarvisModernTheme.textPrimary)
+                    Text(subline)
+                        .font(.system(.footnote, design: .rounded, weight: .medium))
+                        .foregroundStyle(JarvisModernTheme.textSecondary)
+                        .lineLimit(3)
+                }
+                Spacer(minLength: 0)
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(headline)
-                    .font(.headline.weight(.semibold))
-                    .foregroundStyle(.white)
-                Text(subline)
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.78))
-                    .lineLimit(2)
+            HStack(spacing: 8) {
+                presenceChip(title: modeTitle, icon: icon, tint: orbTint)
+                presenceChip(title: stateTag, icon: stateIcon, tint: orbTint.opacity(0.9))
+                if !transcriptPreview.isEmpty {
+                    presenceChip(title: transcriptPreview, icon: "quote.opening", tint: .cyan)
+                }
             }
-            Spacer(minLength: 0)
         }
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(JarvisModernTheme.cardPrimary.opacity(0.96))
                 .overlay(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                        .stroke(JarvisModernTheme.borderStrong, lineWidth: 1)
                 )
         )
         .onAppear {
             guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
+            withAnimation(JarvisModernMotion.idle) {
                 pulse = true
             }
         }
+    }
+
+    private func presenceChip(title: String, icon: String, tint: Color) -> some View {
+        Label(title, systemImage: icon)
+            .lineLimit(1)
+            .font(.system(.caption2, design: .rounded, weight: .semibold))
+            .foregroundStyle(JarvisModernTheme.textPrimary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(tint.opacity(0.12))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(tint.opacity(0.26), lineWidth: 1)
+                    )
+            )
     }
 
     private var headline: String {
@@ -1209,16 +1486,77 @@ private struct AssistantPresenceSurface: View {
         case .listening, .transcribing:
             return .cyan
         case .thinking, .processing, .grounding, .responding:
-            return .indigo
+            return JarvisModernTheme.accent
         case .answerReady:
-            return .green
+            return JarvisModernTheme.success
         case .error:
-            return .red
+            return JarvisModernTheme.danger
         case .unavailable:
-            return .orange
+            return JarvisModernTheme.warning
         default:
-            return .blue
+            return JarvisModernTheme.accentSoft
         }
+    }
+
+    private var modeTitle: String {
+        switch mode {
+        case .text:
+            return "Text"
+        case .voice:
+            return "Voice"
+        case .visual:
+            return "Visual"
+        }
+    }
+
+    private var stateTag: String {
+        switch state {
+        case .idle, .armed:
+            return "Standing by"
+        case .listening:
+            return "Listening live"
+        case .transcribing:
+            return "Speech to text"
+        case .thinking, .processing:
+            return "Planning"
+        case .grounding:
+            return "Grounding"
+        case .responding:
+            return "Streaming"
+        case .answerReady:
+            return "Ready"
+        case .error:
+            return "Needs review"
+        case .unavailable:
+            return "Unavailable"
+        }
+    }
+
+    private var stateIcon: String {
+        switch state {
+        case .idle, .armed:
+            return "sparkles"
+        case .listening:
+            return "waveform"
+        case .transcribing:
+            return "text.bubble"
+        case .thinking, .processing:
+            return "brain.head.profile"
+        case .grounding:
+            return "books.vertical"
+        case .responding:
+            return "sparkles.rectangle.stack"
+        case .answerReady:
+            return "checkmark.circle"
+        case .error:
+            return "exclamationmark.triangle"
+        case .unavailable:
+            return "xmark.octagon"
+        }
+    }
+
+    private var transcriptPreview: String {
+        String(transcript.trimmingCharacters(in: .whitespacesAndNewlines).prefix(28))
     }
 }
 
@@ -1230,26 +1568,33 @@ private struct AssistantMessageRow: View {
         HStack {
             if isUser { Spacer(minLength: 42) }
             VStack(alignment: .leading, spacing: 6) {
-                Text(isUser ? "You" : "Jarvis")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.72))
+                HStack(spacing: 8) {
+                    Text(isUser ? "You" : "Jarvis")
+                    .font(.system(.caption2, design: .rounded, weight: .semibold))
+                    .foregroundStyle(JarvisModernTheme.textTertiary)
+                    if !isUser && message.isStreaming {
+                        Label("Live", systemImage: "waveform")
+                            .font(.system(.caption2, design: .rounded, weight: .semibold))
+                            .foregroundStyle(.cyan)
+                    }
+                }
                 if message.isStreaming && message.text.isEmpty {
                     HStack(spacing: 6) {
                         ProgressView()
                             .controlSize(.small)
-                        Text("Thinking…")
+                        Text("JARVIS is composing…")
                             .font(.caption)
-                            .foregroundStyle(.white.opacity(0.72))
+                            .foregroundStyle(JarvisModernTheme.textSecondary)
                     }
                 } else {
                     Text(message.text)
-                        .font(.body)
-                        .foregroundStyle(.white)
+                        .font(.system(.body, design: .rounded, weight: .medium))
+                        .foregroundStyle(JarvisModernTheme.textPrimary)
                         .textSelection(.enabled)
                     if let displayText = message.memoryAttribution?.displayText, !displayText.isEmpty {
                         Label(displayText, systemImage: "memorychip")
                             .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.66))
+                            .foregroundStyle(JarvisModernTheme.textSecondary)
                             .padding(.top, 2)
                     }
                     if let structuredOutput = message.structuredOutput, !structuredOutput.isEmpty {
@@ -1257,15 +1602,15 @@ private struct AssistantMessageRow: View {
                     }
                 }
             }
-            .frame(maxWidth: 312, alignment: .leading)
-            .padding(12)
+            .frame(maxWidth: 296, alignment: .leading)
+            .padding(15)
             .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(isUser ? Color.indigo.opacity(0.34) : Color.white.opacity(0.10))
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(isUser ? JarvisModernTheme.accent.opacity(0.18) : JarvisModernTheme.cardPrimary)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(isUser ? Color.indigo.opacity(0.7) : Color.white.opacity(0.15), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(isUser ? JarvisModernTheme.accent.opacity(0.54) : JarvisModernTheme.borderStrong, lineWidth: 1)
             )
             if !isUser { Spacer(minLength: 42) }
         }
@@ -1278,21 +1623,25 @@ private struct AssistantStructuredOutputView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            ForEach(output.capabilitySurfaces) { surface in
+                AssistantCapabilitySurfaceCard(surface: surface)
+            }
+
             ForEach(output.cards) { card in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
                         Image(systemName: icon(for: card.kind))
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(.cyan)
+                            .foregroundStyle(JarvisModernTheme.accent)
                         Text(card.title)
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.9))
+                            .foregroundStyle(JarvisModernTheme.textPrimary)
                     }
 
                     if !card.body.isEmpty {
                         Text(card.body)
                             .font(.caption)
-                            .foregroundStyle(.white.opacity(0.82))
+                            .foregroundStyle(JarvisModernTheme.textSecondary)
                             .textSelection(.enabled)
                     }
 
@@ -1302,10 +1651,10 @@ private struct AssistantStructuredOutputView: View {
                                 HStack(alignment: .top, spacing: 6) {
                                     Text("\(index + 1).")
                                         .font(.caption2.weight(.semibold))
-                                        .foregroundStyle(.cyan.opacity(0.9))
+                                        .foregroundStyle(JarvisModernTheme.accent)
                                     Text(item)
                                         .font(.caption)
-                                        .foregroundStyle(.white.opacity(0.84))
+                                        .foregroundStyle(JarvisModernTheme.textSecondary)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
                             }
@@ -1315,14 +1664,14 @@ private struct AssistantStructuredOutputView: View {
                     if let callout = card.callout, !callout.isEmpty {
                         Text(callout)
                             .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.64))
+                            .foregroundStyle(JarvisModernTheme.textTertiary)
                     }
                 }
                 .padding(10)
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .background(Color.white.opacity(0.52), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                        .stroke(JarvisModernTheme.borderStrong, lineWidth: 1)
                 )
             }
         }
@@ -1359,23 +1708,369 @@ private struct AssistantStructuredOutputView: View {
     }
 }
 
+private struct AssistantCapabilitySurfaceCard: View {
+    let surface: JarvisAssistantCapabilitySurface
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            headerView
+            entriesView
+            previewView
+
+            if let approval = surface.approval {
+                AssistantApprovalPanel(approval: approval)
+            }
+
+            footnoteView
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(borderColor, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private var headerView: some View {
+        HStack(alignment: .top, spacing: 10) {
+            headerIcon
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(surface.title)
+                    .font(.system(.caption, design: .rounded, weight: .bold))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
+                if !surface.summary.isEmpty {
+                    Text(surface.summary)
+                        .font(.system(.caption, design: .rounded, weight: .medium))
+                        .foregroundStyle(JarvisModernTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            AssistantCapabilityStatusChip(status: surface.status)
+        }
+    }
+
+    private var headerIcon: some View {
+        Image(systemName: iconName)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(accentColor)
+            .frame(width: 28, height: 28)
+            .background(accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var entriesView: some View {
+        if !surface.entries.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(surface.entries) { entry in
+                    entryView(entry)
+                }
+            }
+        }
+    }
+
+    private func entryView(_ entry: JarvisAssistantCapabilityEntry) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(entry.title)
+                .font(.system(.caption, design: .rounded, weight: .semibold))
+                .foregroundStyle(JarvisModernTheme.textPrimary)
+            if let subtitle = entry.subtitle, !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(.system(.caption2, design: .rounded, weight: .medium))
+                    .foregroundStyle(JarvisModernTheme.textTertiary)
+                    .textSelection(.enabled)
+            }
+            if !entry.facts.isEmpty {
+                FlexibleFactWrap(facts: entry.facts)
+            }
+        }
+        .padding(10)
+        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var previewView: some View {
+        if let previewText = surface.previewText, !previewText.isEmpty {
+            Text(previewText)
+                .font(.system(.caption, design: .monospaced, weight: .medium))
+                .foregroundStyle(JarvisModernTheme.textSecondary)
+                .textSelection(.enabled)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(JarvisModernTheme.border, lineWidth: 1)
+                )
+        }
+    }
+
+    @ViewBuilder
+    private var footnoteView: some View {
+        if let footnote = surface.footnote, !footnote.isEmpty {
+            Text(footnote)
+                .font(.system(.caption2, design: .rounded, weight: .medium))
+                .foregroundStyle(JarvisModernTheme.textTertiary)
+        }
+    }
+
+    private var accentColor: Color {
+        switch surface.kind {
+        case .fileSearchResults, .filePreview, .allowedRoots:
+            return .cyan
+        case .patchApproval, .projectAction:
+            return JarvisModernTheme.accent
+        case .macAction:
+            return .mint
+        case .shellResult:
+            return .orange
+        }
+    }
+
+    private var borderColor: Color {
+        switch surface.status {
+        case .pending:
+            return JarvisModernTheme.accent.opacity(0.42)
+        case .success:
+            return Color.cyan.opacity(0.32)
+        case .failed, .denied:
+            return JarvisModernTheme.warning.opacity(0.42)
+        case .unsupported, .cancelled:
+            return JarvisModernTheme.borderStrong
+        case .executing:
+            return accentColor.opacity(0.48)
+        }
+    }
+
+    private var iconName: String {
+        switch surface.kind {
+        case .fileSearchResults:
+            return "doc.text.magnifyingglass"
+        case .filePreview:
+            return "doc.text"
+        case .patchApproval:
+            return "square.and.pencil"
+        case .allowedRoots:
+            return "folder.badge.checkmark"
+        case .macAction:
+            return "macwindow"
+        case .shellResult:
+            return "terminal"
+        case .projectAction:
+            return "shippingbox"
+        }
+    }
+}
+
+private struct FlexibleFactWrap: View {
+    let facts: [JarvisAssistantCapabilityFact]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(stride(from: 0, to: facts.count, by: 2)), id: \.self) { start in
+                let row = Array(facts[start..<min(start + 2, facts.count)])
+                HStack(spacing: 6) {
+                    ForEach(row) { fact in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(fact.label.uppercased())
+                                .font(.system(size: 9, weight: .bold, design: .rounded))
+                                .foregroundStyle(JarvisModernTheme.textTertiary)
+                            Text(fact.value)
+                                .font(.system(.caption2, design: .rounded, weight: .semibold))
+                                .foregroundStyle(JarvisModernTheme.textPrimary)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                    if row.count == 1 {
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct AssistantCapabilityStatusChip: View {
+    let status: JarvisAssistantCapabilityStatus
+
+    var body: some View {
+        Text(label)
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .foregroundStyle(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(color.opacity(0.14), in: Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(color.opacity(0.36), lineWidth: 1)
+            )
+    }
+
+    private var label: String {
+        switch status {
+        case .pending:
+            return "Pending"
+        case .executing:
+            return "Executing"
+        case .success:
+            return "Success"
+        case .failed:
+            return "Failed"
+        case .denied:
+            return "Denied"
+        case .unsupported:
+            return "Unsupported"
+        case .cancelled:
+            return "Cancelled"
+        }
+    }
+
+    private var color: Color {
+        switch status {
+        case .pending:
+            return JarvisModernTheme.accent
+        case .executing:
+            return .cyan
+        case .success:
+            return .mint
+        case .failed, .denied:
+            return JarvisModernTheme.warning
+        case .unsupported, .cancelled:
+            return JarvisModernTheme.textSecondary
+        }
+    }
+}
+
+private struct AssistantApprovalPanel: View {
+    let approval: JarvisAssistantApprovalSurface
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.shield")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(JarvisModernTheme.accent)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(approval.title)
+                        .font(.system(.caption, design: .rounded, weight: .bold))
+                        .foregroundStyle(JarvisModernTheme.textPrimary)
+                    Text(approval.message)
+                        .font(.system(.caption2, design: .rounded, weight: .medium))
+                        .foregroundStyle(JarvisModernTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                AssistantApprovalDecisionChip(decision: approval.decision)
+            }
+
+            HStack(spacing: 8) {
+                Button(approval.approveTitle) {}
+                    .buttonStyle(JarvisModernPrimaryButtonStyle())
+                    .disabled(!approval.runtimeHookAvailable || approval.decision != .pending)
+
+                Button(approval.denyTitle) {}
+                    .buttonStyle(JarvisModernSecondaryButtonStyle())
+                    .disabled(!approval.runtimeHookAvailable || approval.decision != .pending)
+            }
+
+            if !approval.runtimeHookAvailable && approval.decision == .pending {
+                Text("Approval controls are staged in the UI and waiting on the runtime decision hook.")
+                    .font(.system(.caption2, design: .rounded, weight: .medium))
+                    .foregroundStyle(JarvisModernTheme.textTertiary)
+            }
+        }
+        .padding(12)
+        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(JarvisModernTheme.borderStrong, lineWidth: 1)
+        )
+    }
+}
+
+private struct AssistantApprovalDecisionChip: View {
+    let decision: JarvisAssistantApprovalDecision
+
+    var body: some View {
+        Text(label)
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .foregroundStyle(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(color.opacity(0.14), in: Capsule())
+    }
+
+    private var label: String {
+        switch decision {
+        case .pending:
+            return "Awaiting"
+        case .approved:
+            return "Approved"
+        case .denied:
+            return "Denied"
+        }
+    }
+
+    private var color: Color {
+        switch decision {
+        case .pending:
+            return JarvisModernTheme.accent
+        case .approved:
+            return .mint
+        case .denied:
+            return JarvisModernTheme.warning
+        }
+    }
+}
+
 private struct AssistantEmptyState: View {
     @EnvironmentObject private var appModel: JarvisPhoneAppModel
 
     var body: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "sparkles.rectangle.stack.fill")
-                .font(.system(size: 34))
-                .foregroundStyle(.white.opacity(0.82))
-            Text("Start with one strong action.")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.90))
-            Text("Ask a question, summarize text, draft a reply, or use local knowledge without hunting through the app.")
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.72))
+        VStack(spacing: 18) {
+            ZStack {
+                Circle()
+                    .fill(JarvisModernTheme.glowPrimary)
+                    .frame(width: 88, height: 88)
+                    .blur(radius: 12)
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [JarvisModernTheme.accent, JarvisModernTheme.accentSoft],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 58, height: 58)
+                    .overlay(
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.95))
+                    )
+            }
+            Text("Ask, speak, or hand off the next action.")
+                .font(.system(.title3, design: .rounded, weight: .bold))
+                .foregroundStyle(JarvisModernTheme.textPrimary)
+            Text("JARVIS is set up for direct answers now, and the surface is ready for voice, files, tools, memory, and project actions as those lanes come online.")
+                .font(.system(.footnote, design: .rounded, weight: .medium))
+                .foregroundStyle(JarvisModernTheme.textSecondary)
                 .multilineTextAlignment(.center)
 
             VStack(spacing: 8) {
+                starterButton("Talk to JARVIS", icon: "waveform") {
+                    appModel.setAssistantInputMode(.voice)
+                    appModel.startVoicePreview()
+                }
                 starterButton("Summarize pasted text", icon: "text.quote") {
                     appModel.apply(route: JarvisLaunchRoute(action: .summarize, source: "assistant.empty"))
                 }
@@ -1394,18 +2089,71 @@ private struct AssistantEmptyState: View {
     private func starterButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: icon)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.92))
+                .font(.system(.caption, design: .rounded, weight: .semibold))
+                .foregroundStyle(JarvisModernTheme.textPrimary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
                 .frame(maxWidth: .infinity)
-                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .background(JarvisModernTheme.cardSecondary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(JarvisModernTheme.borderStrong, lineWidth: 1)
                 )
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct AssistantVoiceMeter: View {
+    let state: JarvisPhoneAppModel.AssistantExperienceState
+    let speechState: JarvisSpeechState
+
+    var body: some View {
+        HStack(spacing: 5) {
+            ForEach(Array(levels.enumerated()), id: \.offset) { index, level in
+                Capsule(style: .continuous)
+                    .fill(tint.opacity(0.35 + (Double(index) * 0.08)))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: level)
+            }
+        }
+        .frame(height: 24)
+    }
+
+    private var tint: Color {
+        switch state {
+        case .listening, .transcribing:
+            return .cyan
+        case .responding:
+            return .mint
+        case .processing, .thinking, .grounding:
+            return JarvisModernTheme.accent
+        case .error:
+            return JarvisModernTheme.warning
+        default:
+            return JarvisModernTheme.textSecondary
+        }
+    }
+
+    private var levels: [CGFloat] {
+        if state == .responding {
+            return [12, 20, 26, 18, 24, 16, 22]
+        }
+
+        switch speechState {
+        case .listening:
+            return [10, 18, 24, 16, 22, 14, 20]
+        case .transcribing:
+            return [8, 14, 18, 22, 18, 14, 8]
+        case .stopping:
+            return [6, 10, 12, 10, 8, 7, 6]
+        case .ready, .requestingPermission:
+            return [6, 10, 14, 18, 14, 10, 6]
+        case .failed:
+            return [8, 8, 8, 8, 8, 8, 8]
+        case .idle:
+            return [6, 9, 12, 16, 12, 9, 6]
+        }
     }
 }
 
@@ -1419,8 +2167,15 @@ private struct AssistantControlsSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section("Source") {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    JarvisModernSectionHeader("Assistant Controls", eyebrow: "Adjust", subtitle: "Keep the main chat surface clean and move secondary controls here.")
+
+                    JarvisModernCard {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text("Source")
+                                .font(.system(.headline, design: .rounded, weight: .semibold))
+                                .foregroundStyle(JarvisModernTheme.textPrimary)
                     Picker("Assistant Source", selection: Binding(
                         get: { selectedTask },
                         set: { appModel.selectAssistantSurfaceTask($0) }
@@ -1429,15 +2184,20 @@ private struct AssistantControlsSheet: View {
                         Text("Knowledge").tag(JarvisAssistantTask.knowledgeAnswer)
                     }
                     .pickerStyle(.segmented)
-                }
+                        }
+                    }
 
-                Section("Model") {
+                    JarvisModernCard(secondary: true) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text("Model")
+                                .font(.system(.headline, design: .rounded, weight: .semibold))
+                                .foregroundStyle(JarvisModernTheme.textPrimary)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(appModel.activeModel?.displayName ?? "No active model")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.system(.subheadline, design: .rounded, weight: .semibold))
                         Text(appModel.runtimeState.title)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .font(.system(.caption, design: .rounded, weight: .medium))
+                            .foregroundStyle(JarvisModernTheme.textSecondary)
                     }
 
                     Button {
@@ -1446,9 +2206,15 @@ private struct AssistantControlsSheet: View {
                     } label: {
                         Label("Open Model Library", systemImage: "cpu")
                     }
-                }
+                    .buttonStyle(JarvisModernSecondaryButtonStyle())
+                        }
+                    }
 
-                Section("Assistant Style") {
+                    JarvisModernCard(secondary: true) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text("Assistant Style")
+                                .font(.system(.headline, design: .rounded, weight: .semibold))
+                                .foregroundStyle(JarvisModernTheme.textPrimary)
                     Picker("Response Style", selection: $appModel.settings.responseStyle) {
                         ForEach(JarvisAssistantResponseStyle.allCases) { style in
                             Text(style.displayName).tag(style)
@@ -1457,44 +2223,64 @@ private struct AssistantControlsSheet: View {
 
                     Toggle("Enable Memory", isOn: $appModel.settings.memoryEnabled)
                     Toggle("Enable Diagnostics", isOn: $appModel.settings.showRuntimeDiagnostics)
-                }
-
-                Section("Conversation") {
-                    Button {
-                        dismiss()
-                        appModel.startNewConversation()
-                    } label: {
-                        Label("New Conversation", systemImage: "square.and.pencil")
+                        }
                     }
 
-                    Button {
-                        dismiss()
-                        appModel.addKnowledgeItemFromConversation()
-                    } label: {
-                        Label("Save Latest Reply", systemImage: "bookmark")
-                    }
-                    .disabled(appModel.conversation.messages.last(where: { $0.role == .assistant }) == nil)
+                    JarvisModernCard(secondary: true) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Conversation")
+                                .font(.system(.headline, design: .rounded, weight: .semibold))
+                                .foregroundStyle(JarvisModernTheme.textPrimary)
 
-                    Button {
-                        dismiss()
-                        appModel.apply(route: JarvisLaunchRoute(action: .settings, source: "assistant.controls"))
-                    } label: {
-                        Label("Open Full Settings", systemImage: "gearshape")
-                    }
-                }
+                            Button {
+                                dismiss()
+                                appModel.startNewConversation()
+                            } label: {
+                                Label("New Conversation", systemImage: "square.and.pencil")
+                            }
+                            .buttonStyle(JarvisModernSecondaryButtonStyle())
 
-                if appModel.settings.showRuntimeDiagnostics {
-                    Section("Diagnostics") {
-                        LabeledContent("Runtime", value: appModel.runtimeState.title)
-                        LabeledContent("Task", value: appModel.assistantTask.displayName)
-                        if !appModel.lastPromptDebugSummary.isEmpty {
-                            Text(appModel.lastPromptDebugSummary)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            Button {
+                                dismiss()
+                                appModel.addKnowledgeItemFromConversation()
+                            } label: {
+                                Label("Save Latest Reply", systemImage: "bookmark")
+                            }
+                            .disabled(appModel.conversation.messages.last(where: { $0.role == .assistant }) == nil)
+                            .buttonStyle(JarvisModernSecondaryButtonStyle())
+
+                            Button {
+                                dismiss()
+                                appModel.apply(route: JarvisLaunchRoute(action: JarvisLaunchAction.settings, source: "assistant.controls"))
+                            } label: {
+                                Label("Open Full Settings", systemImage: "gearshape")
+                            }
+                            .buttonStyle(JarvisModernSecondaryButtonStyle())
+                        }
+                    }
+
+                    if appModel.settings.showRuntimeDiagnostics {
+                        JarvisModernCard(secondary: true) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Diagnostics")
+                                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                                    .foregroundStyle(JarvisModernTheme.textPrimary)
+                                LabeledContent("Runtime", value: appModel.runtimeState.title)
+                                LabeledContent("Task", value: appModel.assistantTask.displayName)
+                                if !appModel.lastPromptDebugSummary.isEmpty {
+                                    Text(appModel.lastPromptDebugSummary)
+                                        .font(.system(.caption, design: .rounded, weight: .medium))
+                                        .foregroundStyle(JarvisModernTheme.textSecondary)
+                                }
+                            }
                         }
                     }
                 }
             }
+            .padding(.horizontal, JarvisModernTheme.screenPadding)
+            .padding(.top, 18)
+            .padding(.bottom, 28)
+            .background(JarvisModernBackground())
             .navigationTitle("Assistant Controls")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -213,6 +213,9 @@ public struct JarvisAssistantExecutionStep: Equatable, Identifiable {
 
 public struct JarvisAssistantDecisionTrace: Equatable, Codable {
     public let selectedMode: JarvisAssistantExecutionMode
+    public let selectedModelLane: String?
+    public let policyReason: String?
+    public let chosenSkillID: String?
     public let reasoning: [String]
     public let usedExistingPromptPipeline: Bool
     public let usedFallbackDirectResponse: Bool
@@ -221,6 +224,9 @@ public struct JarvisAssistantDecisionTrace: Equatable, Codable {
 
     public init(
         selectedMode: JarvisAssistantExecutionMode,
+        selectedModelLane: String? = nil,
+        policyReason: String? = nil,
+        chosenSkillID: String? = nil,
         reasoning: [String] = [],
         usedExistingPromptPipeline: Bool = true,
         usedFallbackDirectResponse: Bool = false,
@@ -228,6 +234,9 @@ public struct JarvisAssistantDecisionTrace: Equatable, Codable {
         capabilityCandidates: [String] = []
     ) {
         self.selectedMode = selectedMode
+        self.selectedModelLane = selectedModelLane
+        self.policyReason = policyReason
+        self.chosenSkillID = chosenSkillID
         self.reasoning = reasoning
         self.usedExistingPromptPipeline = usedExistingPromptPipeline
         self.usedFallbackDirectResponse = usedFallbackDirectResponse
@@ -245,6 +254,12 @@ public struct JarvisAssistantExecutionPlan: Equatable, Identifiable {
     public let mode: JarvisAssistantExecutionMode
     public let responseStyle: JarvisAssistantResponseStyle
     public let deliveryMode: JarvisAssistantDeliveryMode
+    public let routeDecision: JarvisRouteDecision?
+    public let policyDecision: JarvisPolicyDecision?
+    public let selectedModelLane: JarvisModelLane?
+    public let selectedCapabilityID: CapabilityID?
+    public let capabilityApprovalRequired: Bool
+    public let capabilityPlatformAvailability: CapabilityPlatformAvailability?
     public let steps: [JarvisAssistantExecutionStep]
     public let diagnostics: JarvisAssistantDecisionTrace
 
@@ -257,6 +272,12 @@ public struct JarvisAssistantExecutionPlan: Equatable, Identifiable {
         mode: JarvisAssistantExecutionMode,
         responseStyle: JarvisAssistantResponseStyle,
         deliveryMode: JarvisAssistantDeliveryMode,
+        routeDecision: JarvisRouteDecision? = nil,
+        policyDecision: JarvisPolicyDecision? = nil,
+        selectedModelLane: JarvisModelLane? = nil,
+        selectedCapabilityID: CapabilityID? = nil,
+        capabilityApprovalRequired: Bool = false,
+        capabilityPlatformAvailability: CapabilityPlatformAvailability? = nil,
         steps: [JarvisAssistantExecutionStep],
         diagnostics: JarvisAssistantDecisionTrace
     ) {
@@ -268,6 +289,12 @@ public struct JarvisAssistantExecutionPlan: Equatable, Identifiable {
         self.mode = mode
         self.responseStyle = responseStyle
         self.deliveryMode = deliveryMode
+        self.routeDecision = routeDecision
+        self.policyDecision = policyDecision
+        self.selectedModelLane = selectedModelLane
+        self.selectedCapabilityID = selectedCapabilityID
+        self.capabilityApprovalRequired = capabilityApprovalRequired
+        self.capabilityPlatformAvailability = capabilityPlatformAvailability
         self.steps = steps
         self.diagnostics = diagnostics
     }
@@ -353,30 +380,103 @@ public struct JarvisAssistantTurnResult: Equatable {
     public let plan: JarvisAssistantExecutionPlan
     public let assistantRequest: JarvisAssistantRequest?
     public let responseText: String
+    public let capabilitySurfaces: [JarvisAssistantCapabilitySurface]
     public let suggestions: [JarvisAssistantSuggestionDescriptor]
     public let deliveryMode: JarvisAssistantDeliveryMode
     public let diagnostics: JarvisAssistantDecisionTrace
+    public let messageAttribution: JarvisMessageMemoryAttribution
+    let capabilityState: CapabilityExecutionState?
+    public let responseDiagnostics: JarvisAssistantResponseDiagnostics
     public let error: JarvisOrchestrationError?
+    var executionTrace: ExecutionTrace?
 
-    public init(
+    public var requestID: UUID {
+        request.id
+    }
+
+    init(
         request: JarvisNormalizedAssistantRequest,
         plan: JarvisAssistantExecutionPlan,
         assistantRequest: JarvisAssistantRequest?,
         responseText: String,
+        capabilitySurfaces: [JarvisAssistantCapabilitySurface] = [],
         suggestions: [JarvisAssistantSuggestionDescriptor] = [],
         deliveryMode: JarvisAssistantDeliveryMode,
         diagnostics: JarvisAssistantDecisionTrace,
+        messageAttribution: JarvisMessageMemoryAttribution = .init(),
+        capabilityState: CapabilityExecutionState? = nil,
+        responseDiagnostics: JarvisAssistantResponseDiagnostics = .empty,
         error: JarvisOrchestrationError? = nil
     ) {
         self.request = request
         self.plan = plan
         self.assistantRequest = assistantRequest
         self.responseText = responseText
+        self.capabilitySurfaces = capabilitySurfaces
         self.suggestions = suggestions
         self.deliveryMode = deliveryMode
         self.diagnostics = diagnostics
+        self.messageAttribution = messageAttribution
+        self.capabilityState = capabilityState
+        self.responseDiagnostics = responseDiagnostics
         self.error = error
+        self.executionTrace = nil
     }
+
+    public func finalizedResponseText(
+        fallbackStreamingText: String = "",
+        runtimeStreamingText: String = ""
+    ) -> String {
+        [responseText, fallbackStreamingText, runtimeStreamingText]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty }) ?? ""
+    }
+}
+
+public struct JarvisAssistantResponseDiagnostics: Equatable, Codable {
+    public let elevatedRequestType: String
+    public let promptPreview: String
+    public let presetUsed: String
+    public let streamedChunks: [String]
+    public let finalTextLength: Int
+    public let stopReason: JarvisAssistantGenerationStopReason
+    public let retryUsed: Bool
+    public let validation: JarvisAssistantOutputValidationStatus
+    public let validationDetail: String?
+
+    public init(
+        elevatedRequestType: String,
+        promptPreview: String,
+        presetUsed: String,
+        streamedChunks: [String],
+        finalTextLength: Int,
+        stopReason: JarvisAssistantGenerationStopReason,
+        retryUsed: Bool,
+        validation: JarvisAssistantOutputValidationStatus,
+        validationDetail: String? = nil
+    ) {
+        self.elevatedRequestType = elevatedRequestType
+        self.promptPreview = promptPreview
+        self.presetUsed = presetUsed
+        self.streamedChunks = streamedChunks
+        self.finalTextLength = finalTextLength
+        self.stopReason = stopReason
+        self.retryUsed = retryUsed
+        self.validation = validation
+        self.validationDetail = validationDetail
+    }
+
+    public static let empty = JarvisAssistantResponseDiagnostics(
+        elevatedRequestType: "",
+        promptPreview: "",
+        presetUsed: "",
+        streamedChunks: [],
+        finalTextLength: 0,
+        stopReason: .unknown,
+        retryUsed: false,
+        validation: .empty,
+        validationDetail: nil
+    )
 }
 
 public struct JarvisNullMemoryProvider: JarvisAssistantMemoryProviding {

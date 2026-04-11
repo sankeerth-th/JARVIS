@@ -5,11 +5,16 @@ final class SettingsStore: ObservableObject {
     @Published private(set) var settings: AppSettings
     private let userDefaultsKey = "com.jarvis.settings"
     private let defaults: UserDefaults
+    private let securityEnvelope: JarvisSecurityEnvelope
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, securityEnvelope: JarvisSecurityEnvelope = .shared) {
         self.defaults = defaults
-        if let data = defaults.data(forKey: userDefaultsKey),
-           let decoded = try? JSONDecoder().decode(AppSettings.self, from: data) {
+        self.securityEnvelope = securityEnvelope
+        if let decoded = Self.loadSettings(
+            from: defaults,
+            key: userDefaultsKey,
+            securityEnvelope: securityEnvelope
+        ) {
             settings = Self.normalizedSettings(decoded)
         } else {
             settings = .default
@@ -125,8 +130,9 @@ final class SettingsStore: ObservableObject {
     var current: AppSettings { settings }
 
     private func persist(_ settings: AppSettings) {
-        guard let data = try? JSONEncoder().encode(settings) else { return }
-        defaults.set(data, forKey: userDefaultsKey)
+        guard let data = try? JSONEncoder().encode(settings),
+              let sealed = try? securityEnvelope.seal(data, purpose: userDefaultsKey) else { return }
+        defaults.set(sealed, forKey: userDefaultsKey)
     }
 
     private static func normalizedSettings(_ settings: AppSettings) -> AppSettings {
@@ -137,5 +143,18 @@ final class SettingsStore: ObservableObject {
             copy.quickActions.append(contentsOf: missing)
         }
         return copy
+    }
+
+    private static func loadSettings(
+        from defaults: UserDefaults,
+        key: String,
+        securityEnvelope: JarvisSecurityEnvelope
+    ) -> AppSettings? {
+        guard let data = defaults.data(forKey: key) else { return nil }
+        if let opened = try? securityEnvelope.open(data, purpose: key),
+           let decoded = try? JSONDecoder().decode(AppSettings.self, from: opened) {
+            return decoded
+        }
+        return try? JSONDecoder().decode(AppSettings.self, from: data)
     }
 }

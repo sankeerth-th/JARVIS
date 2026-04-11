@@ -45,8 +45,12 @@
 	<string>Jarvis summarizes your calendar locally when workflows ask for it.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Jarvis can save processed screenshots if you choose to export them.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Jarvis uses the microphone only when you explicitly start voice input.</string>
 	<key>NSScreenRecordingUsageDescription</key>
 	<string>Jarvis needs screen recording access to capture application windows for email drafting.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Jarvis converts short spoken commands into text when you explicitly start listening.</string>
 	<key>NSRemindersUsageDescription</key>
 	<string>Jarvis reads reminders to include them in summaries when you explicitly ask.</string>
 	<key>NSContactsUsageDescription</key>

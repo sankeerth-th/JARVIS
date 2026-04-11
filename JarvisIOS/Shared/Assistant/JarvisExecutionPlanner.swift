@@ -1,7 +1,32 @@
 import Foundation
 
+public protocol ExecutionPlanner {
+    @MainActor
+    func makePlan(
+        for request: JarvisNormalizedAssistantRequest,
+        classification: JarvisTaskClassification,
+        memoryContextAvailable: Bool,
+        elevatedRequest: JarvisElevatedRequest,
+        resolvedSkill: JarvisResolvedSkill
+    ) async -> JarvisAssistantExecutionPlan
+}
+
+protocol JarvisExecutionPlanBuilding {
+    @MainActor
+    func makePlan(
+        for request: JarvisNormalizedAssistantRequest,
+        classification: JarvisTaskClassification,
+        memoryContextAvailable: Bool,
+        elevatedRequest: JarvisElevatedRequest,
+        routeDecision: JarvisRouteDecision?,
+        policyDecision: JarvisPolicyDecision?,
+        selectedModelLane: JarvisModelLane?,
+        selectedSkillID: String?
+    ) async -> JarvisAssistantExecutionPlan
+}
+
 @MainActor
-public final class JarvisExecutionPlanner {
+public final class JarvisExecutionPlanner: JarvisExecutionPlanBuilding {
     private let capabilityProvider: JarvisAssistantCapabilityProviding
     private let responseStrategy: JarvisAssistantResponseStrategyProviding
 
@@ -13,19 +38,31 @@ public final class JarvisExecutionPlanner {
         self.responseStrategy = responseStrategy
     }
 
+    @MainActor
     public func makePlan(
         for request: JarvisNormalizedAssistantRequest,
         classification: JarvisTaskClassification,
         memoryContextAvailable: Bool,
-        elevatedRequest: JarvisElevatedRequest
+        elevatedRequest: JarvisElevatedRequest,
+        routeDecision: JarvisRouteDecision? = nil,
+        policyDecision: JarvisPolicyDecision? = nil,
+        selectedModelLane: JarvisModelLane? = nil,
+        selectedSkillID: String? = nil
     ) async -> JarvisAssistantExecutionPlan {
         let candidates = await capabilityProvider.candidates(for: request, classification: classification)
+        let selectedCapability = selectedCapability(
+            for: request,
+            classification: classification,
+            elevatedRequest: elevatedRequest,
+            capabilityCandidates: candidates
+        )
         let decision = decideMode(
             for: request,
             classification: classification,
             memoryContextAvailable: memoryContextAvailable,
             elevatedRequest: elevatedRequest,
-            capabilityCandidates: candidates
+            capabilityCandidates: candidates,
+            selectedCapability: selectedCapability
         )
         let deliveryMode = responseStrategy.deliveryMode(
             for: request,
@@ -41,18 +78,28 @@ public final class JarvisExecutionPlanner {
             mode: decision.mode,
             responseStyle: request.assistantMode.defaultResponseStyle,
             deliveryMode: deliveryMode,
+            routeDecision: routeDecision,
+            policyDecision: policyDecision,
+            selectedModelLane: selectedModelLane,
+            selectedCapabilityID: selectedCapability?.id,
+            capabilityApprovalRequired: selectedCapability?.requiresApproval ?? false,
+            capabilityPlatformAvailability: selectedCapability?.platformAvailability,
             steps: buildSteps(
                 for: decision.mode,
                 classification: classification,
-                capabilityCandidates: candidates
+                capabilityCandidates: candidates,
+                selectedCapability: selectedCapability
             ),
             diagnostics: JarvisAssistantDecisionTrace(
                 selectedMode: decision.mode,
+                selectedModelLane: selectedModelLane?.rawValue,
+                policyReason: policyDecision?.reason,
+                chosenSkillID: selectedSkillID,
                 reasoning: decision.reasons + ["Elevated request: \(elevatedRequest.kind.rawValue) (\(elevatedRequest.elevatedIntent))"],
                 usedExistingPromptPipeline: decision.usesExistingPromptPipeline,
                 usedFallbackDirectResponse: decision.usedFallbackDirectResponse,
                 memoryAugmentationAvailable: memoryContextAvailable,
-                capabilityCandidates: candidates.map(\.name)
+                capabilityCandidates: capabilityDiagnostics(candidates: candidates, selectedCapability: selectedCapability)
             )
         )
     }
@@ -62,7 +109,8 @@ public final class JarvisExecutionPlanner {
         classification: JarvisTaskClassification,
         memoryContextAvailable: Bool,
         elevatedRequest: JarvisElevatedRequest,
-        capabilityCandidates: [JarvisAssistantCapabilityCandidate]
+        capabilityCandidates: [JarvisAssistantCapabilityCandidate],
+        selectedCapability: SelectedCapability?
     ) -> Decision {
         var reasons: [String] = []
         var fallbackToDirectResponse = false
@@ -87,6 +135,11 @@ public final class JarvisExecutionPlanner {
             return Decision(mode: .planOnly, reasons: reasons, usesExistingPromptPipeline: true, usedFallbackDirectResponse: false)
         default:
             break
+        }
+
+        if let selectedCapability, request.executionPreferences.allowCapabilityExecution {
+            reasons.append("Planner matched the request to capability \(selectedCapability.id.rawValue), so the turn should route through capability execution instead of generic generation.")
+            return Decision(mode: selectedCapability.mode, reasons: reasons, usesExistingPromptPipeline: selectedCapability.mode == .capabilityThenRespond, usedFallbackDirectResponse: false)
         }
 
         if shouldClarify(request: request, classification: classification) {
@@ -146,7 +199,8 @@ public final class JarvisExecutionPlanner {
     private func buildSteps(
         for mode: JarvisAssistantExecutionMode,
         classification: JarvisTaskClassification,
-        capabilityCandidates: [JarvisAssistantCapabilityCandidate]
+        capabilityCandidates: [JarvisAssistantCapabilityCandidate],
+        selectedCapability: SelectedCapability?
     ) -> [JarvisAssistantExecutionStep] {
         var steps: [JarvisAssistantExecutionStep] = [
             JarvisAssistantExecutionStep(
@@ -181,9 +235,14 @@ public final class JarvisExecutionPlanner {
         }
 
         if mode == .capabilityAction || mode == .capabilityThenRespond {
-            let detail = capabilityCandidates.isEmpty
-                ? "Reserve a capability stage for later threads without executing any actions yet."
-                : "Reserve a capability stage for \(capabilityCandidates.map(\.name).joined(separator: ", "))\(mode == .capabilityAction ? " and stop before generic generation." : " before generating the response.")."
+            let detail: String
+            if let selectedCapability {
+                detail = "Reserve capability execution for \(selectedCapability.id.rawValue)\(mode == .capabilityAction ? " and stop before generic generation." : " before generating the response.")."
+            } else if capabilityCandidates.isEmpty {
+                detail = "Reserve a capability stage for later threads without executing any actions yet."
+            } else {
+                detail = "Reserve a capability stage for \(capabilityCandidates.map(\.name).joined(separator: ", "))\(mode == .capabilityAction ? " and stop before generic generation." : " before generating the response.")."
+            }
             steps.append(
                 JarvisAssistantExecutionStep(
                     kind: .inspectCapabilities,
@@ -241,6 +300,250 @@ public final class JarvisExecutionPlanner {
 
         return steps
     }
+
+    private func capabilityDiagnostics(
+        candidates: [JarvisAssistantCapabilityCandidate],
+        selectedCapability: SelectedCapability?
+    ) -> [String] {
+        var values = candidates.map(\.name)
+        if let selectedCapability {
+            values.insert(selectedCapability.id.rawValue, at: 0)
+        }
+        return values
+    }
+
+    private func selectedCapability(
+        for request: JarvisNormalizedAssistantRequest,
+        classification: JarvisTaskClassification,
+        elevatedRequest: JarvisElevatedRequest,
+        capabilityCandidates: [JarvisAssistantCapabilityCandidate]
+    ) -> SelectedCapability? {
+        let prompt = request.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowercasedPrompt = prompt.lowercased()
+
+        if elevatedRequest.capabilityHint == .searchKnowledge || capabilityCandidates.contains(where: { $0.kind == .searchKnowledge }) {
+            return SelectedCapability(
+                id: "knowledge.lookup",
+                requiresApproval: false,
+                platformAvailability: .shared,
+                mode: .capabilityAction
+            )
+        }
+
+        if lowercasedPrompt.contains("search files")
+            || lowercasedPrompt.contains("search my files")
+            || lowercasedPrompt.contains("find file")
+            || lowercasedPrompt.contains("find files")
+            || lowercasedPrompt.contains("grep") {
+            return SelectedCapability(
+                id: "file.search",
+                requiresApproval: false,
+                platformAvailability: .shared,
+                mode: .capabilityAction
+            )
+        }
+
+        if lowercasedPrompt.contains("analyze project")
+            || lowercasedPrompt.contains("analyze repo")
+            || lowercasedPrompt.contains("analyze codebase") {
+            return SelectedCapability(
+                id: "project.analyze",
+                requiresApproval: false,
+                platformAvailability: .shared,
+                mode: .capabilityAction
+            )
+        }
+
+        if lowercasedPrompt.contains("open project"), extractPath(from: prompt) != nil {
+            return SelectedCapability(
+                id: "project.open",
+                requiresApproval: false,
+                platformAvailability: .macOSOnly,
+                mode: .capabilityAction
+            )
+        }
+
+        if lowercasedPrompt.contains("create project")
+            || lowercasedPrompt.contains("scaffold project")
+            || lowercasedPrompt.contains("new xcode project") {
+            return SelectedCapability(
+                id: "project.scaffold",
+                requiresApproval: true,
+                platformAvailability: .shared,
+                mode: .capabilityThenRespond
+            )
+        }
+
+        if (lowercasedPrompt.contains("preview file") || lowercasedPrompt.contains("preview "))
+            && extractPath(from: prompt) != nil {
+            return SelectedCapability(
+                id: "file.preview",
+                requiresApproval: false,
+                platformAvailability: .shared,
+                mode: .capabilityAction
+            )
+        }
+
+        if (lowercasedPrompt.contains("read file")
+            || lowercasedPrompt.contains("open file")
+            || lowercasedPrompt.contains("show file")
+            || lowercasedPrompt.contains("view file"))
+            && extractPath(from: prompt) != nil {
+            return SelectedCapability(
+                id: "file.read",
+                requiresApproval: false,
+                platformAvailability: .shared,
+                mode: .capabilityAction
+            )
+        }
+
+        if (lowercasedPrompt.contains("patch file")
+            || lowercasedPrompt.contains("apply patch")
+            || lowercasedPrompt.contains("edit file")
+            || lowercasedPrompt.contains("change file"))
+            && extractPath(from: prompt) != nil {
+            return SelectedCapability(
+                id: "file.patch",
+                requiresApproval: true,
+                platformAvailability: .shared,
+                mode: .capabilityAction
+            )
+        }
+
+        if (lowercasedPrompt.contains("create file")
+            || lowercasedPrompt.contains("new file"))
+            && extractPath(from: prompt) != nil {
+            return SelectedCapability(
+                id: "file.create",
+                requiresApproval: true,
+                platformAvailability: .shared,
+                mode: .capabilityAction
+            )
+        }
+
+        if let url = extractURL(from: prompt), lowercasedPrompt.contains("open ") {
+            _ = url
+            return SelectedCapability(
+                id: "system.open_url",
+                requiresApproval: false,
+                platformAvailability: .macOSOnly,
+                mode: .capabilityAction
+            )
+        }
+
+        if lowercasedPrompt.contains("show in finder") || lowercasedPrompt.contains("reveal in finder") {
+            return SelectedCapability(
+                id: "finder.reveal",
+                requiresApproval: false,
+                platformAvailability: .macOSOnly,
+                mode: .capabilityAction
+            )
+        }
+
+        if lowercasedPrompt.contains("focus ")
+            || lowercasedPrompt.contains("switch to ") {
+            return SelectedCapability(
+                id: "app.focus",
+                requiresApproval: false,
+                platformAvailability: .macOSOnly,
+                mode: .capabilityAction
+            )
+        }
+
+        if lowercasedPrompt.contains("open ")
+            && classification.category != .questionAnswering
+            && extractURL(from: prompt) == nil {
+            return SelectedCapability(
+                id: "app.open",
+                requiresApproval: false,
+                platformAvailability: .macOSOnly,
+                mode: .capabilityAction
+            )
+        }
+
+        return nil
+    }
+
+    private func extractPath(from prompt: String) -> String? {
+        let patterns = [
+            #"`([^`]+)`"#,
+            #"\"([^\"]+)\""#,
+            #"(/[^\s]+)"#
+        ]
+
+        for pattern in patterns {
+            guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(prompt.startIndex..., in: prompt)
+            guard let match = expression.firstMatch(in: prompt, options: [], range: range),
+                  match.numberOfRanges > 1,
+                  let captureRange = Range(match.range(at: 1), in: prompt) else {
+                continue
+            }
+
+            let candidate = String(prompt[captureRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if candidate.contains("/") || candidate.contains(".") {
+                return candidate
+            }
+        }
+
+        return nil
+    }
+
+    private func extractURL(from prompt: String) -> URL? {
+        let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+        let range = NSRange(prompt.startIndex..., in: prompt)
+        return detector?.matches(in: prompt, options: [], range: range).compactMap(\.url).first
+    }
+}
+
+@MainActor
+public struct JarvisExecutionPlannerAdapter: ExecutionPlanner {
+    private let planner: any JarvisExecutionPlanBuilding
+    private let intentRouter: JarvisIntentRouter
+    private let policyEngine: JarvisPolicyEngine
+    private let modelRouter: JarvisModelRouter
+
+    @MainActor
+    init(
+        planner: (any JarvisExecutionPlanBuilding)? = nil,
+        intentRouter: JarvisIntentRouter? = nil,
+        policyEngine: JarvisPolicyEngine? = nil,
+        modelRouter: JarvisModelRouter? = nil
+    ) {
+        self.planner = planner ?? JarvisExecutionPlanner()
+        self.intentRouter = intentRouter ?? JarvisIntentRouter()
+        self.policyEngine = policyEngine ?? JarvisPolicyEngine()
+        self.modelRouter = modelRouter ?? JarvisModelRouter()
+    }
+
+    @MainActor
+    public func makePlan(
+        for request: JarvisNormalizedAssistantRequest,
+        classification: JarvisTaskClassification,
+        memoryContextAvailable: Bool,
+        elevatedRequest: JarvisElevatedRequest,
+        resolvedSkill: JarvisResolvedSkill
+    ) async -> JarvisAssistantExecutionPlan {
+        let routeDecision = intentRouter.route(
+            request: request,
+            classification: classification,
+            elevatedRequest: elevatedRequest,
+            skill: resolvedSkill
+        )
+        let policyDecision = policyEngine.evaluate(routeDecision)
+        let selectedModelLane = modelRouter.lane(for: routeDecision, request: request)
+
+        return await planner.makePlan(
+            for: request,
+            classification: classification,
+            memoryContextAvailable: memoryContextAvailable,
+            elevatedRequest: elevatedRequest,
+            routeDecision: routeDecision,
+            policyDecision: policyDecision,
+            selectedModelLane: selectedModelLane,
+            selectedSkillID: resolvedSkill.skill.id
+        )
+    }
 }
 
 private struct Decision {
@@ -248,4 +551,11 @@ private struct Decision {
     let reasons: [String]
     let usesExistingPromptPipeline: Bool
     let usedFallbackDirectResponse: Bool
+}
+
+private struct SelectedCapability {
+    let id: CapabilityID
+    let requiresApproval: Bool
+    let platformAvailability: CapabilityPlatformAvailability
+    let mode: JarvisAssistantExecutionMode
 }

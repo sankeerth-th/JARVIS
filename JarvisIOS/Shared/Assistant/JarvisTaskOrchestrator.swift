@@ -90,6 +90,33 @@ public struct JarvisOrchestrationResult: Equatable {
     public let streamingText: String
     public let isComplete: Bool
     public let error: JarvisOrchestrationError?
+
+    public var finalizedTurnResult: JarvisAssistantTurnResult {
+        turnResult
+    }
+
+    public var resultPlan: JarvisAssistantExecutionPlan {
+        turnResult.plan
+    }
+
+    public var resultDiagnostics: JarvisAssistantDecisionTrace {
+        turnResult.diagnostics
+    }
+
+    public var resultSuggestions: [JarvisAssistantSuggestionDescriptor] {
+        turnResult.suggestions
+    }
+
+    public var resultMessageAttribution: JarvisMessageMemoryAttribution {
+        turnResult.messageAttribution
+    }
+
+    public func finalizedResponseText(runtimeStreamingText: String = "") -> String {
+        turnResult.finalizedResponseText(
+            fallbackStreamingText: streamingText,
+            runtimeStreamingText: runtimeStreamingText
+        )
+    }
     
     public init(
         request: JarvisOrchestrationRequest,
@@ -195,6 +222,67 @@ public enum JarvisOrchestrationError: Error, Equatable {
     }
 }
 
+@MainActor
+struct JarvisCompletedTurnObservation: Equatable {
+    let requestID: UUID
+    let planID: UUID
+    let conversationID: UUID
+    let intent: String
+    let mode: String
+    let modelLane: String?
+    let skillID: String?
+    let trace: ExecutionTrace?
+    let status: JarvisExecutionStatus
+    let messageAttribution: JarvisMessageMemoryAttribution
+    let summary: String
+
+    init(_ result: JarvisOrchestrationResult) {
+        let summarySource = result.finalizedResponseText().isEmpty
+            ? (result.error?.localizedDescription ?? result.executionPlan.diagnostics.reasoning.joined(separator: " "))
+            : result.finalizedResponseText()
+
+        self.requestID = result.turnResult.requestID
+        self.planID = result.turnResult.plan.id
+        self.conversationID = result.request.conversation.id
+        self.intent = result.turnResult.plan.routeDecision?.typedIntent.intent ?? result.turnResult.plan.elevatedRequest.elevatedIntent
+        self.mode = result.turnResult.plan.mode.rawValue
+        self.modelLane = result.turnResult.plan.selectedModelLane?.rawValue
+        self.skillID = result.turnResult.messageAttribution.chosenSkillID
+        self.trace = result.turnResult.executionTrace
+        self.status = result.error == nil ? .success : .failed
+        self.messageAttribution = result.turnResult.messageAttribution
+        self.summary = String(summarySource.trimmingCharacters(in: .whitespacesAndNewlines).prefix(180))
+    }
+}
+
+@MainActor
+protocol JarvisPassiveTurnObserving {
+    func observe(_ observation: JarvisCompletedTurnObservation) async throws
+}
+
+@MainActor
+struct JarvisExecutionHistoryObserver: JarvisPassiveTurnObserving {
+    private let store: JarvisExecutionHistoryStore
+
+    init(store: JarvisExecutionHistoryStore) {
+        self.store = store
+    }
+
+    func observe(_ observation: JarvisCompletedTurnObservation) async throws {
+        store.append(
+            JarvisExecutionHistoryRecord(
+                conversationID: observation.conversationID,
+                intent: observation.intent,
+                mode: observation.mode,
+                modelLane: observation.modelLane,
+                skillID: observation.skillID,
+                status: observation.status.rawValue,
+                summary: observation.summary
+            )
+        )
+    }
+}
+
 // MARK: - Task Orchestrator
 
 @MainActor
@@ -205,39 +293,93 @@ public final class JarvisTaskOrchestrator: ObservableObject {
     
     // MARK: - Components
     private let runtime: JarvisLocalModelRuntime
+    private let executionRuntime: any ExecutionRuntime
     private let memoryManager: ConversationMemoryManager
     private let contextBuilder: ContextBuilder
     private let suggestionEngine: SuggestionEngine
     private let streamingPipeline: StreamingPipeline
-    private let executionPlanner: JarvisExecutionPlanner
+    private let executionPlanner: any ExecutionPlanner
     private let memoryProvider: JarvisAssistantMemoryProviding
+    private let memoryBoundary: any MemoryBoundary
     private let requestElevator: JarvisRequestElevator
+    private let intentRouter: JarvisIntentRouter
+    private let policyEngine: JarvisPolicyEngine
+    private let modelRouter: JarvisModelRouter
+    private let executionHistoryStore: JarvisExecutionHistoryStore
+    private let passiveTurnObserver: (any JarvisPassiveTurnObserving)?
+    private let toolRegistry: any JarvisToolRegistryProviding
+    private let capabilityRegistry: any CapabilityRegistry
+    private let capabilityExecutor: any CapabilityExecutor
     
     // MARK: - State
     private var activeTask: Task<Void, Never>?
     private var currentRequest: JarvisOrchestrationRequest?
     private var cancellationRequested = false
+
+    private enum GenerationDriver {
+        case directRuntime
+        case legacyRuntime
+    }
+
+    private struct StreamedGenerationResult {
+        let finalText: String
+        let streamedChunks: [String]
+        let stopReason: JarvisAssistantGenerationStopReason
+    }
     
     // MARK: - Initialization
     
-    public init(
+    @MainActor
+    init(
         runtime: JarvisLocalModelRuntime,
+        executionRuntime: (any ExecutionRuntime)? = nil,
         memoryManager: ConversationMemoryManager? = nil,
         contextBuilder: ContextBuilder? = nil,
         suggestionEngine: SuggestionEngine? = nil,
         streamingPipeline: StreamingPipeline? = nil,
-        executionPlanner: JarvisExecutionPlanner? = nil,
+        executionPlanner: (any ExecutionPlanner)? = nil,
         memoryProvider: JarvisAssistantMemoryProviding = JarvisNullMemoryProvider(),
-        requestElevator: JarvisRequestElevator? = nil
+        memoryBoundary: (any MemoryBoundary)? = nil,
+        requestElevator: JarvisRequestElevator? = nil,
+        intentRouter: JarvisIntentRouter? = nil,
+        policyEngine: JarvisPolicyEngine? = nil,
+        modelRouter: JarvisModelRouter? = nil,
+        executionHistoryStore: JarvisExecutionHistoryStore? = nil,
+        passiveTurnObserver: (any JarvisPassiveTurnObserving)? = nil,
+        toolRegistry: any JarvisToolRegistryProviding = JarvisToolRegistry(),
+        capabilityRegistry: (any CapabilityRegistry)? = nil,
+        capabilityExecutor: (any CapabilityExecutor)? = nil
     ) {
+        let resolvedIntentRouter = intentRouter ?? JarvisIntentRouter()
+        let resolvedPolicyEngine = policyEngine ?? JarvisPolicyEngine()
+        let resolvedModelRouter = modelRouter ?? JarvisModelRouter()
+        let resolvedExecutionHistoryStore = executionHistoryStore ?? JarvisExecutionHistoryStore()
         self.runtime = runtime
+        self.executionRuntime = executionRuntime ?? JarvisLocalExecutionRuntimeAdapter(runtime: runtime)
         self.memoryManager = memoryManager ?? ConversationMemoryManager()
         self.contextBuilder = contextBuilder ?? ContextBuilder()
         self.suggestionEngine = suggestionEngine ?? SuggestionEngine()
-        self.streamingPipeline = streamingPipeline ?? StreamingPipeline()
-        self.executionPlanner = executionPlanner ?? JarvisExecutionPlanner()
+        self.streamingPipeline = streamingPipeline ?? StreamingPipeline(configuration: .responsive)
+        self.executionPlanner = executionPlanner ?? JarvisExecutionPlannerAdapter(
+            intentRouter: resolvedIntentRouter,
+            policyEngine: resolvedPolicyEngine,
+            modelRouter: resolvedModelRouter
+        )
         self.memoryProvider = memoryProvider
+        self.memoryBoundary = memoryBoundary ?? JarvisExecutionMemoryBoundaryAdapter(
+            memoryManager: self.memoryManager,
+            memoryProvider: memoryProvider
+        )
         self.requestElevator = requestElevator ?? JarvisRequestElevator()
+        self.intentRouter = resolvedIntentRouter
+        self.policyEngine = resolvedPolicyEngine
+        self.modelRouter = resolvedModelRouter
+        self.executionHistoryStore = resolvedExecutionHistoryStore
+        self.passiveTurnObserver = passiveTurnObserver ?? JarvisExecutionHistoryObserver(store: resolvedExecutionHistoryStore)
+        self.toolRegistry = toolRegistry
+        let resolvedCapabilityRegistry = capabilityRegistry ?? JarvisToolBackedCapabilityRegistry(toolRegistry: toolRegistry)
+        self.capabilityRegistry = resolvedCapabilityRegistry
+        self.capabilityExecutor = capabilityExecutor ?? JarvisToolBackedCapabilityExecutor(registry: resolvedCapabilityRegistry)
     }
     
     // MARK: - Public API
@@ -298,6 +440,7 @@ public final class JarvisTaskOrchestrator: ObservableObject {
     public func cancel() {
         cancellationRequested = true
         activeTask?.cancel()
+        executionRuntime.cancel()
         runtime.cancel()
         streamingPipeline.reset()
         state = .idle
@@ -320,13 +463,13 @@ public final class JarvisTaskOrchestrator: ObservableObject {
 
         await updateState(.planning(plan: nil))
         guard !Task.isCancelled && !cancellationRequested else {
-            return makeErrorResult(request, .cancelled)
+            return await finalizeAndObserveTurn(makeErrorResult(request, .cancelled))
         }
 
         // Step 1: Classify Task
         await updateState(.classifying)
         guard !Task.isCancelled && !cancellationRequested else {
-            return makeErrorResult(request, .cancelled)
+            return await finalizeAndObserveTurn(makeErrorResult(request, .cancelled))
         }
         
         let classification = classifyTask(request: request)
@@ -336,7 +479,7 @@ public final class JarvisTaskOrchestrator: ObservableObject {
             requestedTask: classification.task,
             classification: classification
         )
-        let memoryContext = memoryManager.prepareContext(
+        let planningMemoryContext = memoryManager.prepareContext(
             conversation: request.conversation,
             prompt: request.prompt,
             classification: classification,
@@ -346,10 +489,29 @@ public final class JarvisTaskOrchestrator: ObservableObject {
         let plan = await executionPlanner.makePlan(
             for: normalizedRequest,
             classification: classification,
-            memoryContextAvailable: !memoryContext.recentMessages.isEmpty || memoryContext.summary != nil,
-            elevatedRequest: elevatedRequest
+            memoryContextAvailable: !planningMemoryContext.recentMessages.isEmpty || planningMemoryContext.summary != nil,
+            elevatedRequest: elevatedRequest,
+            resolvedSkill: resolvedSkill
         )
         await updateState(.planning(plan: plan))
+
+        let memoryBoundaryRequest = MemoryBoundaryRequest(
+            request: request,
+            normalizedRequest: normalizedRequest,
+            classification: classification,
+            resolvedSkill: resolvedSkill
+        )
+
+        let preparedMemorySnapshot: MemorySnapshot?
+        let memoryContext: MemoryContext
+        if plan.mode == .memoryAugmentedResponse {
+            let snapshot = await memoryBoundary.prepare(request: memoryBoundaryRequest)
+            preparedMemorySnapshot = snapshot
+            memoryContext = snapshot.context
+        } else {
+            preparedMemorySnapshot = nil
+            memoryContext = planningMemoryContext
+        }
 
         if let platformResponse = elevatedRequest.platformResponse {
             let assistantRequest = makePlatformOnlyAssistantRequest(
@@ -365,9 +527,14 @@ public final class JarvisTaskOrchestrator: ObservableObject {
                 suggestions: [],
                 deliveryMode: .streamingText,
                 diagnostics: plan.diagnostics,
+                messageAttribution: makeMessageAttribution(
+                    memoryContext: memoryContext,
+                    selectedSkill: resolvedSkill
+                ),
                 error: nil
             )
-            return JarvisOrchestrationResult(
+            return await finalizeAndObserveTurn(
+                JarvisOrchestrationResult(
                 request: request,
                 normalizedRequest: normalizedRequest,
                 executionPlan: plan,
@@ -381,24 +548,37 @@ public final class JarvisTaskOrchestrator: ObservableObject {
                 streamingText: platformResponse,
                 isComplete: true,
                 error: nil
+                )
             )
         }
 
         if plan.mode == .capabilityAction {
-            return makeCapabilityFallbackResult(
+            if let resolvedResult = await executeMigratedCapabilityAction(
                 request: request,
                 normalizedRequest: normalizedRequest,
                 classification: classification,
                 elevatedRequest: elevatedRequest,
                 memoryContext: memoryContext,
                 plan: plan
+            ) {
+                return await finalizeAndObserveTurn(resolvedResult)
+            }
+            return await finalizeAndObserveTurn(
+                makeCapabilityFallbackResult(
+                request: request,
+                normalizedRequest: normalizedRequest,
+                classification: classification,
+                elevatedRequest: elevatedRequest,
+                memoryContext: memoryContext,
+                plan: plan
+                )
             )
         }
         
         // Step 2: Gather Context
         await updateState(.gatheringContext)
         guard !Task.isCancelled && !cancellationRequested else {
-            return makeErrorResult(request, .cancelled)
+            return await finalizeAndObserveTurn(makeErrorResult(request, .cancelled))
         }
         
         let contextAssembly = await buildContext(
@@ -411,13 +591,18 @@ public final class JarvisTaskOrchestrator: ObservableObject {
         // Step 3: Prepare Prompt
         await updateState(.preparingPrompt)
         guard !Task.isCancelled && !cancellationRequested else {
-            return makeErrorResult(request, .cancelled)
+            return await finalizeAndObserveTurn(makeErrorResult(request, .cancelled))
         }
 
-        let memoryAugmentation = await memoryProvider.augmentation(
-            for: normalizedRequest,
-            classification: classification
-        )
+        let memoryAugmentation: JarvisAssistantMemoryAugmentation
+        if let preparedMemorySnapshot {
+            memoryAugmentation = preparedMemorySnapshot.augmentation
+        } else {
+            memoryAugmentation = await memoryProvider.augmentation(
+                for: normalizedRequest,
+                classification: classification
+            )
+        }
 
         let assistantRequest = buildAssistantRequest(
             request: request,
@@ -427,62 +612,48 @@ public final class JarvisTaskOrchestrator: ObservableObject {
             elevatedRequest: elevatedRequest,
             plan: plan
         )
+        let generationDriver = generationDriver(for: plan)
         
         // Step 4: Warm Runtime
         await updateState(.warmingRuntime)
         do {
-            try await runtime.prepareIfNeeded(tuning: assistantRequest.tuning)
+            switch generationDriver {
+            case .directRuntime:
+                try await executionRuntime.prepareIfNeeded(tuning: assistantRequest.tuning)
+            case .legacyRuntime:
+                try await runtime.prepareIfNeeded(tuning: assistantRequest.tuning)
+            }
         } catch {
-            return makeErrorResult(request, .warmupFailed(error.localizedDescription))
+            return await finalizeAndObserveTurn(makeErrorResult(request, .warmupFailed(error.localizedDescription)))
         }
         
         guard !Task.isCancelled && !cancellationRequested else {
-            return makeErrorResult(request, .cancelled)
+            return await finalizeAndObserveTurn(makeErrorResult(request, .cancelled))
         }
         
-        // Step 5: Generate & Stream
+        // Step 5: Generate, Validate, Retry Once If Needed
         await updateState(.generating)
-        
-        var accumulatedText = ""
-        var streamError: JarvisOrchestrationError?
-        
-        do {
-            try await stream(
-                request: assistantRequest,
-                accumulatedText: &accumulatedText,
-                onToken: onToken
-            )
-        } catch {
-            if shouldRetryWithSafePrompt(error: error, request: assistantRequest) {
-                let safeRequest = makeSafePromptRequest(
-                    request: request,
-                    classification: classification,
-                    contextAssembly: contextAssembly,
-                    memoryAugmentation: memoryAugmentation,
-                    elevatedRequest: elevatedRequest
-                )
 
-                accumulatedText = ""
-                streamingPipeline.reset()
-                do {
-                    try await stream(
-                        request: safeRequest,
-                        accumulatedText: &accumulatedText,
-                        onToken: onToken
-                    )
-                } catch {
-                    streamError = .generationFailed(normalizedGenerationFailure(error))
-                }
-            } else {
-                streamError = .generationFailed(normalizedGenerationFailure(error))
-            }
-        }
-        
+        let generationOutcome = await generateValidatedResponse(
+            orchestrationRequest: request,
+            normalizedRequest: normalizedRequest,
+            classification: classification,
+            elevatedRequest: elevatedRequest,
+            plan: plan,
+            assistantRequest: assistantRequest,
+            generationDriver: generationDriver,
+            onToken: onToken
+        )
+
+        let finalAssistantRequest = generationOutcome.assistantRequest
+        let finalText = generationOutcome.finalText
+        let streamError = generationOutcome.error
+
         // Step 6: Generate Suggestions
         var suggestions: [JarvisAssistantSuggestionDescriptor] = []
-        if streamError == nil && !accumulatedText.isEmpty {
+        if streamError == nil && !finalText.isEmpty {
             suggestions = suggestionEngine.generateSuggestions(
-                responseText: accumulatedText,
+                responseText: finalText,
                 classification: classification,
                 mode: request.mode
             )
@@ -491,35 +662,45 @@ public final class JarvisTaskOrchestrator: ObservableObject {
         let turnResult = JarvisAssistantTurnResult(
             request: normalizedRequest,
             plan: plan,
-            assistantRequest: assistantRequest,
-            responseText: accumulatedText,
+            assistantRequest: finalAssistantRequest,
+            responseText: finalText,
             suggestions: suggestions,
             deliveryMode: plan.deliveryMode,
             diagnostics: plan.diagnostics,
+            messageAttribution: makeMessageAttribution(
+                memoryContext: memoryContext,
+                selectedSkill: resolvedSkill
+            ),
+            responseDiagnostics: generationOutcome.responseDiagnostics,
             error: streamError
         )
-        
-        // Build final result
         let result = JarvisOrchestrationResult(
             request: request,
             normalizedRequest: normalizedRequest,
             executionPlan: plan,
             turnResult: turnResult,
             classification: classification,
-            tuning: assistantRequest.tuning,
-            assistantRequest: assistantRequest,
+            tuning: finalAssistantRequest.tuning,
+            assistantRequest: finalAssistantRequest,
             memoryContext: memoryContext,
             selectedSkill: resolvedSkill,
             suggestions: suggestions,
-            streamingText: accumulatedText,
+            streamingText: finalText,
             isComplete: streamError == nil,
             error: streamError
         )
-        
-        // Update memory with this interaction
-        await updateMemory(request: request, response: accumulatedText)
-        
-        return result
+
+        if streamError == nil {
+            if plan.mode == .memoryAugmentedResponse {
+                await memoryBoundary.record(
+                    request: memoryBoundaryRequest,
+                    result: turnResult.coreAssistantTurnResult
+                )
+            } else {
+                await updateMemory(request: request, response: finalText)
+            }
+        }
+        return await finalizeAndObserveTurn(result)
     }
     
     // MARK: - Helper Methods
@@ -579,6 +760,153 @@ public final class JarvisTaskOrchestrator: ObservableObject {
             shouldInjectKnowledge: classification.shouldInjectKnowledge,
             shouldPreferStructuredOutput: classification.shouldPreferStructuredOutput
         )
+    }
+
+    private func executeMigratedCapabilityAction(
+        request: JarvisOrchestrationRequest,
+        normalizedRequest: JarvisNormalizedAssistantRequest,
+        classification: JarvisTaskClassification,
+        elevatedRequest: JarvisElevatedRequest,
+        memoryContext: MemoryContext,
+        plan: JarvisAssistantExecutionPlan
+    ) async -> JarvisOrchestrationResult? {
+        let capabilityID = plan.selectedCapabilityID
+            ?? plan.coreExecutionPlan.steps.first(where: { $0.kind == .capability })?.capability.map { CapabilityID(rawValue: $0.id) }
+        guard let capabilityID else {
+            return nil
+        }
+        guard let descriptor = capabilityRegistry.descriptor(for: capabilityID) else {
+            return nil
+        }
+
+        let capabilityInput = capabilityInput(for: descriptor.id, request: request)
+        let capabilityResult = await capabilityExecutor.execute(
+            CapabilityInvocation(
+                requestID: request.id,
+                conversationID: normalizedRequest.conversationID,
+                capabilityID: capabilityID,
+                input: capabilityInput,
+                typedIntent: plan.coreExecutionPlan.intent,
+                policyDecision: plan.policyDecision,
+                approvalState: descriptor.requiresApproval || plan.capabilityApprovalRequired ? .required : .notRequired
+            )
+        )
+
+        let assistantRequest = makePlatformOnlyAssistantRequest(
+            request: request,
+            classification: classification,
+            elevatedRequest: elevatedRequest
+        )
+        let turnResult = JarvisAssistantTurnResult(
+            request: normalizedRequest,
+            plan: plan,
+            assistantRequest: assistantRequest,
+            responseText: capabilityResult.userMessage,
+            capabilitySurfaces: JarvisAssistantCapabilityFormatter.format(
+                capabilityID: descriptor.id,
+                input: capabilityInput,
+                result: capabilityResult,
+                platformAvailability: descriptor.platformAvailability
+            ),
+            suggestions: [],
+            deliveryMode: .statusOnly,
+            diagnostics: plan.diagnostics,
+            messageAttribution: makeMessageAttribution(
+                memoryContext: memoryContext,
+                selectedSkill: nil
+            ),
+            capabilityState: capabilityResult.state,
+            error: nil
+        )
+        return JarvisOrchestrationResult(
+            request: request,
+            normalizedRequest: normalizedRequest,
+            executionPlan: plan,
+            turnResult: turnResult,
+            classification: classification,
+            tuning: assistantRequest.tuning,
+            assistantRequest: assistantRequest,
+            memoryContext: memoryContext,
+            suggestions: [],
+            streamingText: capabilityResult.userMessage,
+            isComplete: ![.failed, .cancelled].contains(capabilityResult.status),
+            error: [.failed, .cancelled].contains(capabilityResult.status) ? .generationFailed(capabilityResult.userMessage) : nil
+        )
+    }
+
+    private func capabilityInput(
+        for capabilityID: CapabilityID,
+        request: JarvisOrchestrationRequest
+    ) -> CapabilityInputPayload {
+        let prompt = request.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch capabilityID.rawValue {
+        case "knowledge.lookup":
+            return .memorySearch(.init(query: prompt, limit: 5))
+        case "file.search":
+            return .fileSearch(
+                .init(
+                    roots: [],
+                    query: extractSearchQuery(from: prompt),
+                    glob: nil,
+                    extensions: [],
+                    contentSearch: prompt.lowercased().contains("content"),
+                    limit: 20
+                )
+            )
+        case "file.read":
+            if let path = extractPath(from: prompt) {
+                return .fileRead(.init(path: ScopedPath(token: path, displayPath: path), lineRange: nil, maxBytes: nil))
+            }
+        case "file.preview":
+            if let path = extractPath(from: prompt) {
+                return .filePreview(.init(path: ScopedPath(token: path, displayPath: path)))
+            }
+        case "file.patch":
+            if let path = extractPath(from: prompt) {
+                return .filePatch(.init(path: ScopedPath(token: path, displayPath: path), unifiedDiff: ""))
+            }
+        case "file.create":
+            if let path = extractPath(from: prompt) {
+                let url = URL(fileURLWithPath: path)
+                return .fileCreate(
+                    .init(
+                        parent: ScopedPath(token: url.deletingLastPathComponent().path, displayPath: url.deletingLastPathComponent().path),
+                        name: url.lastPathComponent,
+                        contents: ""
+                    )
+                )
+            }
+        case "app.open":
+            return .appOpen(.init(bundleID: extractBundleLikeIdentifier(from: prompt), appURL: nil))
+        case "app.focus":
+            if let bundleID = extractBundleLikeIdentifier(from: prompt) {
+                return .appFocus(.init(bundleID: bundleID))
+            }
+        case "finder.reveal":
+            if let path = extractPath(from: prompt) {
+                return .finderReveal(.init(path: ScopedPath(token: path, displayPath: path)))
+            }
+        case "system.open_url":
+            if let url = extractURL(from: prompt) {
+                return .systemOpenURL(.init(url: url))
+            }
+        case "project.open":
+            if let path = extractPath(from: prompt) {
+                return .projectOpen(.init(path: ScopedPath(token: path, displayPath: path, scopeKind: .project)))
+            }
+        case "project.analyze":
+            if let path = extractPath(from: prompt) {
+                return .projectAnalyze(.init(root: ScopedPath(token: path, displayPath: path, scopeKind: .project), mode: .summary))
+            }
+        case "project.scaffold":
+            if let path = extractPath(from: prompt) {
+                return .projectScaffold(.init(destination: ScopedPath(token: path, displayPath: path, scopeKind: .project), template: .unknown, name: "NewProject"))
+            }
+        default:
+            break
+        }
+
+        return .none
     }
     
     private func buildContext(
@@ -670,6 +998,171 @@ public final class JarvisTaskOrchestrator: ObservableObject {
             classification: classifyTask(request: request)
         )
     }
+
+    private func generationDriver(for plan: JarvisAssistantExecutionPlan) -> GenerationDriver {
+        if let selectedLane = plan.selectedModelLane ?? plan.routeDecision?.lane {
+            switch selectedLane {
+            case .localFast:
+                return .directRuntime
+            case .remoteReasoning:
+                return .legacyRuntime
+            }
+        }
+
+        return plan.mode == .directResponse ? .directRuntime : .legacyRuntime
+    }
+
+    private func finalizeAndObserveTurn(_ result: JarvisOrchestrationResult) async -> JarvisOrchestrationResult {
+        var finalizedTurnResult = result.turnResult
+        finalizedTurnResult.executionTrace = makeExecutionTrace(for: result)
+
+        let finalizedResult = JarvisOrchestrationResult(
+            request: result.request,
+            normalizedRequest: result.normalizedRequest,
+            executionPlan: result.executionPlan,
+            turnResult: finalizedTurnResult,
+            classification: result.classification,
+            tuning: result.tuning,
+            assistantRequest: result.assistantRequest,
+            memoryContext: result.memoryContext,
+            selectedSkill: result.selectedSkill,
+            suggestions: result.suggestions,
+            streamingText: result.streamingText,
+            isComplete: result.isComplete,
+            error: result.error
+        )
+
+        await observeCompletedTurnIfNeeded(finalizedResult)
+        return finalizedResult
+    }
+
+    private func recordExecution(_ result: JarvisOrchestrationResult) {
+        let observation = JarvisCompletedTurnObservation(result)
+        executionHistoryStore.append(
+            JarvisExecutionHistoryRecord(
+                conversationID: observation.conversationID,
+                intent: observation.intent,
+                mode: observation.mode,
+                modelLane: observation.modelLane,
+                skillID: observation.skillID,
+                status: observation.status.rawValue,
+                summary: observation.summary
+            )
+        )
+    }
+
+    private func observeCompletedTurnIfNeeded(_ result: JarvisOrchestrationResult) async {
+        guard let passiveTurnObserver else {
+            recordExecution(result)
+            return
+        }
+
+        do {
+            try await passiveTurnObserver.observe(JarvisCompletedTurnObservation(result))
+        } catch {
+            // Passive hooks must never interfere with turn completion.
+            recordExecution(result)
+        }
+    }
+
+    private func makeMessageAttribution(
+        memoryContext: MemoryContext,
+        selectedSkill: JarvisResolvedSkill?
+    ) -> JarvisMessageMemoryAttribution {
+        JarvisMessageMemoryAttribution(
+            usedMemory: memoryContext.isMemoryInformed,
+            memorySourceIDs: memoryContext.retrievedMemories.map(\.record.id),
+            sourceKinds: memoryContext.sourceKinds,
+            labels: memoryContext.memoryLabels,
+            usedSummary: memoryContext.summary != nil,
+            chosenSkillID: selectedSkill?.skill.id
+        )
+    }
+
+    private func makeExecutionTrace(for result: JarvisOrchestrationResult) -> ExecutionTrace {
+        let plan = result.executionPlan
+        let failedStepKind = failedStepKind(for: result.error)
+        let capabilityID = plan.coreExecutionPlan.steps.first(where: { $0.kind == .capability })?.capability?.id
+        let lastStepID = plan.steps.last?.id
+        let statuses = Dictionary(uniqueKeysWithValues: plan.steps.map { step in
+            let status: JarvisExecutionStatus
+            if let failedStepKind {
+                if step.kind == failedStepKind {
+                    status = .failed
+                } else if stepComesAfterFailure(step.kind, failedStepKind: failedStepKind) {
+                    status = .partial
+                } else {
+                    status = .success
+                }
+            } else if result.error != nil, step.id == lastStepID {
+                status = .failed
+            } else {
+                status = .success
+            }
+
+            return (step.id, status)
+        })
+
+        return ExecutionTrace(
+            requestID: plan.request.id,
+            planID: plan.id,
+            lane: plan.selectedModelLane ?? plan.routeDecision?.lane ?? .localFast,
+            steps: plan.steps.map { step in
+                StepTrace(
+                    id: step.id,
+                    stepID: step.id,
+                    capabilityID: step.kind == .inspectCapabilities ? capabilityID : nil,
+                    status: statuses[step.id] ?? .partial
+                )
+            },
+            status: result.error == nil ? .success : .failed
+        )
+    }
+
+    private func failedStepKind(for error: JarvisOrchestrationError?) -> JarvisAssistantExecutionStepKind? {
+        switch error {
+        case .warmupFailed(_):
+            return .warmRuntime
+        case .generationFailed(_), .cancelled:
+            return .infer
+        case .contextBuildingFailed(_):
+            return .buildContext
+        default:
+            return nil
+        }
+    }
+
+    private func stepComesAfterFailure(
+        _ stepKind: JarvisAssistantExecutionStepKind,
+        failedStepKind: JarvisAssistantExecutionStepKind
+    ) -> Bool {
+        executionStepOrder(stepKind) > executionStepOrder(failedStepKind)
+    }
+
+    private func executionStepOrder(_ kind: JarvisAssistantExecutionStepKind) -> Int {
+        switch kind {
+        case .normalizeRequest:
+            0
+        case .classifyIntent:
+            1
+        case .chooseMode:
+            2
+        case .consultMemory:
+            3
+        case .inspectCapabilities:
+            4
+        case .buildContext:
+            5
+        case .preparePrompt:
+            6
+        case .warmRuntime:
+            7
+        case .infer:
+            8
+        case .finalizeTurn:
+            9
+        }
+    }
     
     private func makeErrorResult(_ request: JarvisOrchestrationRequest, _ error: JarvisOrchestrationError) -> JarvisOrchestrationResult {
         let plan = fallbackPlan(for: request)
@@ -686,6 +1179,7 @@ public final class JarvisTaskOrchestrator: ObservableObject {
             responseText: "",
             deliveryMode: plan.deliveryMode,
             diagnostics: plan.diagnostics,
+            messageAttribution: .init(),
             error: error
         )
 
@@ -711,6 +1205,9 @@ public final class JarvisTaskOrchestrator: ObservableObject {
         )
         let diagnostics = JarvisAssistantDecisionTrace(
             selectedMode: .directResponse,
+            selectedModelLane: nil,
+            policyReason: nil,
+            chosenSkillID: nil,
             reasoning: ["Fallback orchestration plan was used because the request ended early before full planning completed."],
             usedExistingPromptPipeline: true,
             usedFallbackDirectResponse: true,
@@ -726,6 +1223,9 @@ public final class JarvisTaskOrchestrator: ObservableObject {
             mode: .directResponse,
             responseStyle: request.mode.defaultResponseStyle,
             deliveryMode: .streamingText,
+            routeDecision: nil,
+            policyDecision: nil,
+            selectedModelLane: nil,
             steps: [
                 JarvisAssistantExecutionStep(
                     kind: .normalizeRequest,
@@ -780,6 +1280,21 @@ public final class JarvisTaskOrchestrator: ObservableObject {
             suggestions: [],
             deliveryMode: .statusOnly,
             diagnostics: plan.diagnostics,
+            messageAttribution: makeMessageAttribution(
+                memoryContext: memoryContext,
+                selectedSkill: nil
+            ),
+            capabilityState: plan.selectedCapabilityID.map {
+                CapabilityExecutionState(
+                    capabilityID: $0,
+                    kind: .unsupported,
+                    approvalState: .notRequired,
+                    verification: .notApplicable,
+                    output: .none,
+                    statusMessage: responseText,
+                    traceDetails: ["capability_id": $0.rawValue]
+                )
+            },
             error: nil
         )
 
@@ -936,22 +1451,8 @@ public final class JarvisTaskOrchestrator: ObservableObject {
         return tuned
     }
 
-    private func shouldRetryWithSafePrompt(error: Error, request: JarvisAssistantRequest) -> Bool {
-        guard request.promptMode != .safe else { return false }
-        let message = error.localizedDescription.lowercased()
-        return message.contains("template")
-            || message.contains("jinja")
-            || message.contains("invalid parameter")
-            || message.contains("failed to decode response")
-            || message.contains("failed to render")
-    }
-
     private func normalizedGenerationFailure(_ error: Error) -> String {
         let message = error.localizedDescription
-        let lowercased = message.lowercased()
-        if lowercased.contains("template") || lowercased.contains("jinja") || lowercased.contains("invalid parameter") {
-            return "Jarvis could not prepare the advanced prompt path, and the safe fallback also failed."
-        }
         return message
     }
 
@@ -976,34 +1477,398 @@ public final class JarvisTaskOrchestrator: ObservableObject {
         }
     }
 
+    private func extractSearchQuery(from prompt: String) -> String {
+        let lowered = prompt.lowercased()
+        let prefixes = [
+            "search files for ",
+            "search my files for ",
+            "find file ",
+            "find files ",
+            "grep "
+        ]
+        for prefix in prefixes where lowered.hasPrefix(prefix) {
+            return String(prompt.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return prompt
+    }
+
+    private func extractPath(from prompt: String) -> String? {
+        let patterns = [
+            #"`([^`]+)`"#,
+            #"\"([^\"]+)\""#,
+            #"(/[^\s]+)"#
+        ]
+
+        for pattern in patterns {
+            guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(prompt.startIndex..., in: prompt)
+            guard let match = expression.firstMatch(in: prompt, options: [], range: range),
+                  match.numberOfRanges > 1,
+                  let captureRange = Range(match.range(at: 1), in: prompt) else {
+                continue
+            }
+
+            let candidate = String(prompt[captureRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if candidate.contains("/") || candidate.contains(".") {
+                return candidate
+            }
+        }
+
+        return nil
+    }
+
+    private func extractURL(from prompt: String) -> URL? {
+        let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+        let range = NSRange(prompt.startIndex..., in: prompt)
+        return detector?.matches(in: prompt, options: [], range: range).compactMap(\.url).first
+    }
+
+    private func extractBundleLikeIdentifier(from prompt: String) -> String? {
+        let tokens = prompt
+            .split(whereSeparator: \.isWhitespace)
+            .map(String.init)
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ".,:;!?")) }
+
+        return tokens.first(where: { $0.contains(".") && !$0.contains("/") })
+    }
+
     private func stream(
         request: JarvisAssistantRequest,
-        accumulatedText: inout String,
+        driver: GenerationDriver,
         onToken: @escaping @Sendable (String) -> Void
-    ) async throws {
-        let stream = runtime.streamResponse(request: request)
+    ) async throws -> StreamedGenerationResult {
+        streamingPipeline.reset()
+        let stream: AsyncThrowingStream<String, Error>
+        switch driver {
+        case .directRuntime:
+            stream = executionRuntime.streamResponse(request: request)
+        case .legacyRuntime:
+            stream = runtime.streamResponse(request: request)
+        }
         for try await token in stream {
             guard !Task.isCancelled && !cancellationRequested else {
                 throw JarvisOrchestrationError.cancelled
             }
             let processedTokens = streamingPipeline.ingest(token)
-            for processedToken in processedTokens {
-                accumulatedText.append(processedToken)
+            for _ in processedTokens {
+                let draftText = streamingPipeline.authoritativeText
                 await MainActor.run {
-                    self.streamingText = accumulatedText
-                    self.state = .streaming(streamedText: accumulatedText)
+                    self.streamingText = draftText
+                    self.state = .streaming(streamedText: draftText)
                 }
-                onToken(processedToken)
+                onToken(draftText)
             }
         }
-        let finalTokens = streamingPipeline.finish()
-        for token in finalTokens {
-            accumulatedText.append(token)
+        let completion = streamingPipeline.finish()
+        if completion.finalText != streamingText {
+            let finalText = completion.finalText
             await MainActor.run {
-                self.streamingText = accumulatedText
-                self.state = .streaming(streamedText: accumulatedText)
+                self.streamingText = finalText
+                self.state = .streaming(streamedText: finalText)
             }
-            onToken(token)
+            onToken(finalText)
+        }
+        let runtimeStopReason: JarvisRuntimeGenerationStopReason?
+        switch driver {
+        case .directRuntime:
+            runtimeStopReason = executionRuntime.lastGenerationStopReason
+        case .legacyRuntime:
+            runtimeStopReason = runtime.lastGenerationDiagnostics?.stopReason
+        }
+        return StreamedGenerationResult(
+            finalText: completion.finalText,
+            streamedChunks: completion.streamedChunks,
+            stopReason: mapStopReason(runtimeStopReason)
+        )
+    }
+
+    private func generateValidatedResponse(
+        orchestrationRequest: JarvisOrchestrationRequest,
+        normalizedRequest: JarvisNormalizedAssistantRequest,
+        classification: JarvisTaskClassification,
+        elevatedRequest: JarvisElevatedRequest,
+        plan: JarvisAssistantExecutionPlan,
+        assistantRequest: JarvisAssistantRequest,
+        generationDriver: GenerationDriver,
+        onToken: @escaping @Sendable (String) -> Void
+    ) async -> (
+        assistantRequest: JarvisAssistantRequest,
+        finalText: String,
+        responseDiagnostics: JarvisAssistantResponseDiagnostics,
+        error: JarvisOrchestrationError?
+    ) {
+        let firstAttempt = await executeGenerationAttempt(
+            request: assistantRequest,
+            classification: classification,
+            elevatedRequest: elevatedRequest,
+            generationDriver: generationDriver,
+            retryUsed: false,
+            onToken: onToken
+        )
+
+        if firstAttempt.validation.isValid {
+            return firstAttempt.result
+        }
+
+        guard firstAttempt.result.error == nil else {
+            return firstAttempt.result
+        }
+
+        guard JarvisAssistantOutputValidator.isHighValueRetryTask(classification) else {
+            return buildValidationFailureResult(
+                orchestrationRequest: orchestrationRequest,
+                normalizedRequest: normalizedRequest,
+                plan: plan,
+                assistantRequest: assistantRequest,
+                elevatedRequest: elevatedRequest,
+                finalText: firstAttempt.streamed.finalText,
+                streamedChunks: firstAttempt.streamed.streamedChunks,
+                validation: firstAttempt.validation,
+                retryUsed: false
+            )
+        }
+
+        let retryRequest = makeValidationRetryRequest(
+            from: assistantRequest,
+            elevatedRequest: elevatedRequest
+        )
+        streamingText = ""
+        onToken("")
+        let retryAttempt = await executeGenerationAttempt(
+            request: retryRequest,
+            classification: classification,
+            elevatedRequest: elevatedRequest,
+            generationDriver: generationDriver,
+            retryUsed: true,
+            onToken: onToken
+        )
+
+        if retryAttempt.validation.isValid {
+            return retryAttempt.result
+        }
+
+        guard retryAttempt.result.error == nil else {
+            return retryAttempt.result
+        }
+
+        return buildValidationFailureResult(
+            orchestrationRequest: orchestrationRequest,
+            normalizedRequest: normalizedRequest,
+            plan: plan,
+            assistantRequest: retryRequest,
+            elevatedRequest: elevatedRequest,
+            finalText: retryAttempt.streamed.finalText,
+            streamedChunks: retryAttempt.streamed.streamedChunks,
+            validation: retryAttempt.validation,
+            retryUsed: true
+        )
+    }
+
+    private func executeGenerationAttempt(
+        request: JarvisAssistantRequest,
+        classification: JarvisTaskClassification,
+        elevatedRequest: JarvisElevatedRequest,
+        generationDriver: GenerationDriver,
+        retryUsed: Bool,
+        onToken: @escaping @Sendable (String) -> Void
+    ) async -> (
+        streamed: StreamedGenerationResult,
+        validation: JarvisAssistantOutputValidationResult,
+        result: (
+            assistantRequest: JarvisAssistantRequest,
+            finalText: String,
+            responseDiagnostics: JarvisAssistantResponseDiagnostics,
+            error: JarvisOrchestrationError?
+        )
+    ) {
+        do {
+            let streamed = try await stream(
+                request: request,
+                driver: generationDriver,
+                onToken: onToken
+            )
+            let validation = JarvisAssistantOutputValidator.validate(
+                text: streamed.finalText,
+                classification: classification
+            )
+            let stopReason: JarvisAssistantGenerationStopReason = validation.isValid
+                ? streamed.stopReason
+                : .validationFailure
+            let finalText = validation.isValid ? validation.normalizedText : streamed.finalText
+            return (
+                streamed,
+                validation,
+                (
+                    assistantRequest: request,
+                    finalText: finalText,
+                    responseDiagnostics: makeResponseDiagnostics(
+                        request: request,
+                        elevatedRequest: elevatedRequest,
+                        streamedChunks: streamed.streamedChunks,
+                        finalText: finalText,
+                        stopReason: stopReason,
+                        retryUsed: retryUsed,
+                        validation: validation
+                    ),
+                    error: nil
+                )
+            )
+        } catch {
+            let stopReason: JarvisAssistantGenerationStopReason = (error as? JarvisOrchestrationError) == .cancelled
+                ? .externalCancel
+                : .unknown
+            let validation = JarvisAssistantOutputValidationResult(
+                status: .empty,
+                normalizedText: "",
+                failureDetail: normalizedGenerationFailure(error)
+            )
+            return (
+                StreamedGenerationResult(
+                    finalText: "",
+                    streamedChunks: [],
+                    stopReason: stopReason
+                ),
+                validation,
+                (
+                    assistantRequest: request,
+                    finalText: "",
+                    responseDiagnostics: makeResponseDiagnostics(
+                        request: request,
+                        elevatedRequest: elevatedRequest,
+                        streamedChunks: [],
+                        finalText: "",
+                        stopReason: stopReason,
+                        retryUsed: retryUsed,
+                        validation: validation
+                    ),
+                    error: (error as? JarvisOrchestrationError) ?? .generationFailed(normalizedGenerationFailure(error))
+                )
+            )
+        }
+    }
+
+    private func buildValidationFailureResult(
+        orchestrationRequest: JarvisOrchestrationRequest,
+        normalizedRequest: JarvisNormalizedAssistantRequest,
+        plan: JarvisAssistantExecutionPlan,
+        assistantRequest: JarvisAssistantRequest,
+        elevatedRequest: JarvisElevatedRequest,
+        finalText: String,
+        streamedChunks: [String],
+        validation: JarvisAssistantOutputValidationResult,
+        retryUsed: Bool
+    ) -> (
+        assistantRequest: JarvisAssistantRequest,
+        finalText: String,
+        responseDiagnostics: JarvisAssistantResponseDiagnostics,
+        error: JarvisOrchestrationError?
+    ) {
+        _ = normalizedRequest
+        _ = orchestrationRequest
+        _ = plan
+        return (
+            assistantRequest: assistantRequest,
+            finalText: "",
+            responseDiagnostics: makeResponseDiagnostics(
+                request: assistantRequest,
+                elevatedRequest: elevatedRequest,
+                streamedChunks: streamedChunks,
+                finalText: finalText,
+                stopReason: .validationFailure,
+                retryUsed: retryUsed,
+                validation: validation
+            ),
+            error: .generationFailed(validation.failureDetail ?? "The model returned invalid output.")
+        )
+    }
+
+    private func makeValidationRetryRequest(
+        from request: JarvisAssistantRequest,
+        elevatedRequest: JarvisElevatedRequest
+    ) -> JarvisAssistantRequest {
+        var retryRequest = request
+        var retryTuning = retryRequest.tuning
+        retryTuning.temperature = min(retryTuning.temperature, 0.32)
+        retryTuning.topP = min(retryTuning.topP, 0.88)
+        retryTuning.repeatPenalty = max(retryTuning.repeatPenalty, 1.12)
+        retryTuning.penaltyLastN = max(retryTuning.penaltyLastN, 96)
+        retryTuning.responseStyle = .balanced
+        retryTuning.usesReasoningPlan = true
+        retryRequest.tuning = retryTuning
+        retryRequest.prompt = """
+        \(stricterRetryInstruction(for: request.classification))
+
+        User request:
+        \(elevatedRequest.elevatedPrompt)
+        """
+        retryRequest.promptBlueprint = JarvisPromptBlueprint(
+            systemInstruction: request.promptBlueprint.systemInstruction,
+            assistantRole: request.promptBlueprint.assistantRole,
+            taskTypeInstruction: request.promptBlueprint.taskTypeInstruction,
+            responseInstruction: stricterRetryInstruction(for: request.classification),
+            contextBlocks: request.promptBlueprint.contextBlocks,
+            userInputPrefix: "User request:"
+        )
+        retryRequest.debugSummary = request.debugSummary + " retry=strict_validation"
+        return retryRequest
+    }
+
+    private func stricterRetryInstruction(for classification: JarvisTaskClassification) -> String {
+        switch classification.category {
+        case .coding:
+            return "Return a concrete coding answer. Include code or an explicit fix. Do not answer with punctuation, fragments, or placeholder text."
+        case .planning:
+            return "Return a usable plan with numbered steps and concrete next actions. Do not answer with punctuation, fragments, or placeholder text."
+        case .draftingEmail, .draftingMessage, .contextAwareReply:
+            return "Return ready-to-send text that reads complete and natural. Do not answer with punctuation, fragments, or placeholder text."
+        default:
+            return "Return a complete useful answer. Do not answer with punctuation, fragments, or placeholder text."
+        }
+    }
+
+    private func makeResponseDiagnostics(
+        request: JarvisAssistantRequest,
+        elevatedRequest: JarvisElevatedRequest,
+        streamedChunks: [String],
+        finalText: String,
+        stopReason: JarvisAssistantGenerationStopReason,
+        retryUsed: Bool,
+        validation: JarvisAssistantOutputValidationResult
+    ) -> JarvisAssistantResponseDiagnostics {
+        JarvisAssistantResponseDiagnostics(
+            elevatedRequestType: elevatedRequest.kind.rawValue,
+            promptPreview: String(request.prompt.prefix(240)),
+            presetUsed: request.tuning.preset.rawValue,
+            streamedChunks: streamedChunks,
+            finalTextLength: finalText.count,
+            stopReason: stopReason,
+            retryUsed: retryUsed,
+            validation: validation.status,
+            validationDetail: validation.failureDetail
+        )
+    }
+
+    private func mapStopReason(_ runtimeStopReason: JarvisRuntimeGenerationStopReason?) -> JarvisAssistantGenerationStopReason {
+        guard let runtimeStopReason else { return .unknown }
+        switch runtimeStopReason {
+        case .eos:
+            return .eos
+        case .stopSequence:
+            return .stopSequence
+        case .maxTokens:
+            return .maxTokens
+        case .repetitionAbort:
+            return .repetitionAbort
+        case .memoryAbort:
+            return .memoryAbort
+        case .thermalAbort:
+            return .thermalAbort
+        case .externalCancel:
+            return .externalCancel
+        case .validationFailure:
+            return .validationFailure
+        case .unknown:
+            return .unknown
         }
     }
 }

@@ -4,60 +4,75 @@ struct JarvisModernRootView: View {
     @EnvironmentObject private var appModel: JarvisPhoneAppModel
 
     var body: some View {
-        TabView(selection: Binding(
-            get: { appModel.selectedTab },
-            set: { appModel.handleTabSelection($0) }
-        )) {
-            ModernHomeTabView()
-                .tabItem {
-                    Label(JarvisAppTab.home.title, systemImage: JarvisAppTab.home.icon)
-                }
-                .tag(JarvisAppTab.home)
+        ZStack {
+            TabView(selection: Binding(
+                get: { appModel.selectedTab },
+                set: { appModel.handleTabSelection($0) }
+            )) {
+                ModernHomeTabView()
+                    .tag(JarvisAppTab.home)
 
-            AssistantTabView()
-                .tabItem {
-                    Label(JarvisAppTab.assistant.title, systemImage: JarvisAppTab.assistant.icon)
-                }
-                .tag(JarvisAppTab.assistant)
+                AssistantTabView()
+                    .tag(JarvisAppTab.assistant)
 
-            ModernVisualIntelligenceTabView()
-                .tabItem {
-                    Label(JarvisAppTab.visual.title, systemImage: JarvisAppTab.visual.icon)
-                }
-                .tag(JarvisAppTab.visual)
+                ModernVisualIntelligenceTabView()
+                    .tag(JarvisAppTab.visual)
 
-            KnowledgeTabView()
-                .tabItem {
-                    Label(JarvisAppTab.knowledge.title, systemImage: JarvisAppTab.knowledge.icon)
-                }
-                .tag(JarvisAppTab.knowledge)
+                KnowledgeTabView()
+                    .tag(JarvisAppTab.knowledge)
 
-            SettingsTabView()
-                .tabItem {
-                    Label(JarvisAppTab.settings.title, systemImage: JarvisAppTab.settings.icon)
+                SettingsTabView()
+                    .tag(JarvisAppTab.settings)
+            }
+            .toolbar(.hidden, for: .tabBar)
+            .safeAreaInset(edge: .bottom) {
+                if !appModel.shouldHideFloatingTabBar {
+                    JarvisModernFloatingTabBar(selection: Binding(
+                        get: { appModel.selectedTab },
+                        set: { appModel.handleTabSelection($0) }
+                    ))
+                    .padding(.bottom, 4)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
-                .tag(JarvisAppTab.settings)
+            }
+
+            if shouldShowAssistantAnchor {
+                JarvisFloatingAssistantHost()
+                    .environmentObject(appModel)
+                    .padding(.horizontal, JarvisModernTheme.screenPadding)
+                    .padding(.bottom, appModel.shouldHideFloatingTabBar ? 22 : JarvisModernTheme.floatingTabBarHeight + 14)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .transition(.scale(scale: 0.96).combined(with: .opacity))
+            }
         }
-        .tint(.indigo)
+        .tint(JarvisModernTheme.accent)
+        .animation(JarvisModernMotion.contentUpdate, value: appModel.shouldHideFloatingTabBar)
+        .animation(JarvisModernMotion.surfaceExpand, value: shouldShowAssistantAnchor)
         .onChange(of: appModel.isAssistantPresented) { _, isPresented in
             guard isPresented else { return }
             appModel.isAssistantPresented = false
-            appModel.apply(route: .assistant(.assistant, source: .legacy, shouldFocusComposer: true))
+            appModel.apply(
+                route: JarvisLaunchRoute.assistant(
+                    .assistant,
+                    source: .legacy,
+                    shouldFocusComposer: true
+                )
+            )
         }
         .onChange(of: appModel.isKnowledgePresented) { _, isPresented in
             guard isPresented else { return }
             appModel.isKnowledgePresented = false
-            appModel.apply(route: .assistant(.knowledge, source: .legacy))
+            appModel.apply(route: JarvisLaunchRoute.assistant(.knowledge, source: .legacy))
         }
         .onChange(of: appModel.isSettingsPresented) { _, isPresented in
             guard isPresented else { return }
             appModel.isSettingsPresented = false
-            appModel.apply(route: JarvisLaunchRoute(action: .settings, source: "legacy.sheet.settings"))
+            appModel.apply(route: JarvisLaunchRoute(action: JarvisLaunchAction.settings, source: "legacy.sheet.settings"))
         }
         .onChange(of: appModel.isVisualIntelligencePresented) { _, isPresented in
             guard isPresented else { return }
             appModel.isVisualIntelligencePresented = false
-            appModel.apply(route: .assistant(.visual, source: .legacy))
+            appModel.apply(route: JarvisLaunchRoute.assistant(.visual, source: .legacy))
         }
         .sheet(isPresented: $appModel.isModelLibraryPresented) {
             NavigationStack {
@@ -70,6 +85,11 @@ struct JarvisModernRootView: View {
                 .interactiveDismissDisabled(appModel.needsModelSetup)
         }
     }
+
+    private var shouldShowAssistantAnchor: Bool {
+        guard !appModel.isAssistantKeyboardActive else { return false }
+        return appModel.selectedTab != .assistant || appModel.assistantExperienceState != .idle
+    }
 }
 
 struct ModernHomeTabView: View {
@@ -78,17 +98,61 @@ struct ModernHomeTabView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 20) {
+                VStack(alignment: .leading, spacing: JarvisModernTheme.sectionSpacing) {
+                    ModernHomeGreetingHeader()
                     ModernHomeStatusCard()
                     ModernQuickActionsSection()
-                    ModernRecentConversationsSection()
+                    ModernHomeNowSection()
                     ModernModelStatusSection()
+                    ModernRecentConversationsSection()
                 }
-                .padding()
+                .padding(.horizontal, JarvisModernTheme.screenPadding)
+                .padding(.top, 22)
+                .padding(.bottom, 132)
             }
-            .navigationTitle("Jarvis")
-            .background(Color(.systemGroupedBackground))
+            .background(JarvisModernBackground())
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .navigationBarTitleDisplayMode(.inline)
         }
+    }
+}
+
+struct ModernHomeGreetingHeader: View {
+    @EnvironmentObject private var appModel: JarvisPhoneAppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+                .font(.system(.caption, design: .rounded, weight: .semibold))
+                .foregroundStyle(JarvisModernTheme.accent.opacity(0.82))
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(greetingTitle)
+                    .font(.system(size: 18, weight: .semibold, design: .rounded))
+                    .foregroundStyle(JarvisModernTheme.textSecondary)
+                Text("JARVIS feels ready before you ask.")
+                    .font(.system(size: 36, weight: .heavy, design: .rounded))
+                    .foregroundStyle(JarvisModernTheme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Voice-forward, local-first, and built to move from conversation into files, tools, and project actions without losing context.")
+                    .font(.system(.subheadline, design: .rounded, weight: .medium))
+                    .foregroundStyle(JarvisModernTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 8) {
+                JarvisModernChip(title: "Voice First", icon: "waveform", tint: .cyan, active: true)
+                JarvisModernChip(title: "Local Runtime", icon: "cpu.fill", tint: JarvisModernTheme.accentSoft, active: true)
+                JarvisModernChip(title: "Action Ready", icon: "bolt.fill", tint: JarvisModernTheme.warning, active: false)
+            }
+        }
+    }
+
+    private var greetingTitle: String {
+        let hour = Calendar.current.component(.hour, from: .now)
+        if hour < 12 { return "Good morning." }
+        if hour < 18 { return "Good afternoon." }
+        return "Good evening."
     }
 }
 
@@ -96,28 +160,56 @@ struct ModernHomeStatusCard: View {
     @EnvironmentObject private var appModel: JarvisPhoneAppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
-                Image(systemName: statusIcon)
-                    .font(.title2)
-                    .foregroundStyle(statusColor)
+        JarvisModernCard {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 14) {
+                    JarvisModernIconBadge(systemName: statusIcon, tint: statusColor)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(statusTitle)
-                        .font(.headline)
-                    Text(statusSubtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(statusTitle)
+                            .font(.system(.title3, design: .rounded, weight: .bold))
+                            .foregroundStyle(JarvisModernTheme.textPrimary)
+                        Text(statusSubtitle)
+                            .font(.system(.footnote, design: .rounded, weight: .medium))
+                            .foregroundStyle(JarvisModernTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer()
                 }
 
-                Spacer()
-            }
+                actionRow
 
-            actionRow
+                HStack(spacing: 10) {
+                    statusPill(title: appModel.assistantExperienceState.title, icon: "sparkles", tint: statusColor)
+                    statusPill(title: appModel.assistantInputMode == .voice ? "Voice Ready" : "Tap To Talk", icon: "waveform", tint: .cyan)
+                    if let modelName = appModel.activeModel?.displayName {
+                        statusPill(title: modelName, icon: "cpu", tint: JarvisModernTheme.accentSoft)
+                    }
+                }
+            }
         }
-        .padding()
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func statusPill(title: String, icon: String, tint: Color) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.caption.weight(.semibold))
+            Text(title)
+                .lineLimit(1)
+                .font(.system(.caption, design: .rounded, weight: .semibold))
+        }
+        .foregroundStyle(JarvisModernTheme.textPrimary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            Capsule(style: .continuous)
+                .fill(tint.opacity(0.12))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(tint.opacity(0.32), lineWidth: 1)
+                )
+        )
     }
 
     @ViewBuilder
@@ -127,10 +219,10 @@ struct ModernHomeStatusCard: View {
                 appModel.showSetupFlow = true
             } label: {
                 Label(appModel.hasReadyModel ? "Choose Model" : "Set Up Model", systemImage: "arrow.right.circle.fill")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.indigo)
+            .buttonStyle(JarvisModernPrimaryButtonStyle())
         } else {
             HStack(spacing: 10) {
                 if canWarm {
@@ -139,23 +231,35 @@ struct ModernHomeStatusCard: View {
                     } label: {
                         Label("Warm", systemImage: "flame.fill")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.indigo)
+                    .buttonStyle(JarvisModernCapsuleActionStyle(tint: JarvisModernTheme.warning, emphasized: true))
                 }
 
                 Button {
-                    appModel.apply(route: .assistant(.voice, task: .chat, source: .inApp, shouldStartListening: true))
+                    appModel.apply(
+                        route: JarvisLaunchRoute.assistant(
+                            .voice,
+                            task: .chat,
+                            source: .inApp,
+                            shouldStartListening: true
+                        )
+                    )
                 } label: {
                     Label("Voice", systemImage: "waveform")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(JarvisModernCapsuleActionStyle())
 
                 Button {
-                    appModel.apply(route: .assistant(.visual, task: .visualDescribe, source: .inApp))
+                    appModel.apply(
+                        route: JarvisLaunchRoute.assistant(
+                            .visual,
+                            task: .visualDescribe,
+                            source: .inApp
+                        )
+                    )
                 } label: {
                     Label("Visual", systemImage: "viewfinder")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(JarvisModernCapsuleActionStyle())
 
                 if case .failed = appModel.runtimeState {
                     Button {
@@ -163,10 +267,10 @@ struct ModernHomeStatusCard: View {
                     } label: {
                         Label("Retry", systemImage: "arrow.clockwise")
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(JarvisModernCapsuleActionStyle())
                 }
             }
-            .font(.subheadline.weight(.semibold))
+            .font(.system(.subheadline, design: .rounded, weight: .semibold))
         }
     }
 
@@ -270,16 +374,19 @@ struct ModernHomeStatusCard: View {
 struct ModernQuickActionsSection: View {
     @EnvironmentObject private var appModel: JarvisPhoneAppModel
 
-    private let columns = [GridItem(.flexible()), GridItem(.flexible())]
-
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Quick Actions")
-                .font(.headline)
+            JarvisModernSectionHeader(
+                "Quick Actions",
+                eyebrow: "Do",
+                subtitle: "One-tap entry points for the tasks that should feel immediate."
+            )
 
-            LazyVGrid(columns: columns, spacing: 12) {
-                ForEach(appModel.quickLaunchItems.prefix(6)) { item in
-                    ModernQuickActionButton(item: item)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(appModel.quickLaunchItems.prefix(6)) { item in
+                        ModernQuickActionButton(item: item)
+                    }
                 }
             }
         }
@@ -294,25 +401,115 @@ struct ModernQuickActionButton: View {
         Button {
             appModel.triggerQuickLaunch(item)
         } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                Image(systemName: item.icon)
-                    .font(.title3)
-                    .foregroundStyle(.indigo)
-                Text(item.title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-                Text(item.subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
+            HStack(spacing: 12) {
+                JarvisModernIconBadge(systemName: item.icon, tint: item.route.action == .voice ? .cyan : JarvisModernTheme.accentSoft)
+                    .frame(width: 40, height: 40)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.title)
+                        .lineLimit(1)
+                        .foregroundStyle(JarvisModernTheme.textPrimary)
+                    Text(item.subtitle)
+                        .font(.system(.caption2, design: .rounded, weight: .medium))
+                        .foregroundStyle(JarvisModernTheme.textSecondary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding()
-            .background(Color(.secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .frame(width: 230, alignment: .leading)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(JarvisModernCapsuleActionStyle())
+    }
+}
+
+struct ModernHomeNowSection: View {
+    @EnvironmentObject private var appModel: JarvisPhoneAppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            JarvisModernSectionHeader(
+                "Now",
+                eyebrow: "Context",
+                subtitle: "The assistant stays available without taking over the whole app."
+            )
+
+            JarvisModernCard(secondary: true, padding: 16) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .top, spacing: 12) {
+                        JarvisModernIconBadge(systemName: currentStateIcon, tint: currentStateTint)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(currentStateTitle)
+                                .font(.system(.subheadline, design: .rounded, weight: .bold))
+                                .foregroundStyle(JarvisModernTheme.textPrimary)
+                            Text(currentStateSubtitle)
+                                .font(.system(.footnote, design: .rounded, weight: .medium))
+                                .foregroundStyle(JarvisModernTheme.textSecondary)
+                        }
+                        Spacer()
+                    }
+                }
+            }
+        }
+    }
+
+    private var currentStateTitle: String {
+        switch appModel.assistantExperienceState {
+        case .listening:
+            return "Listening for your next command"
+        case .thinking, .processing, .grounding, .responding:
+            return "Working without blocking the app"
+        case .answerReady:
+            return "Latest result is ready"
+        case .error:
+            return "Attention is needed"
+        default:
+            return "Assistant is ready"
+        }
+    }
+
+    private var currentStateSubtitle: String {
+        switch appModel.assistantExperienceState {
+        case .thinking, .processing, .grounding, .responding:
+            return appModel.statusText
+        case .answerReady:
+            return "Open Chat to continue or refine the response."
+        case .error(let message):
+            return message
+        case .unavailable(let reason):
+            return reason
+        default:
+            return "Home stays calm while JARVIS remains one tap away."
+        }
+    }
+
+    private var currentStateIcon: String {
+        switch appModel.assistantExperienceState {
+        case .listening:
+            return "waveform.circle.fill"
+        case .thinking, .processing, .grounding, .responding:
+            return "sparkles.rectangle.stack.fill"
+        case .answerReady:
+            return "checkmark.circle.fill"
+        case .error, .unavailable:
+            return "exclamationmark.triangle.fill"
+        default:
+            return "sparkles"
+        }
+    }
+
+    private var currentStateTint: Color {
+        switch appModel.assistantExperienceState {
+        case .listening:
+            return .cyan
+        case .thinking, .processing, .grounding, .responding:
+            return JarvisModernTheme.accent
+        case .answerReady:
+            return JarvisModernTheme.success
+        case .error, .unavailable:
+            return JarvisModernTheme.warning
+        default:
+            return JarvisModernTheme.accentSoft
+        }
     }
 }
 
@@ -321,45 +518,48 @@ struct ModernRecentConversationsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Recent")
-                    .font(.headline)
-                Spacer()
-                if !appModel.conversations.isEmpty {
-                    NavigationLink("See All") {
-                        ModernConversationsListView()
-                    }
-                    .font(.subheadline)
-                }
-            }
+            JarvisModernSectionHeader(
+                "Continue",
+                eyebrow: "Recent",
+                subtitle: "Jump back into the last conversation or keep the thread moving.",
+                trailing: !appModel.conversations.isEmpty
+                    ? AnyView(
+                        NavigationLink("See All") {
+                            ModernConversationsListView()
+                        }
+                        .font(.system(.footnote, design: .rounded, weight: .semibold))
+                        .foregroundStyle(JarvisModernTheme.accentSoft)
+                    )
+                    : nil
+            )
 
             if let latest = appModel.conversations.first {
                 Button {
                     appModel.openConversation(latest, source: "home.recent")
                 } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(latest.title)
-                                .font(.subheadline.weight(.medium))
-                                .lineLimit(1)
-                            Text(latest.updatedAt, style: .relative)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                    JarvisModernCard(secondary: true, padding: 16) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(latest.title)
+                                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                    .foregroundStyle(JarvisModernTheme.textPrimary)
+                                    .lineLimit(1)
+                                Text(latest.updatedAt, style: .relative)
+                                    .font(.system(.caption, design: .rounded, weight: .medium))
+                                    .foregroundStyle(JarvisModernTheme.textSecondary)
+                            }
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(JarvisModernTheme.textSecondary)
                         }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
-                    .padding()
-                    .background(Color(.secondarySystemGroupedBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
                 .buttonStyle(.plain)
             } else {
                 Text("No conversations yet")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(.system(.subheadline, design: .rounded, weight: .medium))
+                    .foregroundStyle(JarvisModernTheme.textSecondary)
                     .padding(.vertical, 8)
             }
         }
@@ -371,48 +571,43 @@ struct ModernModelStatusSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Model Library")
-                    .font(.headline)
-                Spacer()
-                Button("Manage") {
-                    appModel.presentModelLibrary()
-                }
-                .font(.subheadline)
-            }
-
-            HStack {
-                Image(systemName: "cpu")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    if let model = appModel.activeModel {
-                        Text(model.displayName)
-                            .font(.subheadline.weight(.medium))
-                        Text("\(model.format.displayName) • \(model.importState.displayName) • \(model.activationEligibility.displayName)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text("No model imported")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+            JarvisModernSectionHeader(
+                "Model Library",
+                eyebrow: "Runtime",
+                subtitle: "Keep the active local model visible and reachable from the home surface.",
+                trailing: AnyView(
+                    Button("Manage") {
+                        appModel.presentModelLibrary()
                     }
-                }
+                    .buttonStyle(JarvisModernSecondaryButtonStyle())
+                )
+            )
 
-                Spacer()
+            JarvisModernCard(secondary: true, padding: 16) {
+                HStack(alignment: .top, spacing: 12) {
+                    JarvisModernIconBadge(systemName: "cpu", tint: JarvisModernTheme.accentSoft)
 
-                Button {
-                    appModel.presentModelLibrary(beginImport: true)
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.subheadline.weight(.semibold))
+                    VStack(alignment: .leading, spacing: 6) {
+                        if let model = appModel.activeModel {
+                            Text(model.displayName)
+                                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                .foregroundStyle(JarvisModernTheme.textPrimary)
+                            Text("\(model.format.displayName) • \(model.importState.displayName) • \(model.activationEligibility.displayName)")
+                                .font(.system(.caption, design: .rounded, weight: .medium))
+                                .foregroundStyle(JarvisModernTheme.textSecondary)
+                        } else {
+                            Text("No active model")
+                                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                .foregroundStyle(JarvisModernTheme.textPrimary)
+                            Text("Import and activate a GGUF model to unlock local assistant mode.")
+                                .font(.system(.caption, design: .rounded, weight: .medium))
+                                .foregroundStyle(JarvisModernTheme.textSecondary)
+                        }
+                    }
+
+                    Spacer()
                 }
-                .buttonStyle(.bordered)
             }
-            .padding()
-            .background(Color(.secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
         }
     }
 }
@@ -435,6 +630,103 @@ struct ModernConversationsListView: View {
             }
         }
         .navigationTitle("Conversations")
+        .scrollContentBackground(.hidden)
+        .background(JarvisModernBackground())
+    }
+}
+
+private struct JarvisFloatingAssistantHost: View {
+    @EnvironmentObject private var appModel: JarvisPhoneAppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulse = false
+
+    var body: some View {
+        Button {
+            appModel.apply(
+                route: JarvisLaunchRoute.assistant(
+                    .assistant,
+                    source: .inApp,
+                    shouldFocusComposer: true
+                )
+            )
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(JarvisModernTheme.glowPrimary)
+                        .frame(width: pulse ? 76 : 64, height: pulse ? 76 : 64)
+                        .blur(radius: 10)
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [JarvisModernTheme.accent, JarvisModernTheme.accentSoft],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: JarvisModernTheme.assistantAnchorSize, height: JarvisModernTheme.assistantAnchorSize)
+                        .overlay(
+                            Image(systemName: appModel.assistantExperienceState == .listening ? "waveform" : "sparkles")
+                                .font(.system(size: 19, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.95))
+                        )
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(anchorTitle)
+                        .font(.system(.footnote, design: .rounded, weight: .bold))
+                        .foregroundStyle(JarvisModernTheme.textPrimary)
+                    Text(anchorSubtitle)
+                        .font(.system(.caption2, design: .rounded, weight: .medium))
+                        .foregroundStyle(JarvisModernTheme.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 10)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(JarvisModernTheme.cardPrimary.opacity(0.94))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(JarvisModernTheme.borderStrong, lineWidth: 1)
+                    )
+                    .shadow(color: JarvisModernTheme.shadow, radius: 20, x: 0, y: 14)
+            )
+        }
+        .buttonStyle(.plain)
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(JarvisModernMotion.idle) {
+                pulse = true
+            }
+        }
+    }
+
+    private var anchorTitle: String {
+        switch appModel.assistantExperienceState {
+        case .listening, .transcribing:
+            return "JARVIS is listening"
+        case .thinking, .processing, .grounding, .responding:
+            return "JARVIS is active"
+        case .answerReady:
+            return "Answer is ready"
+        default:
+            return "Ask JARVIS"
+        }
+    }
+
+    private var anchorSubtitle: String {
+        switch appModel.assistantExperienceState {
+        case .listening, .transcribing:
+            return "Tap to return to the live voice surface"
+        case .thinking, .processing, .grounding, .responding:
+            return appModel.statusText
+        case .answerReady:
+            return "Continue, refine, or save the result"
+        default:
+            return "Voice, files, knowledge, and actions in one surface"
+        }
     }
 }
 
@@ -482,21 +774,13 @@ struct ModernVisualIntelligenceTabView: View {
                         stageCard
                     }
                 }
-                .padding()
+                .padding(.horizontal, JarvisModernTheme.screenPadding)
+                .padding(.top, 18)
+                .padding(.bottom, 132)
             }
-            .navigationTitle("Visual")
-            .background(Color(.systemGroupedBackground))
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    if appModel.shouldShowFocusedBackButton {
-                        Button {
-                            appModel.returnFromFocusedExperience()
-                        } label: {
-                            Label(appModel.focusedBackButtonTitle, systemImage: "chevron.left")
-                        }
-                    }
-                }
-            }
+            .navigationTitle("Voice")
+            .background(JarvisModernBackground())
+            .toolbarBackground(.hidden, for: .navigationBar)
             .onDisappear {
                 analysisTask?.cancel()
                 analysisTask = nil
@@ -509,25 +793,20 @@ struct ModernVisualIntelligenceTabView: View {
     }
 
     private var visualHero: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top) {
+        JarvisModernCard {
+            HStack(alignment: .top, spacing: 14) {
+                JarvisModernIconBadge(systemName: "waveform.circle.fill", tint: JarvisModernTheme.accentSoft)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Visual Intelligence")
-                        .font(.title2.weight(.semibold))
-                    Text("Capture, inspect, and ask follow-up questions on visual inputs. This route is intentionally exposed now, but Jarvis only claims full visual support when the active local runtime can actually execute it.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    Text("Voice And Command")
+                        .font(.system(.title3, design: .rounded, weight: .bold))
+                        .foregroundStyle(JarvisModernTheme.textPrimary)
+                    Text("This route stays focused: listen, confirm, and branch into visual capture only when the task actually needs it.")
+                        .font(.system(.footnote, design: .rounded, weight: .medium))
+                        .foregroundStyle(JarvisModernTheme.textSecondary)
                 }
                 Spacer()
-                Image(systemName: "viewfinder.circle.fill")
-                    .font(.system(size: 26))
-                    .foregroundStyle(.indigo)
             }
         }
-        .padding()
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
     private var stageTimeline: some View {
@@ -559,158 +838,103 @@ struct ModernVisualIntelligenceTabView: View {
             Text(title)
                 .font(.caption2.weight(.semibold))
         }
-        .foregroundStyle(active ? .primary : .secondary)
+        .foregroundStyle(active ? JarvisModernTheme.textPrimary : JarvisModernTheme.textSecondary)
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .background(active ? Color.indigo.opacity(0.16) : Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(active ? JarvisModernTheme.accent.opacity(0.16) : JarvisModernTheme.cardSecondary, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(active ? Color.indigo.opacity(0.35) : Color.secondary.opacity(0.15), lineWidth: 1)
+                .stroke(active ? JarvisModernTheme.accent.opacity(0.35) : JarvisModernTheme.border, lineWidth: 1)
         )
     }
 
     private func timelineConnector(active: Bool) -> some View {
         Capsule(style: .continuous)
-            .fill(active ? Color.indigo.opacity(0.55) : Color.secondary.opacity(0.2))
+            .fill(active ? JarvisModernTheme.accent.opacity(0.55) : JarvisModernTheme.textTertiary.opacity(0.2))
             .frame(width: 18, height: 2)
     }
 
     private var unavailableCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Visual assistant is in preview", systemImage: "exclamationmark.triangle.fill")
-                .font(.headline)
-                .foregroundStyle(.orange)
-            Text(appModel.visualAssistantStatusText)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 8) {
-                if appModel.needsModelSetup {
-                    Button("Set Up Model") {
-                        appModel.showSetupFlow = true
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.indigo)
-                } else {
-                    Button("Warm Model") {
-                        appModel.retryRuntimeWarmup()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.indigo)
-                }
-
-                Button("Model Library") {
-                    appModel.presentModelLibrary()
-                }
-                .buttonStyle(.bordered)
+        JarvisModernCard(secondary: true) {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Visual assistant is in preview", systemImage: "exclamationmark.triangle.fill")
+                    .font(.headline)
+                    .foregroundStyle(.orange)
+                Text(appModel.visualAssistantStatusText)
+                    .font(.subheadline)
+                    .foregroundStyle(JarvisModernTheme.textSecondary)
             }
-            .font(.subheadline.weight(.semibold))
         }
-        .padding()
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
     private var sourcePickerCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Input Source")
-                .font(.headline)
+        JarvisModernCard(secondary: true) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Input Source")
+                    .font(.headline)
 
-            ForEach(VisualSource.allCases) { source in
-                Button {
-                    selectedSource = source
-                    runVisualFlow(source: source)
-                } label: {
-                    HStack {
-                        Label(source.rawValue, systemImage: source.icon)
-                        Spacer()
-                        if selectedSource == source {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.indigo)
+                ForEach(VisualSource.allCases) { source in
+                    Button {
+                        selectedSource = source
+                        runVisualFlow(source: source)
+                    } label: {
+                        HStack {
+                            Label(source.rawValue, systemImage: source.icon)
+                            Spacer()
+                            if selectedSource == source {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(JarvisModernTheme.accent)
+                            }
                         }
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 6)
                     }
-                    .font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 6)
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.bordered)
             }
-
-            Text("This is a production shell preview. It does not claim private system visual powers.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
-        .padding()
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
     @ViewBuilder
     private var stageCard: some View {
         switch stage {
         case .ready:
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Ready")
-                    .font(.headline)
-                Text("Choose a source to begin visual analysis flow.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+            JarvisModernCard(secondary: true) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Ready")
+                        .font(.headline)
+                    Text("Choose a source to begin the visual analysis flow.")
+                        .font(.subheadline)
+                        .foregroundStyle(JarvisModernTheme.textSecondary)
+                }
             }
-            .padding()
-            .background(Color(.secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 16))
 
         case .analyzing:
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Analyzing visual context")
-                        .font(.headline)
+            JarvisModernCard(secondary: true) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Analyzing visual context")
+                            .font(.headline)
+                    }
+                    Text("Preparing assistant-ready understanding from \(selectedSource?.rawValue ?? "input").")
+                        .font(.subheadline)
+                        .foregroundStyle(JarvisModernTheme.textSecondary)
                 }
-                Text("Preparing assistant-ready understanding from \(selectedSource?.rawValue ?? "input").")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
             }
-            .padding()
-            .background(Color(.secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 16))
 
         case .result:
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Visual Summary", systemImage: "text.magnifyingglass")
-                    .font(.headline)
-                Text(simulatedInsight)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-
-                HStack(spacing: 8) {
-                    Button("Ask Follow-up") {
-                        let source = selectedSource?.rawValue.lowercased() ?? "visual input"
-                        appModel.apply(
-                            route: JarvisLaunchRoute(
-                                action: .chat,
-                                payload: "Based on this \(source), what should I do next?",
-                                source: JarvisAssistantEntrySource.inApp.rawValue,
-                                assistantTask: .analyzeText,
-                                shouldFocusComposer: true
-                            )
-                        )
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.indigo)
-
-                    Button("Search Knowledge") {
-                        let payload = selectedSource?.rawValue ?? "visual analysis"
-                        appModel.apply(route: JarvisLaunchRoute(action: .knowledge, query: payload, source: JarvisAssistantEntrySource.inApp.rawValue, assistantTask: .knowledgeAnswer))
-                    }
-                    .buttonStyle(.bordered)
+            JarvisModernCard(secondary: true) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Visual Summary", systemImage: "text.magnifyingglass")
+                        .font(.headline)
+                    Text(simulatedInsight)
+                        .font(.subheadline)
+                        .foregroundStyle(JarvisModernTheme.textSecondary)
                 }
-                .font(.subheadline.weight(.semibold))
             }
-            .padding()
-            .background(Color(.secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 16))
             .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
         }
     }

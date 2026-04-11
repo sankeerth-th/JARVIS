@@ -331,12 +331,31 @@ struct ChatSection: View {
             
             // Input area
             VStack(spacing: 12) {
+                if let voiceStatus = commandVM.voiceStatusLabel ?? commandVM.statusMessage {
+                    HStack(spacing: 8) {
+                        Image(systemName: commandVM.isVoiceListening ? "waveform" : "info.circle")
+                            .foregroundStyle(commandVM.isVoiceListening ? JarvisColors.accent : .secondary)
+                        Text(voiceStatus)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 18)
+                }
                 HStack(spacing: 12) {
                     Button(action: { isInputFocused = false }) {
                         Image(systemName: "plus")
                             .font(.system(size: 14, weight: .medium))
                     }
                     .buttonStyle(.borderless)
+
+                    Button(action: { commandVM.toggleVoiceListening() }) {
+                        Image(systemName: commandVM.isVoiceListening ? "mic.fill" : "mic")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(commandVM.isVoiceListening ? JarvisColors.accent : JarvisColors.secondaryLabel)
+                    }
+                    .buttonStyle(.borderless)
+                    .help(commandVM.isVoiceListening ? "Stop listening" : "Start listening")
                     
                     TextField("Message Jarvis...", text: $commandVM.inputText, axis: .vertical)
                         .font(.system(size: 13))
@@ -347,6 +366,15 @@ struct ChatSection: View {
                             sendMessage()
                         }
                     
+                    Button(action: toggleSpeechPlayback) {
+                        Image(systemName: commandVM.isSpeakingResponse ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(JarvisColors.secondaryLabel)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(commandVM.latestAssistantMessage?.isEmpty ?? true)
+                    .help(commandVM.isSpeakingResponse ? "Stop speaking" : "Speak latest reply")
+
                     Button(action: sendMessage) {
                         Image(systemName: "arrow.up")
                             .font(.system(size: 14, weight: .semibold))
@@ -379,6 +407,14 @@ struct ChatSection: View {
     private func sendMessage() {
         guard !commandVM.inputText.isEmpty else { return }
         commandVM.sendCurrentPrompt()
+    }
+
+    private func toggleSpeechPlayback() {
+        if commandVM.isSpeakingResponse {
+            commandVM.stopSpeaking()
+        } else {
+            commandVM.speakLatestAssistantMessage()
+        }
     }
 }
 

@@ -52,6 +52,7 @@ final class CommandPaletteViewModel: ObservableObject {
     @Published var routeExecutionReason: String = ""
     @Published var statusMessage: String? = nil
     @Published var pendingTool: ToolInvocation? = nil
+    @Published var pendingToolResult: ToolResult? = nil
     @Published var toolRequiresConfirmation: Bool = false
     @Published var knowledgeQuery: String = ""
     @Published var knowledgeResults: [IndexedDocument] = []
@@ -97,6 +98,8 @@ final class CommandPaletteViewModel: ObservableObject {
     private let macroService: MacroService
     private let workflowEngine: WorkflowEngine
     private let toolService: ToolExecutionService
+    private let speechInputService: JarvisSpeechInputService
+    private let speechOutputService: JarvisSpeechOutputService
     private let notificationViewModel: NotificationViewModel
     private let clipboardWatcher: ClipboardWatcher
     private let diagnosticsService: DiagnosticsService
@@ -125,6 +128,8 @@ final class CommandPaletteViewModel: ObservableObject {
          macroService: MacroService,
          workflowEngine: WorkflowEngine,
          toolService: ToolExecutionService,
+         speechInputService: JarvisSpeechInputService,
+         speechOutputService: JarvisSpeechOutputService,
          notificationViewModel: NotificationViewModel,
          clipboardWatcher: ClipboardWatcher,
          diagnosticsService: DiagnosticsService,
@@ -137,6 +142,8 @@ final class CommandPaletteViewModel: ObservableObject {
         self.macroService = macroService
         self.workflowEngine = workflowEngine
         self.toolService = toolService
+        self.speechInputService = speechInputService
+        self.speechOutputService = speechOutputService
         self.notificationViewModel = notificationViewModel
         self.clipboardWatcher = clipboardWatcher
         self.diagnosticsService = diagnosticsService
@@ -193,6 +200,25 @@ final class CommandPaletteViewModel: ObservableObject {
             }
         }
         privacyEvents = diagnosticsService.recentEvents(limit: 50, feature: "Privacy guardian")
+        speechInputService.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+        speechOutputService.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+        speechInputService.$transcript
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] transcript in
+                guard let self, !transcript.isEmpty else { return }
+                self.inputText = transcript
+            }
+            .store(in: &cancellables)
     }
 
     func showOverlay() {
@@ -349,6 +375,7 @@ final class CommandPaletteViewModel: ObservableObject {
             }
             if toolService.requiresConfirmation(for: invocation.name) {
                 pendingTool = invocation
+                pendingToolResult = toolService.approvalPreview(for: invocation)
                 toolRequiresConfirmation = true
                 pendingToolRequestID = requestID
             } else {
@@ -564,6 +591,7 @@ final class CommandPaletteViewModel: ObservableObject {
             routeExecutionReason = reason
         }
         pendingTool = nil
+        pendingToolResult = nil
         pendingToolRequestID = nil
         toolRequiresConfirmation = false
         rawStreamingBuffer = ""
@@ -825,11 +853,9 @@ final class CommandPaletteViewModel: ObservableObject {
 
     func runFileSearch() {
         let query = fileSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        print("[DEBUG] runFileSearch called with query: '\(query)'")
         guard !query.isEmpty else {
             fileSearchStatus = "Enter a query."
             fileSearchResults = []
-            print("[DEBUG] Query is empty, returning")
             return
         }
         ensureFileSearchFolderSelection()
@@ -845,23 +871,19 @@ final class CommandPaletteViewModel: ObservableObject {
         }()
         Task {
             do {
-                print("[DEBUG] Calling localIndexService.searchFiles with roots: \(roots ?? ["nil"])")
                 let results = try await localIndexService.searchFiles(
                     query: query,
                     limit: 20,
                     queryExpansionModel: nil,
                     rootFolders: roots
                 )
-                print("[DEBUG] Search returned \(results.count) results")
                 await MainActor.run {
                     self.fileSearchResults = results
                     self.fileSearchStatus = results.isEmpty ? "No matches." : "Found \(results.count) result(s)."
                     self.knowledgeResults = results.map { $0.document }
-                    print("[DEBUG] Updated knowledgeResults with \(self.knowledgeResults.count) items")
                     self.diagnosticsService.logEvent(feature: "Semantic search", type: "run", summary: "Search executed", metadata: ["query": query, "results": "\(results.count)"])
                 }
             } catch {
-                print("[DEBUG] Search failed with error: \(error)")
                 await MainActor.run {
                     self.fileSearchStatus = "Search failed: \(error.localizedDescription)"
                     self.fileSearchResults = []
@@ -1245,6 +1267,7 @@ final class CommandPaletteViewModel: ObservableObject {
             )
         }
         pendingTool = nil
+        pendingToolResult = nil
         pendingToolRequestID = nil
         toolRequiresConfirmation = false
     }
@@ -1253,13 +1276,19 @@ final class CommandPaletteViewModel: ObservableObject {
         guard streamOwnership.owns(requestID) else { return }
         guard routePlan.allowedTools.contains(invocation.name) else { return }
         do {
-            let result = try await toolService.execute(invocation, context: ToolExecutionContext(settings: settingsStore.current, requestedByUser: false))
+            let result = try await toolService.execute(
+                invocation,
+                context: ToolExecutionContext(
+                    settings: settingsStore.current,
+                    requestedByUser: false
+                )
+            )
             let metadata = requestMetadata(
                 requestID: requestID,
                 routePlan: routePlan,
                 source: "route.tool"
             ).merging(result.metadata, uniquingKeysWith: { _, newValue in newValue })
-            let toolMessage = ChatMessage(role: .tool, text: result.content, metadata: metadata)
+            let toolMessage = ChatMessage(role: .tool, text: result.content, metadata: metadata, toolCall: invocation, toolResult: result)
             appendMessageToConversation(id: conversationID, message: toolMessage)
             diagnosticsService.logEvent(
                 feature: "Routing",
@@ -1268,16 +1297,30 @@ final class CommandPaletteViewModel: ObservableObject {
                 metadata: [
                     "requestID": requestID.uuidString,
                     "tool": invocation.name.rawValue,
-                    "intent": routePlan.intent.rawValue
+                    "intent": routePlan.intent.rawValue,
+                    "state": result.state.rawValue
                 ]
             )
         } catch {
-            statusMessage = "Tool failed: \(error.localizedDescription)"
+            let result = toolService.failureResult(for: invocation, message: "Tool failed: \(error.localizedDescription)")
+            let metadata = requestMetadata(
+                requestID: requestID,
+                routePlan: routePlan,
+                source: "route.tool"
+            ).merging(result.metadata, uniquingKeysWith: { _, newValue in newValue })
+            statusMessage = result.content
+            let toolMessage = ChatMessage(role: .tool, text: result.content, metadata: metadata, toolCall: invocation, toolResult: result)
+            appendMessageToConversation(id: conversationID, message: toolMessage)
             diagnosticsService.logEvent(
                 feature: "Routing",
                 type: "tool.error",
                 summary: "Tool execution failed",
-                metadata: ["requestID": requestID.uuidString, "error": error.localizedDescription]
+                metadata: [
+                    "requestID": requestID.uuidString,
+                    "tool": invocation.name.rawValue,
+                    "state": result.state.rawValue,
+                    "error": error.localizedDescription
+                ]
             )
         }
     }
@@ -1348,6 +1391,29 @@ final class CommandPaletteViewModel: ObservableObject {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(message, forType: .string)
         statusMessage = "Latest response copied."
+    }
+
+    func toggleVoiceListening() {
+        if isVoiceListening {
+            Task { await stopVoiceListeningAndCommit() }
+        } else {
+            Task { await startVoiceListening() }
+        }
+    }
+
+    func speakLatestAssistantMessage() {
+        guard let latestAssistantMessage,
+              !latestAssistantMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            statusMessage = "There is no assistant response to read aloud."
+            return
+        }
+        let started = speechOutputService.speak(latestAssistantMessage)
+        statusMessage = started ? "Speaking latest response." : "Could not start speech output."
+    }
+
+    func stopSpeaking() {
+        speechOutputService.stopSpeaking()
+        statusMessage = "Stopped speaking."
     }
 
     func repeatLastPrompt() {
@@ -1451,6 +1517,48 @@ final class CommandPaletteViewModel: ObservableObject {
         conversation.messages.last(where: { $0.role == .assistant })?.text
     }
 
+    var isVoiceListening: Bool {
+        voiceCapabilityState == .listening || voiceCapabilityState == .processing
+    }
+
+    var isSpeakingResponse: Bool {
+        voiceCapabilityState == .speaking
+    }
+
+    var voiceCapabilityState: VoiceInteractionState {
+        if speechOutputService.capabilityState == .speaking {
+            return .speaking
+        }
+        switch speechInputService.capabilityState {
+        case .listening, .processing, .interrupted, .stopped:
+            return speechInputService.capabilityState
+        case .idle:
+            return speechOutputService.capabilityState == .stopped ? .stopped : .idle
+        case .speaking:
+            return .speaking
+        }
+    }
+
+    var voiceStatusLabel: String? {
+        if case .failed(let failure) = speechInputService.state {
+            return failure.message
+        }
+        switch voiceCapabilityState {
+        case .idle:
+            return nil
+        case .listening:
+            return "Listening…"
+        case .processing:
+            return "Processing voice…"
+        case .speaking:
+            return "Speaking…"
+        case .interrupted:
+            return "Voice interrupted."
+        case .stopped:
+            return "Voice stopped."
+        }
+    }
+
     var isStreamingSelectedConversation: Bool {
         guard let active = streamOwnership.activeRequest else { return false }
         return isStreaming && active.conversationID == conversation.id
@@ -1504,6 +1612,25 @@ final class CommandPaletteViewModel: ObservableObject {
             type: "clipboard-sensitive",
             summary: warning
         )
+    }
+
+    private func startVoiceListening() async {
+        do {
+            try await speechInputService.startListening()
+            statusMessage = "Listening for a short command…"
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    private func stopVoiceListeningAndCommit() async {
+        let transcript = await speechInputService.stopListening()
+        if let transcript, !transcript.transcript.isEmpty {
+            inputText = transcript.transcript
+            statusMessage = "Captured voice command."
+        } else {
+            statusMessage = "Stopped listening."
+        }
     }
 
     private func detectSensitiveClipboardData(in text: String) -> [String] {

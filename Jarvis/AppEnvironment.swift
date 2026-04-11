@@ -13,6 +13,11 @@ final class AppEnvironment: ObservableObject {
     let permissionsManager = PermissionsManager.shared
     let clipboardWatcher = ClipboardWatcher()
     let hotKeyCenter = HotKeyCenter()
+    let macActionService = JarvisMacActionService()
+    lazy var projectActionService = JarvisProjectActionService(actionService: macActionService)
+    let safeShellService = JarvisSafeShellService()
+    let speechInputService = JarvisSpeechInputService()
+    let speechOutputService = JarvisSpeechOutputService()
 
     lazy var localIndexService = LocalIndexService(database: database, importService: documentService, ollama: ollamaClient)
     lazy var calculator = Calculator()
@@ -20,7 +25,12 @@ final class AppEnvironment: ObservableObject {
                                                          screenshotService: screenshotService,
                                                          ocrService: ocrService,
                                                          notificationService: notificationService,
-                                                         localIndexService: localIndexService)
+                                                         localIndexService: localIndexService,
+                                                         macActionService: macActionService,
+                                                         projectActionService: projectActionService,
+                                                         safeShellService: safeShellService,
+                                                         speechInputService: speechInputService,
+                                                         speechOutputService: speechOutputService)
     lazy var conversationService = ConversationService(database: database, ollama: ollamaClient)
     lazy var macroService = MacroService(database: database)
     lazy var workflowEngine = WorkflowEngine(notificationService: notificationService,
@@ -53,6 +63,8 @@ final class AppEnvironment: ObservableObject {
                                                                macroService: macroService,
                                                                workflowEngine: workflowEngine,
                                                                toolService: toolExecutionService,
+                                                               speechInputService: speechInputService,
+                                                               speechOutputService: speechOutputService,
                                                                notificationViewModel: notificationViewModel,
                                                                clipboardWatcher: clipboardWatcher,
                                                                diagnosticsService: diagnosticsService,
