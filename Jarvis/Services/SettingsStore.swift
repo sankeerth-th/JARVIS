@@ -6,10 +6,14 @@ final class SettingsStore: ObservableObject {
     private let userDefaultsKey = "com.jarvis.settings"
     private let defaults: UserDefaults
     private let securityEnvelope: JarvisSecurityEnvelope
+    private let secureStore: JarvisSecureStore
+    private let porcupineAccessKeyAccount = "jarvis.runtime.porcupine.access-key"
+    private let porcupineKeywordPathKey = "com.jarvis.settings.porcupineKeywordPath"
 
-    init(defaults: UserDefaults = .standard, securityEnvelope: JarvisSecurityEnvelope = .shared) {
+    init(defaults: UserDefaults = .standard, securityEnvelope: JarvisSecurityEnvelope = .shared, secureStore: JarvisSecureStore = .shared) {
         self.defaults = defaults
         self.securityEnvelope = securityEnvelope
+        self.secureStore = secureStore
         if let decoded = Self.loadSettings(
             from: defaults,
             key: userDefaultsKey,
@@ -105,6 +109,42 @@ final class SettingsStore: ObservableObject {
         update { $0.privacyNetworkMonitorEnabled = enabled }
     }
 
+    func setWakeWordEnabled(_ enabled: Bool) {
+        update { $0.wakeWordEnabled = enabled }
+    }
+
+    func setVoiceAutoResponseEnabled(_ enabled: Bool) {
+        update { $0.voiceAutoResponseEnabled = enabled }
+    }
+
+    func setStreamingSpeechEnabled(_ enabled: Bool) {
+        update { $0.streamingSpeechEnabled = enabled }
+    }
+
+    func setBroadFileAccessEnabled(_ enabled: Bool) {
+        update { $0.broadFileAccessEnabled = enabled }
+    }
+
+    func setTerminalExecutionEnabled(_ enabled: Bool) {
+        update { $0.terminalExecutionEnabled = enabled }
+    }
+
+    func setApprovalStrictnessMode(_ mode: JarvisApprovalStrictnessMode) {
+        update { $0.approvalStrictnessMode = mode }
+    }
+
+    func setTrustedWriteRoots(_ roots: [String]) {
+        update { $0.trustedWriteRoots = roots }
+    }
+
+    func setExcludedReadRoots(_ roots: [String]) {
+        update { $0.excludedReadRoots = roots }
+    }
+
+    func setRuntimeDiagnosticsEnabled(_ enabled: Bool) {
+        update { $0.runtimeDiagnosticsEnabled = enabled }
+    }
+
     func setLogging(enabled: Bool) {
         update { $0.disableLogging = !enabled }
     }
@@ -128,6 +168,41 @@ final class SettingsStore: ObservableObject {
     func indexedFolders() -> [String] { settings.indexedFolders }
 
     var current: AppSettings { settings }
+
+    func porcupineAccessKey() -> String? {
+        guard let data = secureStore.data(for: porcupineAccessKeyAccount) else { return nil }
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func setPorcupineAccessKey(_ key: String) {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        secureStore.set(Data(trimmed.utf8), for: porcupineAccessKeyAccount)
+    }
+
+    func removePorcupineAccessKey() {
+        secureStore.remove(account: porcupineAccessKeyAccount)
+    }
+
+    func importPorcupineAccessKeyFromEnvironmentIfNeeded(environment: [String: String] = ProcessInfo.processInfo.environment) {
+        guard porcupineAccessKey() == nil else { return }
+        guard let value = environment["PORCUPINE_ACCESS_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else { return }
+        secureStore.set(Data(value.utf8), for: porcupineAccessKeyAccount)
+    }
+
+    func porcupineKeywordPath() -> String? {
+        defaults.string(forKey: porcupineKeywordPathKey)
+    }
+
+    func setPorcupineKeywordPath(_ path: String?) {
+        let trimmed = path?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmed, !trimmed.isEmpty {
+            defaults.set(trimmed, forKey: porcupineKeywordPathKey)
+        } else {
+            defaults.removeObject(forKey: porcupineKeywordPathKey)
+        }
+    }
 
     private func persist(_ settings: AppSettings) {
         guard let data = try? JSONEncoder().encode(settings),

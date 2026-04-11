@@ -29,6 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         configureStatusItem()
         setupOverlay()
+        environment.assistantRuntime.onWakePresentationRequested = { [weak self] in
+            self?.environment.commandPaletteViewModel.showOverlay()
+        }
         PermissionsManager.shared.prepare()
         environment.startServices()
         environment.commandPaletteViewModel.$shouldShowOverlay

@@ -194,6 +194,12 @@ enum ToneStyle: String, Codable, CaseIterable {
     }
 }
 
+enum JarvisApprovalStrictnessMode: String, Codable, CaseIterable {
+    case balanced
+    case strict
+    case trustedPersonalMac
+}
+
 struct AppSettings: Codable, Equatable {
     var selectedModel: String
     var systemPrompt: String
@@ -212,6 +218,15 @@ struct AppSettings: Codable, Equatable {
     var privacyClipboardMonitorEnabled: Bool
     var privacySensitiveDetectionEnabled: Bool
     var privacyNetworkMonitorEnabled: Bool
+    var wakeWordEnabled: Bool
+    var voiceAutoResponseEnabled: Bool
+    var streamingSpeechEnabled: Bool
+    var broadFileAccessEnabled: Bool
+    var terminalExecutionEnabled: Bool
+    var approvalStrictnessMode: JarvisApprovalStrictnessMode
+    var trustedWriteRoots: [String]
+    var excludedReadRoots: [String]
+    var runtimeDiagnosticsEnabled: Bool
 
     static let `default` = AppSettings(
         selectedModel: "mistral",
@@ -230,7 +245,16 @@ struct AppSettings: Codable, Equatable {
         privacyGuardianEnabled: false,
         privacyClipboardMonitorEnabled: false,
         privacySensitiveDetectionEnabled: true,
-        privacyNetworkMonitorEnabled: true
+        privacyNetworkMonitorEnabled: true,
+        wakeWordEnabled: false,
+        voiceAutoResponseEnabled: true,
+        streamingSpeechEnabled: true,
+        broadFileAccessEnabled: true,
+        terminalExecutionEnabled: true,
+        approvalStrictnessMode: .balanced,
+        trustedWriteRoots: [],
+        excludedReadRoots: [],
+        runtimeDiagnosticsEnabled: true
     )
 
     enum CodingKeys: String, CodingKey {
@@ -251,6 +275,15 @@ struct AppSettings: Codable, Equatable {
         case privacyClipboardMonitorEnabled
         case privacySensitiveDetectionEnabled
         case privacyNetworkMonitorEnabled
+        case wakeWordEnabled
+        case voiceAutoResponseEnabled
+        case streamingSpeechEnabled
+        case broadFileAccessEnabled
+        case terminalExecutionEnabled
+        case approvalStrictnessMode
+        case trustedWriteRoots
+        case excludedReadRoots
+        case runtimeDiagnosticsEnabled
     }
 
     init(selectedModel: String,
@@ -269,7 +302,16 @@ struct AppSettings: Codable, Equatable {
          privacyGuardianEnabled: Bool,
          privacyClipboardMonitorEnabled: Bool,
          privacySensitiveDetectionEnabled: Bool,
-         privacyNetworkMonitorEnabled: Bool) {
+         privacyNetworkMonitorEnabled: Bool,
+         wakeWordEnabled: Bool,
+         voiceAutoResponseEnabled: Bool,
+         streamingSpeechEnabled: Bool,
+         broadFileAccessEnabled: Bool,
+         terminalExecutionEnabled: Bool,
+         approvalStrictnessMode: JarvisApprovalStrictnessMode,
+         trustedWriteRoots: [String],
+         excludedReadRoots: [String],
+         runtimeDiagnosticsEnabled: Bool) {
         self.selectedModel = selectedModel
         self.systemPrompt = systemPrompt
         self.tone = tone
@@ -287,6 +329,15 @@ struct AppSettings: Codable, Equatable {
         self.privacyClipboardMonitorEnabled = privacyClipboardMonitorEnabled
         self.privacySensitiveDetectionEnabled = privacySensitiveDetectionEnabled
         self.privacyNetworkMonitorEnabled = privacyNetworkMonitorEnabled
+        self.wakeWordEnabled = wakeWordEnabled
+        self.voiceAutoResponseEnabled = voiceAutoResponseEnabled
+        self.streamingSpeechEnabled = streamingSpeechEnabled
+        self.broadFileAccessEnabled = broadFileAccessEnabled
+        self.terminalExecutionEnabled = terminalExecutionEnabled
+        self.approvalStrictnessMode = approvalStrictnessMode
+        self.trustedWriteRoots = trustedWriteRoots
+        self.excludedReadRoots = excludedReadRoots
+        self.runtimeDiagnosticsEnabled = runtimeDiagnosticsEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -309,6 +360,15 @@ struct AppSettings: Codable, Equatable {
         privacyClipboardMonitorEnabled = try container.decodeIfPresent(Bool.self, forKey: .privacyClipboardMonitorEnabled) ?? defaults.privacyClipboardMonitorEnabled
         privacySensitiveDetectionEnabled = try container.decodeIfPresent(Bool.self, forKey: .privacySensitiveDetectionEnabled) ?? defaults.privacySensitiveDetectionEnabled
         privacyNetworkMonitorEnabled = try container.decodeIfPresent(Bool.self, forKey: .privacyNetworkMonitorEnabled) ?? defaults.privacyNetworkMonitorEnabled
+        wakeWordEnabled = try container.decodeIfPresent(Bool.self, forKey: .wakeWordEnabled) ?? defaults.wakeWordEnabled
+        voiceAutoResponseEnabled = try container.decodeIfPresent(Bool.self, forKey: .voiceAutoResponseEnabled) ?? defaults.voiceAutoResponseEnabled
+        streamingSpeechEnabled = try container.decodeIfPresent(Bool.self, forKey: .streamingSpeechEnabled) ?? defaults.streamingSpeechEnabled
+        broadFileAccessEnabled = try container.decodeIfPresent(Bool.self, forKey: .broadFileAccessEnabled) ?? defaults.broadFileAccessEnabled
+        terminalExecutionEnabled = try container.decodeIfPresent(Bool.self, forKey: .terminalExecutionEnabled) ?? defaults.terminalExecutionEnabled
+        approvalStrictnessMode = try container.decodeIfPresent(JarvisApprovalStrictnessMode.self, forKey: .approvalStrictnessMode) ?? defaults.approvalStrictnessMode
+        trustedWriteRoots = try container.decodeIfPresent([String].self, forKey: .trustedWriteRoots) ?? defaults.trustedWriteRoots
+        excludedReadRoots = try container.decodeIfPresent([String].self, forKey: .excludedReadRoots) ?? defaults.excludedReadRoots
+        runtimeDiagnosticsEnabled = try container.decodeIfPresent(Bool.self, forKey: .runtimeDiagnosticsEnabled) ?? defaults.runtimeDiagnosticsEnabled
     }
 }
 
@@ -415,6 +475,177 @@ enum VoiceInteractionState: String, Codable, Equatable {
     case speaking
     case interrupted
     case stopped
+}
+
+enum JarvisAssistantRuntimeState: String, Codable, Equatable {
+    case idle
+    case wakeListening
+    case heardWakeWord
+    case activelyListening
+    case transcribing
+    case planning
+    case executingActions
+    case streamingResponse
+    case speaking
+    case awaitingApproval
+    case interrupted
+    case failed
+}
+
+enum JarvisActionRisk: String, Codable, Equatable {
+    case readOnly
+    case write
+    case destructive
+}
+
+enum JarvisApprovalScope: String, Codable, Equatable {
+    case once
+    case session
+    case always
+}
+
+enum JarvisActionKind: String, Codable, Equatable {
+    case modelResponse
+    case fileSearch
+    case fileRead
+    case fileCreate
+    case fileEdit
+    case screenCapture
+    case shellCommand
+    case appOpen
+    case appFocus
+    case openURL
+    case revealInFinder
+    case projectOpen
+    case projectScaffold
+}
+
+enum JarvisActionExecutionStatus: String, Codable, Equatable {
+    case pending
+    case executing
+    case success
+    case failed
+    case requiresApproval
+    case denied
+    case cancelled
+    case unsupported
+}
+
+struct JarvisActionStep: Identifiable, Codable, Equatable {
+    let id: UUID
+    var kind: JarvisActionKind
+    var risk: JarvisActionRisk
+    var title: String
+    var targetSummary: String
+    var command: String?
+    var arguments: [String]
+    var metadata: [String: String]
+
+    init(
+        id: UUID = UUID(),
+        kind: JarvisActionKind,
+        risk: JarvisActionRisk,
+        title: String,
+        targetSummary: String,
+        command: String? = nil,
+        arguments: [String] = [],
+        metadata: [String: String] = [:]
+    ) {
+        self.id = id
+        self.kind = kind
+        self.risk = risk
+        self.title = title
+        self.targetSummary = targetSummary
+        self.command = command
+        self.arguments = arguments
+        self.metadata = metadata
+    }
+}
+
+struct JarvisActionPlan: Identifiable, Codable, Equatable {
+    let id: UUID
+    var requestText: String
+    var summary: String
+    var steps: [JarvisActionStep]
+
+    init(id: UUID = UUID(), requestText: String, summary: String, steps: [JarvisActionStep]) {
+        self.id = id
+        self.requestText = requestText
+        self.summary = summary
+        self.steps = steps
+    }
+}
+
+struct JarvisActionExecutionRecord: Identifiable, Codable, Equatable {
+    let id: UUID
+    let stepID: UUID
+    var status: JarvisActionExecutionStatus
+    var title: String
+    var detail: String
+    var metadata: [String: String]
+    var startedAt: Date
+    var finishedAt: Date?
+
+    init(
+        id: UUID = UUID(),
+        stepID: UUID,
+        status: JarvisActionExecutionStatus,
+        title: String,
+        detail: String,
+        metadata: [String: String] = [:],
+        startedAt: Date = Date(),
+        finishedAt: Date? = nil
+    ) {
+        self.id = id
+        self.stepID = stepID
+        self.status = status
+        self.title = title
+        self.detail = detail
+        self.metadata = metadata
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+    }
+}
+
+struct ApprovalGrantRule: Identifiable, Codable, Equatable {
+    let id: UUID
+    var actionKind: JarvisActionKind
+    var scope: JarvisApprovalScope
+    var matcher: String
+    var createdAt: Date
+    var expiresAt: Date?
+
+    init(
+        id: UUID = UUID(),
+        actionKind: JarvisActionKind,
+        scope: JarvisApprovalScope,
+        matcher: String,
+        createdAt: Date = Date(),
+        expiresAt: Date? = nil
+    ) {
+        self.id = id
+        self.actionKind = actionKind
+        self.scope = scope
+        self.matcher = matcher
+        self.createdAt = createdAt
+        self.expiresAt = expiresAt
+    }
+}
+
+struct PendingApprovalRequest: Identifiable, Codable, Equatable {
+    let id: UUID
+    var planID: UUID
+    var step: JarvisActionStep
+    var message: String
+    var createdAt: Date
+
+    init(id: UUID = UUID(), planID: UUID, step: JarvisActionStep, message: String, createdAt: Date = Date()) {
+        self.id = id
+        self.planID = planID
+        self.step = step
+        self.message = message
+        self.createdAt = createdAt
+    }
 }
 
 struct ToolResult: Codable, Equatable {

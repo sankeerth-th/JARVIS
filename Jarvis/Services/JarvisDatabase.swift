@@ -58,7 +58,10 @@ final class JarvisDatabase {
             "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value BLOB)",
             "CREATE TABLE IF NOT EXISTS feature_events (id TEXT PRIMARY KEY, feature TEXT, type TEXT, summary TEXT, metadata BLOB, createdAt REAL)",
             "CREATE TABLE IF NOT EXISTS checklists (id TEXT PRIMARY KEY, title TEXT, items BLOB, createdAt REAL)",
-            "CREATE TABLE IF NOT EXISTS thinking_sessions (id TEXT PRIMARY KEY, title TEXT, payload BLOB, summary TEXT, createdAt REAL, updatedAt REAL)"
+            "CREATE TABLE IF NOT EXISTS thinking_sessions (id TEXT PRIMARY KEY, title TEXT, payload BLOB, summary TEXT, createdAt REAL, updatedAt REAL)",
+            "CREATE TABLE IF NOT EXISTS approval_rules (id TEXT PRIMARY KEY, actionKind TEXT, scope TEXT, matcher TEXT, createdAt REAL, expiresAt REAL)",
+            "CREATE TABLE IF NOT EXISTS action_execution_logs (id TEXT PRIMARY KEY, stepID TEXT, status TEXT, title TEXT, detail TEXT, metadata BLOB, startedAt REAL, finishedAt REAL)",
+            "CREATE TABLE IF NOT EXISTS runtime_sessions (id TEXT PRIMARY KEY, state TEXT, detail TEXT, metadata BLOB, createdAt REAL)"
         ]
         for stmt in statements {
             sqlite3_exec(db, stmt, nil, nil, nil)
@@ -267,6 +270,101 @@ final class JarvisDatabase {
             var statement: OpaquePointer?
             sqlite3_prepare_v2(db, sql, -1, &statement, nil)
             sqlite3_bind_text(statement, 1, String(version), -1, SQLITE_TRANSIENT)
+            sqlite3_step(statement)
+            sqlite3_finalize(statement)
+        }
+    }
+
+    func saveApprovalRule(_ rule: ApprovalGrantRule) {
+        queue.sync {
+            let sql = "REPLACE INTO approval_rules (id, actionKind, scope, matcher, createdAt, expiresAt) VALUES (?,?,?,?,?,?)"
+            var statement: OpaquePointer?
+            sqlite3_prepare_v2(db, sql, -1, &statement, nil)
+            sqlite3_bind_text(statement, 1, rule.id.uuidString, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(statement, 2, rule.actionKind.rawValue, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(statement, 3, rule.scope.rawValue, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(statement, 4, rule.matcher, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_double(statement, 5, rule.createdAt.timeIntervalSince1970)
+            if let expiresAt = rule.expiresAt {
+                sqlite3_bind_double(statement, 6, expiresAt.timeIntervalSince1970)
+            } else {
+                sqlite3_bind_null(statement, 6)
+            }
+            sqlite3_step(statement)
+            sqlite3_finalize(statement)
+        }
+    }
+
+    func loadApprovalRules() -> [ApprovalGrantRule] {
+        queue.sync {
+            let sql = "SELECT id, actionKind, scope, matcher, createdAt, expiresAt FROM approval_rules ORDER BY createdAt DESC"
+            var statement: OpaquePointer?
+            sqlite3_prepare_v2(db, sql, -1, &statement, nil)
+            defer { sqlite3_finalize(statement) }
+            var results: [ApprovalGrantRule] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let idText = sqlite3_column_text(statement, 0),
+                      let actionText = sqlite3_column_text(statement, 1),
+                      let scopeText = sqlite3_column_text(statement, 2),
+                      let matcherText = sqlite3_column_text(statement, 3),
+                      let action = JarvisActionKind(rawValue: String(cString: actionText)),
+                      let scope = JarvisApprovalScope(rawValue: String(cString: scopeText))
+                else { continue }
+                let createdAt = Date(timeIntervalSince1970: sqlite3_column_double(statement, 4))
+                let expiresAt: Date? = sqlite3_column_type(statement, 5) == SQLITE_NULL ? nil : Date(timeIntervalSince1970: sqlite3_column_double(statement, 5))
+                results.append(.init(
+                    id: UUID(uuidString: String(cString: idText)) ?? UUID(),
+                    actionKind: action,
+                    scope: scope,
+                    matcher: String(cString: matcherText),
+                    createdAt: createdAt,
+                    expiresAt: expiresAt
+                ))
+            }
+            return results
+        }
+    }
+
+    func saveActionExecutionLog(_ record: JarvisActionExecutionRecord) {
+        queue.sync {
+            let sql = "REPLACE INTO action_execution_logs (id, stepID, status, title, detail, metadata, startedAt, finishedAt) VALUES (?,?,?,?,?,?,?,?)"
+            var statement: OpaquePointer?
+            sqlite3_prepare_v2(db, sql, -1, &statement, nil)
+            sqlite3_bind_text(statement, 1, record.id.uuidString, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(statement, 2, record.stepID.uuidString, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(statement, 3, record.status.rawValue, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(statement, 4, record.title, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(statement, 5, record.detail, -1, SQLITE_TRANSIENT)
+            if let data = try? JSONEncoder().encode(record.metadata) {
+                bindEncryptedBlob(data, to: statement, index: 6, purpose: "action.execution.metadata")
+            } else {
+                sqlite3_bind_null(statement, 6)
+            }
+            sqlite3_bind_double(statement, 7, record.startedAt.timeIntervalSince1970)
+            if let finishedAt = record.finishedAt {
+                sqlite3_bind_double(statement, 8, finishedAt.timeIntervalSince1970)
+            } else {
+                sqlite3_bind_null(statement, 8)
+            }
+            sqlite3_step(statement)
+            sqlite3_finalize(statement)
+        }
+    }
+
+    func logRuntimeSession(state: JarvisAssistantRuntimeState, detail: String, metadata: [String: String] = [:]) {
+        queue.sync {
+            let sql = "INSERT INTO runtime_sessions (id, state, detail, metadata, createdAt) VALUES (?,?,?,?,?)"
+            var statement: OpaquePointer?
+            sqlite3_prepare_v2(db, sql, -1, &statement, nil)
+            sqlite3_bind_text(statement, 1, UUID().uuidString, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(statement, 2, state.rawValue, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(statement, 3, detail, -1, SQLITE_TRANSIENT)
+            if let data = try? JSONEncoder().encode(metadata) {
+                bindEncryptedBlob(data, to: statement, index: 4, purpose: "runtime.session.metadata")
+            } else {
+                sqlite3_bind_null(statement, 4)
+            }
+            sqlite3_bind_double(statement, 5, Date().timeIntervalSince1970)
             sqlite3_step(statement)
             sqlite3_finalize(statement)
         }

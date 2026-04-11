@@ -10,7 +10,7 @@ struct SafeShellCommandRequest: Equatable {
         command: String,
         arguments: [String] = [],
         workingDirectory: String? = nil,
-        timeout: TimeInterval = 5
+        timeout: TimeInterval = 20
     ) {
         self.command = command
         self.arguments = arguments
@@ -26,6 +26,17 @@ struct SafeShellCommandResult: Equatable {
     let stderr: String
     let exitCode: Int32
     let commandDescription: String
+}
+
+enum JarvisTerminalRisk: String, Equatable {
+    case benign
+    case requiresApproval
+    case catastrophic
+}
+
+struct JarvisTerminalAssessment: Equatable {
+    let risk: JarvisTerminalRisk
+    let reason: String
 }
 
 protocol JarvisProcessRunning {
@@ -59,7 +70,7 @@ struct JarvisLiveProcessRunner: JarvisProcessRunning {
             } catch {
                 continuation.resume(returning: SafeShellCommandResult(
                     success: false,
-                    userMessage: "Failed to run \(executableURL.lastPathComponent): \(error.localizedDescription)",
+                    userMessage: "Failed to run command: \(error.localizedDescription)",
                     stdout: "",
                     stderr: error.localizedDescription,
                     exitCode: -1,
@@ -79,13 +90,13 @@ struct JarvisLiveProcessRunner: JarvisProcessRunning {
                 timeoutTask.cancel()
                 let stdout = String(data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
                 let stderr = String(data: stderrPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                let success = finished.terminationStatus == 0
+                let status = finished.terminationStatus
                 continuation.resume(returning: SafeShellCommandResult(
-                    success: success,
-                    userMessage: success ? "Command completed." : "Command failed with exit code \(finished.terminationStatus).",
+                    success: status == 0,
+                    userMessage: status == 0 ? "Command completed." : "Command failed with exit code \(status).",
                     stdout: stdout.trimmingCharacters(in: .whitespacesAndNewlines),
                     stderr: stderr.trimmingCharacters(in: .whitespacesAndNewlines),
-                    exitCode: finished.terminationStatus,
+                    exitCode: status,
                     commandDescription: ([executableURL.path] + arguments).joined(separator: " ")
                 ))
             }
@@ -93,100 +104,91 @@ struct JarvisLiveProcessRunner: JarvisProcessRunning {
     }
 }
 
-final class JarvisSafeShellService {
+final class JarvisTerminalExecutionService {
     private let runner: JarvisProcessRunning
 
     init(runner: JarvisProcessRunning = JarvisLiveProcessRunner()) {
         self.runner = runner
     }
 
-    func runAllowedCommand(
+    func assess(_ request: SafeShellCommandRequest, policy: JarvisPathSafetyPolicy) -> JarvisTerminalAssessment {
+        let rendered = render(request).lowercased()
+        let catastrophicPatterns = [
+            "rm -rf /", "rm -rf ~", "sudo ", "dd if=", "diskutil erase", "mkfs", "shutdown -h", "reboot", ":(){:|:&};:",
+            "chmod -r 777 /", "chown -r", "git clean -fdx", "git reset --hard", "killall finder", "osascript -e 'tell app"
+        ]
+        if catastrophicPatterns.contains(where: rendered.contains) {
+            return .init(risk: .catastrophic, reason: "Command matches a catastrophic pattern.")
+        }
+
+        let writePatterns = [">", ">>", "mv ", "cp ", "rm ", "mkdir ", "rmdir ", "touch ", "sed -i", "perl -pi", "tee "]
+        if writePatterns.contains(where: rendered.contains) {
+            return .init(risk: .requiresApproval, reason: "Command modifies files or system state.")
+        }
+
+        if let cwd = request.workingDirectory, !policy.canRead(path: cwd) {
+            return .init(risk: .catastrophic, reason: "Working directory is outside the approved read scope.")
+        }
+
+        return .init(risk: .benign, reason: "Inspection-style command.")
+    }
+
+    func runCommand(
         _ request: SafeShellCommandRequest,
         policy: JarvisPathSafetyPolicy
     ) async -> SafeShellCommandResult {
-        let command = request.command.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard let specification = validate(request: request, normalizedCommand: command, policy: policy) else {
+        let cwd = request.workingDirectory.map { URL(fileURLWithPath: $0).standardizedFileURL }
+        if let cwd, !policy.canRead(path: cwd.path) {
             return SafeShellCommandResult(
                 success: false,
-                userMessage: "That shell command is not allowed.",
+                userMessage: "Working directory is not readable under the current host policy.",
                 stdout: "",
-                stderr: "disallowed",
+                stderr: "disallowed cwd",
                 exitCode: -1,
-                commandDescription: request.command
+                commandDescription: render(request)
             )
         }
 
         return await runner.run(
-            executableURL: specification.executableURL,
-            arguments: specification.arguments,
-            currentDirectoryURL: specification.workingDirectory,
+            executableURL: URL(fileURLWithPath: "/bin/zsh"),
+            arguments: ["-lc", render(request)],
+            currentDirectoryURL: cwd,
             timeout: request.timeout
         )
     }
 
-    private func validate(
-        request: SafeShellCommandRequest,
-        normalizedCommand: String,
+    private func render(_ request: SafeShellCommandRequest) -> String {
+        ([request.command] + request.arguments).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+final class JarvisSafeShellService {
+    private let terminal: JarvisTerminalExecutionService
+
+    init(runner: JarvisProcessRunning = JarvisLiveProcessRunner()) {
+        self.terminal = JarvisTerminalExecutionService(runner: runner)
+    }
+
+    func assess(_ request: SafeShellCommandRequest, policy: JarvisPathSafetyPolicy) -> JarvisTerminalAssessment {
+        terminal.assess(request, policy: policy)
+    }
+
+    func runAllowedCommand(
+        _ request: SafeShellCommandRequest,
         policy: JarvisPathSafetyPolicy
-    ) -> (executableURL: URL, arguments: [String], workingDirectory: URL?)? {
-        let cwd = request.workingDirectory.map { URL(fileURLWithPath: $0).standardizedFileURL }
-        if let cwd, !policy.canRead(path: cwd.path) {
-            return nil
+    ) async -> SafeShellCommandResult {
+        let assessment = terminal.assess(request, policy: policy)
+        guard assessment.risk == .benign else {
+            return SafeShellCommandResult(
+                success: false,
+                userMessage: assessment.reason,
+                stdout: "",
+                stderr: assessment.risk.rawValue,
+                exitCode: -1,
+                commandDescription: ([request.command] + request.arguments).joined(separator: " ")
+            )
         }
 
-        switch normalizedCommand {
-        case "pwd":
-            guard request.arguments.isEmpty else { return nil }
-            return (URL(fileURLWithPath: "/bin/pwd"), [], cwd)
-        case "ls":
-            let allowedFlags = Set(["-l", "-a", "-la", "-al"])
-            let invalidFlags = request.arguments.filter { $0.hasPrefix("-") && !allowedFlags.contains($0) }
-            guard invalidFlags.isEmpty else { return nil }
-            let pathArgs = request.arguments.filter { !$0.hasPrefix("-") }
-            guard pathArgs.count <= 1 else { return nil }
-            if let path = pathArgs.first, !policy.canRead(path: path) {
-                return nil
-            }
-            return (URL(fileURLWithPath: "/bin/ls"), request.arguments, cwd)
-        case "find":
-            guard let root = request.arguments.first, policy.canRead(path: root) else { return nil }
-            var sanitized: [String] = [root]
-            var index = 1
-            while index < request.arguments.count {
-                let flag = request.arguments[index]
-                switch flag {
-                case "-maxdepth":
-                    guard index + 1 < request.arguments.count,
-                          Int(request.arguments[index + 1]) != nil else { return nil }
-                    sanitized.append(flag)
-                    sanitized.append(request.arguments[index + 1])
-                    index += 2
-                case "-name":
-                    guard index + 1 < request.arguments.count else { return nil }
-                    sanitized.append(flag)
-                    sanitized.append(request.arguments[index + 1])
-                    index += 2
-                default:
-                    return nil
-                }
-            }
-            return (URL(fileURLWithPath: "/usr/bin/find"), sanitized, cwd)
-        case "open":
-            guard request.arguments.count == 1 else { return nil }
-            let target = request.arguments[0]
-            if let url = URL(string: target), let scheme = url.scheme?.lowercased(), ["http", "https", "mailto"].contains(scheme) {
-                return (URL(fileURLWithPath: "/usr/bin/open"), [target], cwd)
-            }
-            guard policy.canRead(path: target) else { return nil }
-            return (URL(fileURLWithPath: "/usr/bin/open"), [target], cwd)
-        case "git":
-            guard let subcommand = request.arguments.first?.lowercased(), subcommand == "status" else { return nil }
-            let tail = Array(request.arguments.dropFirst())
-            let allowedFlags = Set(["--short", "--branch"])
-            guard tail.allSatisfy({ allowedFlags.contains($0) }) else { return nil }
-            return (URL(fileURLWithPath: "/usr/bin/git"), request.arguments, cwd)
-        default:
-            return nil
-        }
+        return await terminal.runCommand(request, policy: policy)
     }
 }

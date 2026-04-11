@@ -100,6 +100,7 @@ final class CommandPaletteViewModel: ObservableObject {
     private let toolService: ToolExecutionService
     private let speechInputService: JarvisSpeechInputService
     private let speechOutputService: JarvisSpeechOutputService
+    private let assistantRuntime: JarvisAssistantRuntime
     private let notificationViewModel: NotificationViewModel
     private let clipboardWatcher: ClipboardWatcher
     private let diagnosticsService: DiagnosticsService
@@ -130,6 +131,7 @@ final class CommandPaletteViewModel: ObservableObject {
          toolService: ToolExecutionService,
          speechInputService: JarvisSpeechInputService,
          speechOutputService: JarvisSpeechOutputService,
+         assistantRuntime: JarvisAssistantRuntime,
          notificationViewModel: NotificationViewModel,
          clipboardWatcher: ClipboardWatcher,
          diagnosticsService: DiagnosticsService,
@@ -144,6 +146,7 @@ final class CommandPaletteViewModel: ObservableObject {
         self.toolService = toolService
         self.speechInputService = speechInputService
         self.speechOutputService = speechOutputService
+        self.assistantRuntime = assistantRuntime
         self.notificationViewModel = notificationViewModel
         self.clipboardWatcher = clipboardWatcher
         self.diagnosticsService = diagnosticsService
@@ -219,6 +222,52 @@ final class CommandPaletteViewModel: ObservableObject {
                 self.inputText = transcript
             }
             .store(in: &cancellables)
+        assistantRuntime.stateStore.$conversation
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] conversation in
+                self?.conversation = conversation
+            }
+            .store(in: &cancellables)
+        assistantRuntime.stateStore.$history
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] history in
+                self?.history = history
+            }
+            .store(in: &cancellables)
+        assistantRuntime.stateStore.$streamingText
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] text in
+                self?.streamingBuffer = text
+            }
+            .store(in: &cancellables)
+        assistantRuntime.stateStore.$isStreaming
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isStreaming in
+                self?.isStreaming = isStreaming
+                if !isStreaming { self?.thinkingStatus = "" }
+            }
+            .store(in: &cancellables)
+        assistantRuntime.stateStore.$statusMessage
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] message in
+                self?.statusMessage = message
+            }
+            .store(in: &cancellables)
+        assistantRuntime.stateStore.$pendingApproval
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] pending in
+                guard let self else { return }
+                self.toolRequiresConfirmation = pending != nil
+                self.pendingTool = nil
+                self.pendingToolRequestID = nil
+                self.pendingToolResult = pending.map {
+                    ToolResult(content: $0.message, state: .requiresApproval, metadata: [
+                        "actionKind": $0.step.kind.rawValue,
+                        "target": $0.step.targetSummary
+                    ])
+                }
+            }
+            .store(in: &cancellables)
     }
 
     func showOverlay() {
@@ -258,87 +307,8 @@ final class CommandPaletteViewModel: ObservableObject {
         let promptInsights = analyzePrompt(prompt)
         thinkingStatus = promptInsights.thinkingMessage
         statusMessage = promptInsights.statusMessage
-        routeExecutionState = .analyzingInput
-        routeExecutionReason = "Analyzing prompt and active UI context"
-        let signal = routeSignal(for: requestedAction)
-        let classification = intentClassifier.classify(prompt: prompt, signal: signal)
-        let routePlan = routePlanner.makePlan(classification: classification, signal: signal)
-        cancelActiveStream(reason: "new_request_started")
-        var convo = conversation
-        let activeRequest = streamOwnership.begin(conversationID: convo.id, routePlan: routePlan)
-        let userMessage = ChatMessage(
-            role: .user,
-            text: prompt,
-            metadata: requestMetadata(
-                requestID: activeRequest.requestID,
-                routePlan: routePlan,
-                source: "route.user"
-            )
-        )
-        convo.messages.append(userMessage)
-        convo.updatedAt = Date()
-        conversation = convo
-        conversationService.persist(convo)
-        rawStreamingBuffer = ""
-        handledToolInvocationKeys = []
-        streamingBuffer = ""
-        hasReceivedStreamingToken = false
-        isStreaming = true
         refreshTopSuggestion()
-        routeExecutionState = .routeSelected
-        routeExecutionReason = classification.reasons.joined(separator: "; ")
-        routingDebugSummary = routeSummary(request: activeRequest, classification: classification)
-        diagnosticsService.logEvent(
-            feature: "Routing",
-            type: "route.selected",
-            summary: "Selected route for prompt",
-            metadata: [
-                "requestID": activeRequest.requestID.uuidString,
-                "intent": routePlan.intent.rawValue,
-                "promptTemplate": routePlan.promptTemplate.rawValue,
-                "memoryScope": routePlan.memoryScope.rawValue,
-                "contextPolicy": contextPolicySummary(routePlan.contextPolicy),
-                "allowedTools": routePlan.allowedTools.map(\.rawValue).joined(separator: ","),
-                "surface": signal.selectedSurface.rawValue
-            ]
-        )
-        routeExecutionState = .executingRoute
-        routeExecutionReason = "Executing \(routePlan.intent.rawValue) with one primary route"
-        streamTask = Task {
-            await preloadKnowledgeForPromptIfNeeded(prompt, routePlan: routePlan)
-            let context = buildContext(routePlan: routePlan, requestedAction: requestedAction)
-            do {
-                let stream = conversationService.streamResponse(
-                    conversation: convo,
-                    context: context,
-                    routePlan: routePlan,
-                    settings: settingsStore.current
-                )
-                for try await chunk in stream {
-                    guard streamOwnership.owns(activeRequest.requestID) else { break }
-                    consume(
-                        chunk: chunk,
-                        requestID: activeRequest.requestID,
-                        conversationID: activeRequest.conversationID,
-                        routePlan: routePlan
-                    )
-                }
-                finishStreaming(requestID: activeRequest.requestID, conversationID: activeRequest.conversationID)
-            } catch {
-                guard streamOwnership.owns(activeRequest.requestID) else { return }
-                statusMessage = "Ollama error: \(error.localizedDescription)"
-                routeExecutionState = .failed
-                routeExecutionReason = error.localizedDescription
-                diagnosticsService.logEvent(feature: "Chat", type: "error", summary: "Chat request failed", metadata: ["error": error.localizedDescription])
-                appendMessageToConversation(
-                    id: activeRequest.conversationID,
-                    message: ChatMessage(role: .assistant, text: "I could not reach the selected Ollama model. Check Diagnostics and retry.")
-                )
-                thinkingStatus = ""
-                isStreaming = false
-                streamOwnership.complete(requestID: activeRequest.requestID)
-            }
-        }
+        assistantRuntime.submitText(prompt, context: currentConversationContext(requestedAction: requestedAction))
     }
 
     private func consume(chunk: String, requestID: UUID, conversationID: UUID, routePlan: RoutePlan) {
@@ -1240,36 +1210,18 @@ final class CommandPaletteViewModel: ObservableObject {
     }
 
     func approvePendingTool() {
-        guard let invocation = pendingTool,
-              let pendingRequestID = pendingToolRequestID,
-              let active = streamOwnership.activeRequest,
-              active.requestID == pendingRequestID else { return }
         toolRequiresConfirmation = false
         pendingTool = nil
-        pendingToolRequestID = nil
-        Task {
-            await handleTool(
-                invocation: invocation,
-                requestID: active.requestID,
-                conversationID: active.conversationID,
-                routePlan: active.routePlan
-            )
-        }
+        pendingToolResult = nil
+        assistantRuntime.approvePending(context: currentConversationContext(requestedAction: nil))
     }
 
     func rejectPendingTool() {
-        if let requestID = pendingToolRequestID {
-            diagnosticsService.logEvent(
-                feature: "Routing",
-                type: "tool.rejected",
-                summary: "User rejected pending tool invocation",
-                metadata: ["requestID": requestID.uuidString]
-            )
-        }
         pendingTool = nil
         pendingToolResult = nil
         pendingToolRequestID = nil
         toolRequiresConfirmation = false
+        assistantRuntime.rejectPending()
     }
 
     private func handleTool(invocation: ToolInvocation, requestID: UUID, conversationID: UUID, routePlan: RoutePlan) async {
@@ -1395,9 +1347,9 @@ final class CommandPaletteViewModel: ObservableObject {
 
     func toggleVoiceListening() {
         if isVoiceListening {
-            Task { await stopVoiceListeningAndCommit() }
+            assistantRuntime.stopVoiceCaptureAndSubmit(context: currentConversationContext(requestedAction: nil))
         } else {
-            Task { await startVoiceListening() }
+            assistantRuntime.startVoiceCapture()
         }
     }
 
@@ -1615,22 +1567,23 @@ final class CommandPaletteViewModel: ObservableObject {
     }
 
     private func startVoiceListening() async {
-        do {
-            try await speechInputService.startListening()
-            statusMessage = "Listening for a short command…"
-        } catch {
-            statusMessage = error.localizedDescription
-        }
+        assistantRuntime.startVoiceCapture()
     }
 
     private func stopVoiceListeningAndCommit() async {
-        let transcript = await speechInputService.stopListening()
-        if let transcript, !transcript.transcript.isEmpty {
-            inputText = transcript.transcript
-            statusMessage = "Captured voice command."
-        } else {
-            statusMessage = "Stopped listening."
-        }
+        assistantRuntime.stopVoiceCaptureAndSubmit(context: currentConversationContext(requestedAction: nil))
+    }
+
+    private func currentConversationContext(requestedAction: QuickAction?) -> ConversationContext {
+        ConversationContext(
+            selectedDocument: importedDocument,
+            notificationDigest: notificationViewModel.summary(limit: 5),
+            clipboardPreview: clipboardBanner,
+            knowledgeBaseSnippets: knowledgeContextResults.map { "\($0.title): \($0.path)" },
+            knowledgeSearchResults: knowledgeContextResults,
+            macroSummary: macroLogs.map(\.message).joined(separator: "\n"),
+            requestedAction: requestedAction
+        )
     }
 
     private func detectSensitiveClipboardData(in text: String) -> [String] {

@@ -384,3 +384,425 @@ private extension Decimal {
         return result
     }
 }
+
+struct JarvisActionBrokerOutcome {
+    var records: [JarvisActionExecutionRecord]
+    var assistantMessage: String
+    var pendingApproval: PendingApprovalRequest?
+    var finalStatus: JarvisActionExecutionStatus
+}
+
+final class JarvisExecutionApprovalService {
+    enum Decision {
+        case allowed
+        case requiresApproval(PendingApprovalRequest)
+        case denied(String)
+    }
+
+    private let database: JarvisDatabase
+    private let diagnostics: DiagnosticsService
+    private let settingsStore: SettingsStore
+    private var sessionRules: [ApprovalGrantRule]
+
+    init(database: JarvisDatabase, diagnostics: DiagnosticsService, settingsStore: SettingsStore) {
+        self.database = database
+        self.diagnostics = diagnostics
+        self.settingsStore = settingsStore
+        self.sessionRules = database.loadApprovalRules().filter { $0.expiresAt.map { $0 > Date() } ?? true }
+    }
+
+    func evaluate(step: JarvisActionStep, planID: UUID) -> Decision {
+        if hasMatchingGrant(for: step) {
+            return .allowed
+        }
+
+        if step.kind == .screenCapture, step.metadata["explicitScreenRequest"] != "true" {
+            return .requiresApproval(makePendingRequest(step: step, planID: planID, message: "Approval required before capturing the screen outside an explicit screen-inspection request."))
+        }
+
+        if step.kind == .shellCommand, step.metadata["terminalRisk"] == "catastrophic", step.metadata["elevatedConfirmed"] != "true" {
+            return .requiresApproval(makePendingRequest(step: step, planID: planID, message: "This command is hard-blocked by default. It can only run after explicit elevated in-session approval."))
+        }
+
+        switch step.risk {
+        case .readOnly:
+            if settingsStore.current.approvalStrictnessMode == .strict {
+                return .requiresApproval(makePendingRequest(step: step, planID: planID, message: "Strict mode requires approval for this action."))
+            }
+            return .allowed
+        case .write, .destructive:
+            return .requiresApproval(makePendingRequest(step: step, planID: planID, message: "Approval required before \(step.title.lowercased())."))
+        }
+    }
+
+    func allow(_ request: PendingApprovalRequest, scope: JarvisApprovalScope) {
+        let rule = ApprovalGrantRule(
+            actionKind: request.step.kind,
+            scope: scope,
+            matcher: matcher(for: request.step),
+            expiresAt: scope == .session ? Calendar.current.date(byAdding: .hour, value: 12, to: Date()) : nil
+        )
+        sessionRules.insert(rule, at: 0)
+        if scope != .once {
+            database.saveApprovalRule(rule)
+        }
+        diagnostics.logEvent(
+            feature: "Approval runtime",
+            type: "approval.allowed",
+            summary: "Approved host action",
+            metadata: ["actionKind": request.step.kind.rawValue, "scope": scope.rawValue]
+        )
+    }
+
+    func deny(_ request: PendingApprovalRequest) {
+        diagnostics.logEvent(
+            feature: "Approval runtime",
+            type: "approval.denied",
+            summary: "Denied host action",
+            metadata: ["actionKind": request.step.kind.rawValue]
+        )
+    }
+
+    private func makePendingRequest(step: JarvisActionStep, planID: UUID, message: String) -> PendingApprovalRequest {
+        diagnostics.logEvent(
+            feature: "Approval runtime",
+            type: "approval.requested",
+            summary: message,
+            metadata: ["actionKind": step.kind.rawValue, "planID": planID.uuidString]
+        )
+        return PendingApprovalRequest(planID: planID, step: step, message: message)
+    }
+
+    private func hasMatchingGrant(for step: JarvisActionStep) -> Bool {
+        let target = matcher(for: step)
+        return sessionRules.contains { rule in
+            guard rule.actionKind == step.kind else { return false }
+            if let expiresAt = rule.expiresAt, expiresAt < Date() { return false }
+            return target.hasPrefix(rule.matcher) || rule.matcher == target
+        }
+    }
+
+    private func matcher(for step: JarvisActionStep) -> String {
+        if let target = step.metadata["target"], !target.isEmpty { return target }
+        if let command = step.command, !command.isEmpty { return command }
+        return step.targetSummary
+    }
+}
+
+final class JarvisHostFileService {
+    private let localIndexService: LocalIndexService
+    private let macActionService: JarvisMacActionService
+    private let fileManager: FileManager
+
+    init(localIndexService: LocalIndexService,
+         macActionService: JarvisMacActionService,
+         fileManager: FileManager = .default) {
+        self.localIndexService = localIndexService
+        self.macActionService = macActionService
+        self.fileManager = fileManager
+    }
+
+    func searchFiles(query: String, settings: AppSettings, limit: Int = 12) async -> (message: String, metadata: [String: String]) {
+        let semanticMatches = (try? await localIndexService.searchFiles(query: query, limit: min(limit, 6), queryExpansionModel: settings.selectedModel, rootFolders: nil)) ?? []
+        let lexicalMatches = lexicalSearch(query: query, settings: settings, limit: limit)
+
+        var seen: Set<String> = []
+        var lines: [String] = []
+        for match in semanticMatches {
+            guard seen.insert(match.document.path).inserted else { continue }
+            lines.append("[semantic] \(match.document.title)\n\(match.document.path)\n\(match.snippet)")
+        }
+        for path in lexicalMatches where seen.insert(path).inserted {
+            lines.append("[file] \(URL(fileURLWithPath: path).lastPathComponent)\n\(path)")
+            if lines.count >= limit { break }
+        }
+
+        let summary = lines.isEmpty ? "No files matched '\(query)'." : lines.prefix(limit).joined(separator: "\n\n")
+        return (summary, ["resultCount": String(lines.count), "query": query])
+    }
+
+    func readFile(path: String, settings: AppSettings) throws -> (message: String, metadata: [String: String]) {
+        let policy = JarvisPathSafetyPolicy(settings: settings)
+        let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
+        guard policy.canRead(path: standardized) else {
+            throw ToolExecutionService.ToolExecutionError.validationFailed("Reading this path is not allowed.")
+        }
+        let data = try Data(contentsOf: URL(fileURLWithPath: standardized))
+        let prefix = data.prefix(24_000)
+        guard let text = String(data: prefix, encoding: .utf8) ?? String(data: prefix, encoding: .ascii) else {
+            throw ToolExecutionService.ToolExecutionError.validationFailed("Jarvis can only read text-like files directly.")
+        }
+        let truncated = data.count > prefix.count
+        return (
+            truncated ? "\(text)\n\n[Truncated]" : text,
+            ["path": standardized, "truncated": String(truncated)]
+        )
+    }
+
+    func createFile(path: String, contents: String, settings: AppSettings) throws -> (message: String, metadata: [String: String]) {
+        let policy = JarvisPathSafetyPolicy(settings: settings)
+        let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
+        guard policy.canWrite(path: standardized) else {
+            throw ToolExecutionService.ToolExecutionError.validationFailed("Writing this path is not allowed.")
+        }
+        let parent = URL(fileURLWithPath: standardized).deletingLastPathComponent()
+        try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
+        try contents.write(to: URL(fileURLWithPath: standardized), atomically: true, encoding: .utf8)
+        return ("Created \(standardized).", ["path": standardized])
+    }
+
+    func editFile(path: String, contents: String, settings: AppSettings) throws -> (message: String, metadata: [String: String]) {
+        let policy = JarvisPathSafetyPolicy(settings: settings)
+        let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
+        guard policy.canWrite(path: standardized) else {
+            throw ToolExecutionService.ToolExecutionError.validationFailed("Editing this path is not allowed.")
+        }
+        try contents.write(to: URL(fileURLWithPath: standardized), atomically: true, encoding: .utf8)
+        return ("Updated \(standardized).", ["path": standardized])
+    }
+
+    func reveal(path: String) -> JarvisMacActionResult {
+        macActionService.revealInFinder(path)
+    }
+
+    private func lexicalSearch(query: String, settings: AppSettings, limit: Int) -> [String] {
+        let normalizedQuery = query.lowercased()
+        let tokens = normalizedQuery.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init).filter { $0.count >= 2 }
+        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        let policy = JarvisPathSafetyPolicy(settings: settings)
+        let enumerator = fileManager.enumerator(
+            at: home,
+            includingPropertiesForKeys: [.isDirectoryKey, .nameKey],
+            options: [.skipsPackageDescendants, .skipsHiddenFiles]
+        )
+
+        var matches: [String] = []
+        while let url = enumerator?.nextObject() as? URL {
+            let path = url.path
+            if !policy.canRead(path: path) { continue }
+            if tokens.isEmpty || tokens.allSatisfy({ path.lowercased().contains($0) }) {
+                matches.append(path)
+                if matches.count >= limit { break }
+            }
+        }
+        return matches
+    }
+}
+
+final class JarvisHostActionBroker {
+    private let fileService: JarvisHostFileService
+    private let terminalService: JarvisTerminalExecutionService
+    private let screenshotService: ScreenshotService
+    private let ocrService: OCRService
+    private let macActionService: JarvisMacActionService
+    private let projectActionService: JarvisProjectActionService
+    private let approvalService: JarvisExecutionApprovalService
+    private let diagnostics: DiagnosticsService
+    private let database: JarvisDatabase
+
+    init(fileService: JarvisHostFileService,
+         terminalService: JarvisTerminalExecutionService,
+         screenshotService: ScreenshotService,
+         ocrService: OCRService,
+         macActionService: JarvisMacActionService,
+         projectActionService: JarvisProjectActionService,
+         approvalService: JarvisExecutionApprovalService,
+         diagnostics: DiagnosticsService,
+         database: JarvisDatabase) {
+        self.fileService = fileService
+        self.terminalService = terminalService
+        self.screenshotService = screenshotService
+        self.ocrService = ocrService
+        self.macActionService = macActionService
+        self.projectActionService = projectActionService
+        self.approvalService = approvalService
+        self.diagnostics = diagnostics
+        self.database = database
+    }
+
+    func plan(for prompt: String) -> JarvisActionPlan? {
+        let lower = prompt.lowercased()
+        if lower.contains("search my files") || lower.contains("find file") || lower.contains("search files") {
+            return JarvisActionPlan(requestText: prompt, summary: "Search local files", steps: [
+                JarvisActionStep(kind: .fileSearch, risk: .readOnly, title: "Search local files", targetSummary: prompt, metadata: ["query": prompt])
+            ])
+        }
+        if let path = extractAbsolutePath(from: prompt), lower.contains("read") || lower.contains("show file") {
+            return JarvisActionPlan(requestText: prompt, summary: "Read file", steps: [
+                JarvisActionStep(kind: .fileRead, risk: .readOnly, title: "Read file", targetSummary: path, metadata: ["target": path])
+            ])
+        }
+        if let path = extractAbsolutePath(from: prompt), lower.contains("create file") {
+            return JarvisActionPlan(requestText: prompt, summary: "Create file", steps: [
+                JarvisActionStep(kind: .fileCreate, risk: .write, title: "Create file", targetSummary: path, metadata: ["target": path, "content": extractContentPayload(from: prompt)])
+            ])
+        }
+        if let path = extractAbsolutePath(from: prompt), lower.contains("edit file") || lower.contains("update file") || lower.contains("overwrite file") {
+            return JarvisActionPlan(requestText: prompt, summary: "Edit file", steps: [
+                JarvisActionStep(kind: .fileEdit, risk: .write, title: "Edit file", targetSummary: path, metadata: ["target": path, "content": extractContentPayload(from: prompt)])
+            ])
+        }
+        if lower.contains("inspect screen") || lower.contains("look at my screen") || lower.contains("current window") || lower.contains("what's on my screen") {
+            return JarvisActionPlan(requestText: prompt, summary: "Inspect current screen", steps: [
+                JarvisActionStep(kind: .screenCapture, risk: .readOnly, title: "Capture current screen", targetSummary: "Screen", metadata: ["explicitScreenRequest": "true"])
+            ])
+        }
+        if lower.hasPrefix("run ") || lower.hasPrefix("execute ") || lower.hasPrefix("shell ") {
+            let command = prompt.components(separatedBy: " ").dropFirst().joined(separator: " ")
+            return JarvisActionPlan(requestText: prompt, summary: "Run terminal command", steps: [
+                JarvisActionStep(kind: .shellCommand, risk: .destructive, title: "Run terminal command", targetSummary: command, command: command, metadata: [:])
+            ])
+        }
+        if let url = extractURL(from: prompt) {
+            return JarvisActionPlan(requestText: prompt, summary: "Open URL", steps: [
+                JarvisActionStep(kind: .openURL, risk: .write, title: "Open URL", targetSummary: url, metadata: ["target": url])
+            ])
+        }
+        if lower.hasPrefix("open app ") || lower.hasPrefix("launch ") {
+            let target = lower.hasPrefix("open app ") ? String(prompt.dropFirst("open app ".count)) : String(prompt.dropFirst("launch ".count))
+            return JarvisActionPlan(requestText: prompt, summary: "Open app", steps: [
+                JarvisActionStep(kind: .appOpen, risk: .write, title: "Open app", targetSummary: target, metadata: ["target": target])
+            ])
+        }
+        if let path = extractAbsolutePath(from: prompt), lower.contains("reveal") {
+            return JarvisActionPlan(requestText: prompt, summary: "Reveal in Finder", steps: [
+                JarvisActionStep(kind: .revealInFinder, risk: .write, title: "Reveal in Finder", targetSummary: path, metadata: ["target": path])
+            ])
+        }
+        if let path = extractAbsolutePath(from: prompt), lower.contains("open project") {
+            return JarvisActionPlan(requestText: prompt, summary: "Open project", steps: [
+                JarvisActionStep(kind: .projectOpen, risk: .write, title: "Open project", targetSummary: path, metadata: ["target": path])
+            ])
+        }
+        return nil
+    }
+
+    func execute(plan: JarvisActionPlan, settings: AppSettings, approvalRequest: PendingApprovalRequest? = nil, elevatedConfirmation: Bool = false) async -> JarvisActionBrokerOutcome {
+        guard let step = plan.steps.first else {
+            return JarvisActionBrokerOutcome(records: [], assistantMessage: "No executable action was planned.", pendingApproval: nil, finalStatus: .failed)
+        }
+
+        var executableStep = step
+        if elevatedConfirmation {
+            executableStep.metadata["elevatedConfirmed"] = "true"
+        }
+        if approvalRequest == nil {
+            switch approvalService.evaluate(step: executableStep, planID: plan.id) {
+            case .allowed:
+                break
+            case .requiresApproval(let pending):
+                return JarvisActionBrokerOutcome(
+                    records: [JarvisActionExecutionRecord(stepID: executableStep.id, status: .requiresApproval, title: executableStep.title, detail: pending.message, metadata: executableStep.metadata)],
+                    assistantMessage: pending.message,
+                    pendingApproval: pending,
+                    finalStatus: .requiresApproval
+                )
+            case .denied(let message):
+                return JarvisActionBrokerOutcome(
+                    records: [JarvisActionExecutionRecord(stepID: executableStep.id, status: .denied, title: executableStep.title, detail: message, metadata: executableStep.metadata)],
+                    assistantMessage: message,
+                    pendingApproval: nil,
+                    finalStatus: .denied
+                )
+            }
+        }
+
+        let started = Date()
+        do {
+            let result = try await executeStep(executableStep, settings: settings)
+            let record = JarvisActionExecutionRecord(
+                stepID: executableStep.id,
+                status: .success,
+                title: executableStep.title,
+                detail: result.message,
+                metadata: result.metadata,
+                startedAt: started,
+                finishedAt: Date()
+            )
+            database.saveActionExecutionLog(record)
+            diagnostics.logEvent(feature: "Host actions", type: "action.success", summary: executableStep.title, metadata: result.metadata)
+            return JarvisActionBrokerOutcome(records: [record], assistantMessage: result.message, pendingApproval: nil, finalStatus: .success)
+        } catch {
+            let record = JarvisActionExecutionRecord(
+                stepID: executableStep.id,
+                status: .failed,
+                title: executableStep.title,
+                detail: error.localizedDescription,
+                metadata: executableStep.metadata,
+                startedAt: started,
+                finishedAt: Date()
+            )
+            database.saveActionExecutionLog(record)
+            diagnostics.logEvent(feature: "Host actions", type: "action.failed", summary: executableStep.title, metadata: ["error": error.localizedDescription])
+            return JarvisActionBrokerOutcome(records: [record], assistantMessage: error.localizedDescription, pendingApproval: nil, finalStatus: .failed)
+        }
+    }
+
+    private func executeStep(_ step: JarvisActionStep, settings: AppSettings) async throws -> (message: String, metadata: [String: String]) {
+        switch step.kind {
+        case .fileSearch:
+            return await fileService.searchFiles(query: step.metadata["query"] ?? step.targetSummary, settings: settings)
+        case .fileRead:
+            return try fileService.readFile(path: step.metadata["target"] ?? step.targetSummary, settings: settings)
+        case .fileCreate:
+            return try fileService.createFile(path: step.metadata["target"] ?? step.targetSummary, contents: step.metadata["content"] ?? "", settings: settings)
+        case .fileEdit:
+            return try fileService.editFile(path: step.metadata["target"] ?? step.targetSummary, contents: step.metadata["content"] ?? "", settings: settings)
+        case .screenCapture:
+            let image = try await screenshotService.captureActiveWindow()
+            let text = try ocrService.recognizeText(from: image)
+            return (text.isEmpty ? "Captured the current screen, but OCR found no readable text." : text, ["captured": "window"])
+        case .shellCommand:
+            let shellRequest = SafeShellCommandRequest(command: step.command ?? "", workingDirectory: step.metadata["cwd"], timeout: 30)
+            let assessment = terminalService.assess(shellRequest, policy: JarvisPathSafetyPolicy(settings: settings))
+            let result = await terminalService.runCommand(
+                shellRequest,
+                policy: JarvisPathSafetyPolicy(settings: settings)
+            )
+            return ([result.userMessage, result.stdout, result.stderr.isEmpty ? nil : "stderr:\n\(result.stderr)"].compactMap { $0 }.joined(separator: "\n\n"),
+                    ["command": result.commandDescription, "terminalRisk": assessment.risk.rawValue, "exitCode": String(result.exitCode)])
+        case .appOpen:
+            let result = await macActionService.openApp(nameOrBundleID: step.metadata["target"] ?? step.targetSummary)
+            return (result.message, result.metadata)
+        case .appFocus:
+            let result = macActionService.focusApp(nameOrBundleID: step.metadata["target"] ?? step.targetSummary)
+            return (result.message, result.metadata)
+        case .openURL:
+            let result = macActionService.openURL(step.metadata["target"] ?? step.targetSummary)
+            return (result.message, result.metadata)
+        case .revealInFinder:
+            let result = fileService.reveal(path: step.metadata["target"] ?? step.targetSummary)
+            return (result.message, result.metadata)
+        case .projectOpen:
+            let result = projectActionService.openProject(at: step.metadata["target"] ?? step.targetSummary)
+            return (result.message, ["rootPath": result.rootPath, "success": String(result.success)])
+        case .projectScaffold:
+            let template = JarvisProjectTemplate(rawTemplate: step.metadata["template"] ?? "")
+            let result = projectActionService.scaffoldProject(at: step.metadata["target"] ?? step.targetSummary, template: template, policy: JarvisPathSafetyPolicy(settings: settings))
+            return (result.message, ["rootPath": result.rootPath, "success": String(result.success), "createdCount": String(result.createdPaths.count)])
+        case .modelResponse:
+            return ("", [:])
+        }
+    }
+
+    private func extractAbsolutePath(from prompt: String) -> String? {
+        if let range = prompt.range(of: #"/[A-Za-z0-9._/\- ]+"#, options: .regularExpression) {
+            return String(prompt[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
+
+    private func extractURL(from prompt: String) -> String? {
+        if let range = prompt.range(of: #"https?://[^\s]+"#, options: .regularExpression) {
+            return String(prompt[range])
+        }
+        return nil
+    }
+
+    private func extractContentPayload(from prompt: String) -> String {
+        if let range = prompt.range(of: "with content:", options: [.caseInsensitive]) {
+            return String(prompt[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return ""
+    }
+}

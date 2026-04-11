@@ -18,7 +18,6 @@ struct SettingsView: View {
     @State private var privacyClipboardMonitorEnabled: Bool = false
     @State private var privacySensitiveDetectionEnabled: Bool = true
     @State private var privacyNetworkMonitorEnabled: Bool = true
-
     @State private var accessibilityGranted: Bool = AXIsProcessTrusted()
     @State private var screenCaptureGranted: Bool = CGPreflightScreenCaptureAccess()
     @State private var notificationsGranted: Bool = false
@@ -291,4 +290,5 @@ struct SettingsView: View {
         guard panel.runModal() == .OK, let folder = panel.urls.first else { return }
         settingsVM.indexFolder(url: folder)
     }
+
 }

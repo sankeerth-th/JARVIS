@@ -7,6 +7,8 @@ final class SettingsViewModel: ObservableObject {
     @Published var indexingStatus: String? = nil
     @Published var availableModels: [String] = []
     @Published var macros: [Macro] = []
+    @Published var porcupineAccessKey: String = ""
+    @Published var porcupineKeywordPath: String = ""
 
     private let settingsStore: SettingsStore
     private let permissions: PermissionsManager
@@ -34,6 +36,8 @@ final class SettingsViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] macros in self?.macros = macros }
             .store(in: &cancellables)
+        porcupineAccessKey = settingsStore.porcupineAccessKey() ?? ""
+        porcupineKeywordPath = settingsStore.porcupineKeywordPath() ?? ""
         observeSettings()
     }
 
@@ -96,6 +100,56 @@ final class SettingsViewModel: ObservableObject {
 
     func setPrivacyNetworkMonitorEnabled(_ enabled: Bool) {
         settingsStore.setPrivacyNetworkMonitorEnabled(enabled)
+    }
+
+    func setWakeWordEnabled(_ enabled: Bool) {
+        settingsStore.setWakeWordEnabled(enabled)
+    }
+
+    func setVoiceAutoResponseEnabled(_ enabled: Bool) {
+        settingsStore.setVoiceAutoResponseEnabled(enabled)
+    }
+
+    func setStreamingSpeechEnabled(_ enabled: Bool) {
+        settingsStore.setStreamingSpeechEnabled(enabled)
+    }
+
+    func setBroadFileAccessEnabled(_ enabled: Bool) {
+        settingsStore.setBroadFileAccessEnabled(enabled)
+    }
+
+    func setTerminalExecutionEnabled(_ enabled: Bool) {
+        settingsStore.setTerminalExecutionEnabled(enabled)
+    }
+
+    func setApprovalStrictnessMode(_ mode: JarvisApprovalStrictnessMode) {
+        settingsStore.setApprovalStrictnessMode(mode)
+    }
+
+    func setTrustedWriteRoots(_ roots: [String]) {
+        settingsStore.setTrustedWriteRoots(roots)
+    }
+
+    func setExcludedReadRoots(_ roots: [String]) {
+        settingsStore.setExcludedReadRoots(roots)
+    }
+
+    func setRuntimeDiagnosticsEnabled(_ enabled: Bool) {
+        settingsStore.setRuntimeDiagnosticsEnabled(enabled)
+    }
+
+    func savePorcupineAccessKey() {
+        settingsStore.setPorcupineAccessKey(porcupineAccessKey)
+    }
+
+    func clearPorcupineAccessKey() {
+        settingsStore.removePorcupineAccessKey()
+        porcupineAccessKey = ""
+    }
+
+    func setPorcupineKeywordPath(_ path: String) {
+        settingsStore.setPorcupineKeywordPath(path)
+        porcupineKeywordPath = path
     }
 
     func refreshModels() {
